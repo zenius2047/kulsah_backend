@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "986340733469",
+    "project_id": "kulsah-f76d3",
+    "storage_bucket": "kulsah-f76d3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:986340733469:android:e65c1c559a95f52af48cf4",
+        "android_client_info": {
+          "package_name": "com.kulsah.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9Gjtwje-cISBVDtEg9yP_dTxCuPWKW9I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
