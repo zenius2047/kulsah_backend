@@ -167,7 +167,6 @@ public function me()
         return response()->json([
             'message' => 'User registered successfully. Please verify your account with the OTP sent to your email or phone number.',
             'access_token' => $token,
-            'user' => new UserResource($user),
         ], 201);
 
         
@@ -337,7 +336,10 @@ public function me()
         DB::table('users')->where('id', $user->id)->update(['activated' => true, 'activated_at' => now()]);
         // delete OTP record
         DB::table('activation_otp')->where('user_id', $user->id)->delete();
-        return response()->json(['message' => 'User account activated successfully']);
+        return response()->json([
+            'message' => 'User account activated successfully',
+            'user' => new UserResource($user),
+            ]);
     }
 
     // resend OTP for account activation
