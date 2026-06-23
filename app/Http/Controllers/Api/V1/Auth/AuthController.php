@@ -659,8 +659,8 @@ public function me()
 
    $postData = [
     'key'       => $apiKey,
-    'recipient' => [$phoneNumber],
-    'message'   => $message,
+    'recipient' => [$phone],
+    'message'   => $otp,
     'sender' => $senderId,
     ];
 
@@ -687,7 +687,7 @@ public function me()
     // Log raw response
     \Log::info('mNotify raw response', [
         'response' => $response,
-        'phone' => $phoneNumber,
+        'phone' => $phone,
     ]);
 
     // Try to decode JSON response
