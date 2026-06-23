@@ -7,6 +7,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Models\User;
+use App\Models\Onboarding;
+use App\Services\FirebaseAuthService;
 use App\Models\PasswordResetOtp;
 use App\Http\Resources\UserResource;
 use Laravel\Socialite\Socialite;
@@ -27,6 +29,12 @@ use Jenssegers\Agent\Agent;
 class AuthController extends Controller
 {
 
+    protected $firebase;
+
+    public function __construct(FirebaseAuthService $firebase)
+    {
+        $this->firebase = $firebase;
+    }
     //get countries from config/countries.php
     private function getCountries()
     {
@@ -46,6 +54,39 @@ class AuthController extends Controller
         return null;
     }
 
+public function me()
+{
+    $user = auth()->user();
+
+    return response()->json([
+        'data' => new UserResource($user),
+    ]);
+}
+
+    public function updateVibe(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'onboarding' => 'required|array',
+            'onboarding.vibe' => 'required|array|min:1',
+            'onboarding.vibe.*' => 'string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $user = $request->user();
+
+        Onboarding::updateOrCreate(
+            ['user_id' => $user->id],
+            ['vibe' => $request->input('onboarding.vibe')]
+        );
+
+        return response()->json([
+            'message' => 'Vibe updated successfully.',
+            'data' => new UserResource($user->load('onboarding', 'roles')),
+        ]);
+    }
 
     // get location from user sessions payload
  private function getLocationFromIp($ip)
@@ -90,18 +131,21 @@ class AuthController extends Controller
             'gender' => 'nullable|string|in:male,female',
             'location' => 'nullable|string|max:255',
             'country_code' => 'nullable|string|max:255',
+            'onboarding' => 'nullable|array',
+            'onboarding.vibe' => 'nullable|array',
+            
         ]);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        //determine if user is registering with email or phone number
-        $isEmailRegistration = $request->filled('email');
-        $isPhoneRegistration = $request->filled('phone');
-        
+        $user = DB::transaction(function () use ($request) {
+            // determine if user is registering with email or phone number
+            $isEmailRegistration = $request->filled('email');
+            $isPhoneRegistration = $request->filled('phone');
 
-        // if is email, get country as location from user's IP address and or session, if is phone number, get country from country code, by matching country code with country code in config/countries.php, if both email and phone number are provided, prioritize email for location    
+            // if is email, get country as location from user's IP address and or session, if is phone number, get country from country code
             if ($isEmailRegistration) {
                 $location = $this->getLocationFromIp($request->ip());
             } elseif ($isPhoneRegistration) {
@@ -110,31 +154,41 @@ class AuthController extends Controller
                 $location = null;
             }
 
-        $user = User::create([
-            'name' => $request->name,
-            'username' => $request->username,
-            'email' => $request->email,
-            'dob' => $request->dob,
-            'gender' => $request->gender,
-            'phone' => $request->phone,
-            'password' => Hash::make($request->password),
-            'location' => $location,
-        ]);
+            $user = User::create([
+                'name' => $request->name,
+                'username' => $request->username,
+                'email' => $request->email,
+                'dob' => $request->dob,
+                'gender' => $request->gender,
+                'phone' => $request->phone,
+                'password' => Hash::make($request->password),
+                'location' => $location,
+            ]);
 
-
-        // assign default role to user
-        if($user) {
+            // assign default role to user
             $user->roles()->attach(3); // attach default role with id 3
-        }
 
-        // generate OTP
-        $otp = $this->generateOtp();
-        // save OTP to database
-        DB::table('activation_otp')->insert([
-            'user_id' => $user->id,
-            'otp' => $otp,
-            'expires_at' => now()->addMinutes(10),
-        ]);
+            // create onboarding row for the new user
+            Onboarding::create([
+                'user_id' => $user->id,
+                'vibe' => $request->input('onboarding.vibe', []),
+            ]);
+
+            // generate OTP
+            $otp = $this->generateOtp();
+            // save OTP to database
+            DB::table('activation_otp')->insert([
+                'user_id' => $user->id,
+                'otp' => $otp,
+                'expires_at' => now()->addMinutes(10),
+            ]);
+
+            $user->setAttribute('registration_otp', $otp);
+
+            return $user;
+        });
+
+        $otp = $user->registration_otp;
 
         // send OTP to email
         if($request->email) {
@@ -152,11 +206,27 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'User registered successfully. Please verify your account with the OTP sent to your email or phone number.',
             'access_token' => $token,
-            'user' => new UserResource($user),
         ], 201);
 
         
         }
+
+    //write a function to check if username exist in the database
+    public function existUsername(Request $request)
+{
+    $request->validate([
+        'username' => 'required|string|min:3'
+    ]);
+
+    $exists = User::where('username', $request->username)->exists();
+
+    return response()->json([
+        'available' => !$exists,
+        'message' => $exists
+            ? 'Username is already taken'
+            : 'Username is available'
+    ]);
+}
 
 
     // manage user authentication
@@ -305,7 +375,10 @@ class AuthController extends Controller
         DB::table('users')->where('id', $user->id)->update(['activated' => true, 'activated_at' => now()]);
         // delete OTP record
         DB::table('activation_otp')->where('user_id', $user->id)->delete();
-        return response()->json(['message' => 'User account activated successfully']);
+        return response()->json([
+            'message' => 'User account activated successfully',
+            'user' => new UserResource($user),
+            ]);
     }
 
     // resend OTP for account activation
@@ -333,63 +406,74 @@ class AuthController extends Controller
 
     // login with providers like gooogle,apple,facebook using provider and provider_id, if user with provider and provider_id exists, log in the user, if not, create a new user with provider and provider_id and log in the user
     // let use laravel socialite for this, but since we are building a custom authentication system, we will not use socialite's built-in authentication, instead we will use socialite to get user details from the provider and then create or log in the user in our system
-   public function redirectToProvider($provider)
-{
-    return Socialite::driver($provider)->stateless()->redirect();
-}
-   
-    public function socialLogin(Request $request, $provider)
-{
-    // 1. Get user from provider (Google/Facebook/Apple etc.)
-    $socialUser = Socialite::driver($provider)->stateless()->user();
-
-    // 2. Try find existing user by provider + provider_id
-    $user = User::where('provider', $provider)
-        ->where('provider_id', $socialUser->getId())
-        ->first();
-
-    // 3. If not found, try linking via email
-    if (!$user && $socialUser->getEmail()) {
-        $user = User::where('email', $socialUser->getEmail())->first();
-
-        if ($user) {
-            $user->update([
-                'provider' => $provider,
-                'provider_id' => $socialUser->getId(),
-                'avatar' => $socialUser->getAvatar(),
-            ]);
-        }
-    }
-
-    // 4. If still no user → create new account
-    if (!$user) {
-
-        $location = $this->getLocationFromIp($request->ip());
-
-        $user = User::create([
-            'name' => $socialUser->getName() ?? 'User',
-            'username' => $this->generateUsername($socialUser->getName() ?? 'user'),
-            'email' => $socialUser->getEmail(),
-            'password' => Hash::make(Str::random(16)), // random password
-            'provider' => $provider,
-            'provider_id' => $socialUser->getId(),
-            'avatar' => $socialUser->getAvatar(),
-            'location' => $location,
+        /**
+     * Unified Social Login (Google / Facebook / Apple via Firebase)
+     */
+    public function socialLogin(Request $request)
+    {
+        $request->validate([
+            'token' => 'required|string',
+            'provider' => 'required|string', // google | facebook | apple
         ]);
 
-        // assign default role
-        $user->roles()->attach(3);
+        // 1. Get Firebase user data
+        $firebaseUser = $this->firebase->getUserData($request->token);
+
+        $provider = $request->provider;
+        $providerId = $firebaseUser['provider_id'];
+        $email = $firebaseUser['email'];
+        $name = $firebaseUser['name'];
+        $avatar = $firebaseUser['avatar'];
+
+        // 2. Try find user by provider + provider_id
+        $user = User::where('provider', $provider)
+            ->where('provider_id', $providerId)
+            ->first();
+
+        // 3. Try link by email if not found
+        if (!$user && $email) {
+            $user = User::where('email', $email)->first();
+
+            if ($user) {
+                $user->update([
+                    'provider' => $provider,
+                    'provider_id' => $providerId,
+                    'avatar' => $avatar,
+                ]);
+            }
+        }
+
+        // 4. Create user if still not found
+        if (!$user) {
+
+            $location = $this->getLocationFromIp($request->ip());
+
+            $user = User::create([
+                'name' => $name ?? 'User',
+                'username' => $this->generateUsername($name ?? 'user'),
+                'email' => $email,
+                'password' => Hash::make(Str::random(16)),
+                'location' => $location,
+
+                // 🔥 CLEAN SOCIAL LOGIN STRUCTURE
+                'provider' => $provider,
+                'provider_id' => $providerId,
+                'avatar' => $avatar,
+            ]);
+
+            // assign default role
+            $user->roles()->attach(3);
+        }
+
+        // 5. Create Laravel token (Sanctum)
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'message' => 'Social login successful',
+            'access_token' => $token,
+            'user' => new UserResource($user),
+        ]);
     }
-
-    // 5. Generate token (same as your register flow)
-    $token = $user->createToken('auth_token')->plainTextToken;
-
-    return response()->json([
-        'message' => 'Social login successful',
-        'access_token' => $token,
-        'user' => new UserResource($user),
-    ], 200);
-}
 
 
     
@@ -614,8 +698,8 @@ class AuthController extends Controller
 
    $postData = [
     'key'       => $apiKey,
-    'recipient' => [$phoneNumber],
-    'message'   => $message,
+    'recipient' => [$phone],
+    'message'   => $otp,
     'sender' => $senderId,
     ];
 
@@ -642,7 +726,7 @@ class AuthController extends Controller
     // Log raw response
     \Log::info('mNotify raw response', [
         'response' => $response,
-        'phone' => $phoneNumber,
+        'phone' => $phone,
     ]);
 
     // Try to decode JSON response
@@ -663,5 +747,9 @@ class AuthController extends Controller
 
     return false;
 }
+
+// upload profile picture
+
+
 
 }
