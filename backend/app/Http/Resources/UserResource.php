@@ -28,6 +28,12 @@ class UserResource extends JsonResource
             'verified_at' => $this->verified_at,
             'activated' => $this->activated,
             'activated_at' => $this->activated_at,
+            'vibes' => collect($this->onboarding?->vibe ?? [])
+            ->map(fn ($vibe, $index) => [
+                'id' => $index + 1,
+                'name' => $vibe,
+            ])
+            ->values(),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

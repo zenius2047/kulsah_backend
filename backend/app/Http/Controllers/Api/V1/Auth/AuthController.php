@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Models\User;
+use App\Models\Onboarding;
 use App\Services\FirebaseAuthService;
 use App\Models\PasswordResetOtp;
 use App\Http\Resources\UserResource;
@@ -62,6 +63,31 @@ public function me()
     ]);
 }
 
+    public function updateVibe(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'onboarding' => 'required|array',
+            'onboarding.vibe' => 'required|array|min:1',
+            'onboarding.vibe.*' => 'string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $user = $request->user();
+
+        Onboarding::updateOrCreate(
+            ['user_id' => $user->id],
+            ['vibe' => $request->input('onboarding.vibe')]
+        );
+
+        return response()->json([
+            'message' => 'Vibe updated successfully.',
+            'data' => new UserResource($user->load('onboarding', 'roles')),
+        ]);
+    }
+
     // get location from user sessions payload
  private function getLocationFromIp($ip)
 {
@@ -105,18 +131,21 @@ public function me()
             'gender' => 'nullable|string|in:male,female',
             'location' => 'nullable|string|max:255',
             'country_code' => 'nullable|string|max:255',
+            'onboarding' => 'nullable|array',
+            'onboarding.vibe' => 'nullable|array',
+            
         ]);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        //determine if user is registering with email or phone number
-        $isEmailRegistration = $request->filled('email');
-        $isPhoneRegistration = $request->filled('phone');
-        
+        $user = DB::transaction(function () use ($request) {
+            // determine if user is registering with email or phone number
+            $isEmailRegistration = $request->filled('email');
+            $isPhoneRegistration = $request->filled('phone');
 
-        // if is email, get country as location from user's IP address and or session, if is phone number, get country from country code, by matching country code with country code in config/countries.php, if both email and phone number are provided, prioritize email for location    
+            // if is email, get country as location from user's IP address and or session, if is phone number, get country from country code
             if ($isEmailRegistration) {
                 $location = $this->getLocationFromIp($request->ip());
             } elseif ($isPhoneRegistration) {
@@ -125,31 +154,41 @@ public function me()
                 $location = null;
             }
 
-        $user = User::create([
-            'name' => $request->name,
-            'username' => $request->username,
-            'email' => $request->email,
-            'dob' => $request->dob,
-            'gender' => $request->gender,
-            'phone' => $request->phone,
-            'password' => Hash::make($request->password),
-            'location' => $location,
-        ]);
+            $user = User::create([
+                'name' => $request->name,
+                'username' => $request->username,
+                'email' => $request->email,
+                'dob' => $request->dob,
+                'gender' => $request->gender,
+                'phone' => $request->phone,
+                'password' => Hash::make($request->password),
+                'location' => $location,
+            ]);
 
-
-        // assign default role to user
-        if($user) {
+            // assign default role to user
             $user->roles()->attach(3); // attach default role with id 3
-        }
 
-        // generate OTP
-        $otp = $this->generateOtp();
-        // save OTP to database
-        DB::table('activation_otp')->insert([
-            'user_id' => $user->id,
-            'otp' => $otp,
-            'expires_at' => now()->addMinutes(10),
-        ]);
+            // create onboarding row for the new user
+            Onboarding::create([
+                'user_id' => $user->id,
+                'vibe' => $request->input('onboarding.vibe', []),
+            ]);
+
+            // generate OTP
+            $otp = $this->generateOtp();
+            // save OTP to database
+            DB::table('activation_otp')->insert([
+                'user_id' => $user->id,
+                'otp' => $otp,
+                'expires_at' => now()->addMinutes(10),
+            ]);
+
+            $user->setAttribute('registration_otp', $otp);
+
+            return $user;
+        });
+
+        $otp = $user->registration_otp;
 
         // send OTP to email
         if($request->email) {
