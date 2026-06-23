@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Models\User;
+use App\Services\FirebaseAuthService;
 use App\Models\PasswordResetOtp;
 use App\Http\Resources\UserResource;
 use Laravel\Socialite\Socialite;
@@ -27,6 +28,12 @@ use Jenssegers\Agent\Agent;
 class AuthController extends Controller
 {
 
+    protected $firebase;
+
+    public function __construct(FirebaseAuthService $firebase)
+    {
+        $this->firebase = $firebase;
+    }
     //get countries from config/countries.php
     private function getCountries()
     {
@@ -46,6 +53,14 @@ class AuthController extends Controller
         return null;
     }
 
+public function me()
+{
+    $user = auth()->user();
+
+    return response()->json([
+        'data' => new UserResource($user),
+    ]);
+}
 
     // get location from user sessions payload
  private function getLocationFromIp($ip)
@@ -152,11 +167,27 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'User registered successfully. Please verify your account with the OTP sent to your email or phone number.',
             'access_token' => $token,
-            'user' => new UserResource($user),
         ], 201);
 
         
         }
+
+    //write a function to check if username exist in the database
+    public function existUsername(Request $request)
+{
+    $request->validate([
+        'username' => 'required|string|min:3'
+    ]);
+
+    $exists = User::where('username', $request->username)->exists();
+
+    return response()->json([
+        'available' => !$exists,
+        'message' => $exists
+            ? 'Username is already taken'
+            : 'Username is available'
+    ]);
+}
 
 
     // manage user authentication
@@ -305,7 +336,10 @@ class AuthController extends Controller
         DB::table('users')->where('id', $user->id)->update(['activated' => true, 'activated_at' => now()]);
         // delete OTP record
         DB::table('activation_otp')->where('user_id', $user->id)->delete();
-        return response()->json(['message' => 'User account activated successfully']);
+        return response()->json([
+            'message' => 'User account activated successfully',
+            'user' => new UserResource($user),
+            ]);
     }
 
     // resend OTP for account activation
@@ -333,63 +367,74 @@ class AuthController extends Controller
 
     // login with providers like gooogle,apple,facebook using provider and provider_id, if user with provider and provider_id exists, log in the user, if not, create a new user with provider and provider_id and log in the user
     // let use laravel socialite for this, but since we are building a custom authentication system, we will not use socialite's built-in authentication, instead we will use socialite to get user details from the provider and then create or log in the user in our system
-   public function redirectToProvider($provider)
-{
-    return Socialite::driver($provider)->stateless()->redirect();
-}
-   
-    public function socialLogin(Request $request, $provider)
-{
-    // 1. Get user from provider (Google/Facebook/Apple etc.)
-    $socialUser = Socialite::driver($provider)->stateless()->user();
-
-    // 2. Try find existing user by provider + provider_id
-    $user = User::where('provider', $provider)
-        ->where('provider_id', $socialUser->getId())
-        ->first();
-
-    // 3. If not found, try linking via email
-    if (!$user && $socialUser->getEmail()) {
-        $user = User::where('email', $socialUser->getEmail())->first();
-
-        if ($user) {
-            $user->update([
-                'provider' => $provider,
-                'provider_id' => $socialUser->getId(),
-                'avatar' => $socialUser->getAvatar(),
-            ]);
-        }
-    }
-
-    // 4. If still no user → create new account
-    if (!$user) {
-
-        $location = $this->getLocationFromIp($request->ip());
-
-        $user = User::create([
-            'name' => $socialUser->getName() ?? 'User',
-            'username' => $this->generateUsername($socialUser->getName() ?? 'user'),
-            'email' => $socialUser->getEmail(),
-            'password' => Hash::make(Str::random(16)), // random password
-            'provider' => $provider,
-            'provider_id' => $socialUser->getId(),
-            'avatar' => $socialUser->getAvatar(),
-            'location' => $location,
+        /**
+     * Unified Social Login (Google / Facebook / Apple via Firebase)
+     */
+    public function socialLogin(Request $request)
+    {
+        $request->validate([
+            'token' => 'required|string',
+            'provider' => 'required|string', // google | facebook | apple
         ]);
 
-        // assign default role
-        $user->roles()->attach(3);
+        // 1. Get Firebase user data
+        $firebaseUser = $this->firebase->getUserData($request->token);
+
+        $provider = $request->provider;
+        $providerId = $firebaseUser['provider_id'];
+        $email = $firebaseUser['email'];
+        $name = $firebaseUser['name'];
+        $avatar = $firebaseUser['avatar'];
+
+        // 2. Try find user by provider + provider_id
+        $user = User::where('provider', $provider)
+            ->where('provider_id', $providerId)
+            ->first();
+
+        // 3. Try link by email if not found
+        if (!$user && $email) {
+            $user = User::where('email', $email)->first();
+
+            if ($user) {
+                $user->update([
+                    'provider' => $provider,
+                    'provider_id' => $providerId,
+                    'avatar' => $avatar,
+                ]);
+            }
+        }
+
+        // 4. Create user if still not found
+        if (!$user) {
+
+            $location = $this->getLocationFromIp($request->ip());
+
+            $user = User::create([
+                'name' => $name ?? 'User',
+                'username' => $this->generateUsername($name ?? 'user'),
+                'email' => $email,
+                'password' => Hash::make(Str::random(16)),
+                'location' => $location,
+
+                // 🔥 CLEAN SOCIAL LOGIN STRUCTURE
+                'provider' => $provider,
+                'provider_id' => $providerId,
+                'avatar' => $avatar,
+            ]);
+
+            // assign default role
+            $user->roles()->attach(3);
+        }
+
+        // 5. Create Laravel token (Sanctum)
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'message' => 'Social login successful',
+            'access_token' => $token,
+            'user' => new UserResource($user),
+        ]);
     }
-
-    // 5. Generate token (same as your register flow)
-    $token = $user->createToken('auth_token')->plainTextToken;
-
-    return response()->json([
-        'message' => 'Social login successful',
-        'access_token' => $token,
-        'user' => new UserResource($user),
-    ], 200);
-}
 
 
     
@@ -663,5 +708,8 @@ class AuthController extends Controller
 
     return false;
 }
+
+
+
 
 }
