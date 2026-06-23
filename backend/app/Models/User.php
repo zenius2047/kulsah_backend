@@ -61,7 +61,13 @@ class User extends Authenticatable
     public function sessions()
     {
         return $this->hasMany(Session::class);
-    }   
+    }
+
+    // define relationship with onboarding
+    public function onboarding()
+    {
+        return $this->hasOne(Onboarding::class);
+    }
 
     // define relationship with password reset tokens
     public function passwordResetTokens()
