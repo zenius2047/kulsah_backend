@@ -69,6 +69,24 @@ class User extends Authenticatable
         return $this->hasOne(Onboarding::class);
     }
 
+    // fans this user has subscribed to
+    public function subscriptions()
+    {
+        return $this->hasMany(Subscription::class, 'subscriber_id');
+    }
+
+    // fans subscribed to this creator
+    public function subscribers()
+    {
+        return $this->hasMany(Subscription::class, 'creator_id');
+    }
+
+    // plans created by this creator
+    public function subscriptionPlans()
+    {
+        return $this->hasMany(SubscriptionPlan::class, 'creator_id');
+    }
+
     // define relationship with password reset tokens
     public function passwordResetTokens()
     {
