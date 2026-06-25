@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Notifications\Notifiable;
 
 class User extends Authenticatable
@@ -60,7 +61,31 @@ class User extends Authenticatable
     public function sessions()
     {
         return $this->hasMany(Session::class);
-    }   
+    }
+
+    // define relationship with onboarding
+    public function onboarding()
+    {
+        return $this->hasOne(Onboarding::class);
+    }
+
+    // fans this user has subscribed to
+    public function subscriptions()
+    {
+        return $this->hasMany(Subscription::class, 'subscriber_id');
+    }
+
+    // fans subscribed to this creator
+    public function subscribers()
+    {
+        return $this->hasMany(Subscription::class, 'creator_id');
+    }
+
+    // plans created by this creator
+    public function subscriptionPlans()
+    {
+        return $this->hasMany(SubscriptionPlan::class, 'creator_id');
+    }
 
     // define relationship with password reset tokens
     public function passwordResetTokens()
