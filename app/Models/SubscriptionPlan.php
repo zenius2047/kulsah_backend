@@ -12,6 +12,7 @@ class SubscriptionPlan extends Model
         'description',
         'price',
         'currency',
+        'billing_interval',
         'is_active',
     ];
 
@@ -28,5 +29,10 @@ class SubscriptionPlan extends Model
     public function subscriptions()
     {
         return $this->hasMany(Subscription::class);
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
     }
 }

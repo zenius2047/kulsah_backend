@@ -156,13 +156,13 @@ public function me()
 
             $user = User::create([
                 'name' => $request->name,
-                'username' => $request->username,
+                'username' =>'@'. $request->username,
                 'email' => $request->email,
                 'dob' => $request->dob,
                 'gender' => $request->gender,
                 'phone' => $request->phone,
                 'password' => Hash::make($request->password),
-                'location' => $location,
+                'location' =>$location,
             ]);
 
             // assign default role to user
@@ -747,6 +747,8 @@ public function me()
 
     return false;
 }
+
+// upload profile picture
 
 
 
