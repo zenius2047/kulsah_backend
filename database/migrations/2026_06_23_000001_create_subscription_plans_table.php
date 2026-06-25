@@ -22,6 +22,7 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 
+            $table->unique('creator_id');
             $table->index(['creator_id', 'is_active']);
         });
     }
