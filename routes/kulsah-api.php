@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Auth\ProfileController;
 
 // Fan routes
 Route::prefix('fan')
@@ -24,8 +25,9 @@ Route::prefix('creator-fan')
     });
 
 // General routes
-Route::prefix('general')
-    ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
+Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
+    Route::post('/upload-avatar', [ProfileController::class, 'uploadAvatar']);
+    Route::post('/update-profile', [ProfileController::class, 'updateProfile']);
 
     });

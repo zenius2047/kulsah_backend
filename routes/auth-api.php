@@ -27,6 +27,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('/activate', [AuthController::class, 'activateAccount']);
     Route::post('/resend', [AuthController::class, 'resendOtp']);
+    Route::post('/update-vibe', [AuthController::class, 'updateVibe']);
 
     // Backward compatibility for clients that accidentally append a trailing
     // space to the me endpoint, which arrives as /me%20 in the browser.
