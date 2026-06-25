@@ -1,7 +1,6 @@
 <?php
 
 namespace App\Http\Controllers\Api\V1\Auth;
-
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -239,57 +238,56 @@ public function me()
             'password' => 'required|string|min:8',
         ]);
 
-        
-
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        // i need to be activated before i can log in, so I check only the field the user supplied.
-        if ($request->filled('email')) {
-            $user = User::where('email', $request->email)->first();
-        } else {
-            $user = User::where('phone', $request->phone)->first();
-        }
-
-        if (!$user || !$user->activated) {
-            return response()->json([
-                'message' => 'Your account is not activated. Please check your email or phone for the OTP to activate your account.'
-            ], 403);
-        }
-
-        // determine if user is logging in with email or phone number
-        if ($request->filled('email')) {
-            $credentials = [
+        $credentials = $request->filled('email')
+            ? [
                 'email' => $request->email,
                 'password' => $request->password,
-            ];
-        } else {
-            $credentials = [
+            ]
+            : [
                 'phone' => $request->phone,
                 'password' => $request->password,
             ];
+
+        if (! Auth::attempt($credentials)) {
+            return response()->json([
+                'message' => 'Invalid credentials',
+            ], 401);
         }
 
-            if (!Auth::attempt($credentials)) {
-                return response()->json([
-                    'message' => 'Invalid credentials'
-                ], 401);
+        $user = Auth::user();
+
+        if (! $user) {
+            return response()->json([
+                'message' => 'Invalid credentials',
+            ], 401);
+        }
+
+        if (! $user->activated) {
+            $otp = $this->generateOtp();
+
+            DB::table('activation_otp')->updateOrInsert(
+                ['user_id' => $user->id],
+                [
+                    'otp' => $otp,
+                    'expires_at' => now()->addMinutes(10),
+                ]
+            );
+
+            if ($user->email) {
+                $this->sendOtpEmail($user->email, $otp, $user->name);
             }
 
-        $user = Auth::user();
-      
-        // send OTP to email or phone number for verification
-        $otp = $this->generateOtp();
-        // save OTP to database
-        DB::table('activation_otp')->updateOrInsert(
-            ['user_id' => $user->id],
-            ['otp' => $otp, 'expires_at' => now()->addMinutes(10)]
-        );
+            if ($user->phone) {
+                $this->sendOtpSms($user->phone, $otp);
+            }
 
-        // send OTP to phone number
-        if($user->phone) {
-            $this->sendOtpSms($user->phone, $otp);  
+            return response()->json([
+                'message' => 'Your account is not activated. Please check your email or phone for the OTP to activate your account.',
+            ], 403);
         }
 
         // always prioritize email for location, if email is not available, use phone number to get location, if both are not available, set location to null

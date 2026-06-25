@@ -286,12 +286,18 @@ class SubscriptionController extends Controller
         return "subscription-plans:creator:{$creatorId}:public";
     }
 
+    // Use the app's configured cache store so local dev can fall back to database/file.
+    private function cacheStore()
+    {
+        return Cache::store(config('cache.default'));
+    }
+
     /**
      * @return array{0: array<int, array<string, mixed>>, 1: bool}
      */
     private function getCreatorPrivatePlans(Request $request): array
     {
-        $cache = Cache::store('redis');
+        $cache = $this->cacheStore();
         $key = $this->creatorPrivatePlansCacheKey($request->user()->id);
 
         if ($cache->has($key)) {
@@ -318,7 +324,7 @@ class SubscriptionController extends Controller
      */
     private function getCreatorPublicPlans(User $creator, Request $request): array
     {
-        $cache = Cache::store('redis');
+        $cache = $this->cacheStore();
         $key = $this->creatorPublicPlansCacheKey($creator->id);
 
         if ($cache->has($key)) {
@@ -343,8 +349,10 @@ class SubscriptionController extends Controller
     // Invalidate both cache variants after writes so the creator and fan views stay in sync.
     private function forgetCreatorPlansCache(int $creatorId): void
     {
-        Cache::store('redis')->forget($this->creatorPrivatePlansCacheKey($creatorId));
-        Cache::store('redis')->forget($this->creatorPublicPlansCacheKey($creatorId));
+        $cache = $this->cacheStore();
+
+        $cache->forget($this->creatorPrivatePlansCacheKey($creatorId));
+        $cache->forget($this->creatorPublicPlansCacheKey($creatorId));
     }
 
     // Persist an audit record whenever a creator changes subscription access.
