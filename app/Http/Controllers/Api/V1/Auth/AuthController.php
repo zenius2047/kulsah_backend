@@ -748,8 +748,6 @@ public function me()
     return false;
 }
 
-// upload profile picture
-
 
 
 }
