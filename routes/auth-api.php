@@ -27,6 +27,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('/activate', [AuthController::class, 'activateAccount']);
     Route::post('/resend', [AuthController::class, 'resendOtp']);
+    Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/update-vibe', [AuthController::class, 'updateVibe']);
 
     // Backward compatibility for clients that accidentally append a trailing

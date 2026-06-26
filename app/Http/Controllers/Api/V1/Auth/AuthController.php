@@ -266,6 +266,8 @@ public function me()
             ], 401);
         }
 
+        $token = $user->createToken('auth_token')->plainTextToken;
+
         if (! $user->activated) {
             $otp = $this->generateOtp();
 
@@ -274,6 +276,7 @@ public function me()
                 [
                     'otp' => $otp,
                     'expires_at' => now()->addMinutes(10),
+                    'created_at' => now(),
                 ]
             );
 
@@ -287,6 +290,8 @@ public function me()
 
             return response()->json([
                 'message' => 'Your account is not activated. Please check your email or phone for the OTP to activate your account.',
+                'requires_activation' => true,
+                'access_token' => $token,
             ], 403);
         }
 
@@ -330,9 +335,6 @@ public function me()
         }
         // update user location
         DB::table('users')->where('id', $user->id)->update(['location' => $location]);
-
-        // generate access token
-        $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'message' => 'User logged in successfully',
