@@ -596,7 +596,7 @@ public function me()
     $validator = Validator::make($request->all(), [
         'email' => 'required_without:phone|nullable|email',
         'phone' => 'required_without:email|nullable|string',
-        'password' => 'required|min:8|confirmed',
+        'password' => 'required|min:8',
     ]);
 
     if ($validator->fails()) {
