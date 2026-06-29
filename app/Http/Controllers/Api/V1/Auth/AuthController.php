@@ -476,7 +476,7 @@ public function me()
     }
 
 
-    
+    // forgot password
     public function forgottonPassword(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -530,67 +530,126 @@ public function me()
         ]);
     }
 
-    // reset password
-    public function resetPassword(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'email' => 'nullable|email',
-            'phone' => 'nullable|string',
-            'otp' => 'required|string',
-            'password' => 'required|min:8|confirmed',
-        ]);
+    // verify reset otp
+    public function verifyResetOtp(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'email' => 'required_without:phone|nullable|email',
+        'phone' => 'required_without:email|nullable|string',
+        'otp' => 'required|string',
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'message' => $validator->errors()->first()
-            ], 422);
-        }
-
-        $user = User::when($request->email, function ($query) use ($request) {
-                        return $query->where('email', $request->email);
-                    })
-                    ->when($request->phone, function ($query) use ($request) {
-                        return $query->where('phone', $request->phone);
-                    })
-                    ->first();
-
-        if (!$user) {
-            return response()->json([
-                'status' => false,
-                'message' => 'User not found.'
-            ], 404);
-        }
-
-        $otpRecord = PasswordResetOtp::where('user_id', $user->id)
-            ->where('otp', $request->otp)
-            ->first();
-
-        if (!$otpRecord) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid OTP.'
-            ], 400);
-        }
-
-        if ($otpRecord->expires_at->isPast()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'OTP has expired.'
-            ], 400);
-        }
-
-        $user->update([
-            'password' => Hash::make($request->password)
-        ]);
-
-        $otpRecord->delete();
-
+    if ($validator->fails()) {
         return response()->json([
-            'status' => true,
-            'message' => 'Password reset successfully.'
-        ]);
+            'status' => false,
+            'message' => $validator->errors()->first()
+        ], 422);
     }
+
+    $user = User::when($request->email, function ($query) use ($request) {
+                    return $query->where('email', $request->email);
+                })
+                ->when($request->phone, function ($query) use ($request) {
+                    return $query->where('phone', $request->phone);
+                })
+                ->first();
+
+    if (!$user) {
+        return response()->json([
+            'status' => false,
+            'message' => 'User not found.'
+        ], 404);
+    }
+
+    $otpRecord = PasswordResetOtp::where('user_id', $user->id)
+        ->where('otp', $request->otp)
+        ->first();
+
+    if (!$otpRecord) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Invalid OTP.'
+        ], 400);
+    }
+
+    if ($otpRecord->expires_at->isPast()) {
+        return response()->json([
+            'status' => false,
+            'message' => 'OTP has expired.'
+        ], 400);
+    }
+
+    $otpRecord->update([
+        'is_verified' => true
+    ]);
+
+    return response()->json([
+        'status' => true,
+        'message' => 'OTP verified successfully.'
+    ]);
+}
+
+
+    // reset password
+  public function resetPassword(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'email' => 'required_without:phone|nullable|email',
+        'phone' => 'required_without:email|nullable|string',
+        'password' => 'required|min:8|confirmed',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'message' => $validator->errors()->first()
+        ], 422);
+    }
+
+    $user = User::when($request->email, function ($query) use ($request) {
+                    return $query->where('email', $request->email);
+                })
+                ->when($request->phone, function ($query) use ($request) {
+                    return $query->where('phone', $request->phone);
+                })
+                ->first();
+
+    if (!$user) {
+        return response()->json([
+            'status' => false,
+            'message' => 'User not found.'
+        ], 404);
+    }
+
+    $otpRecord = PasswordResetOtp::where('user_id', $user->id)
+        ->where('is_verified', true)
+        ->first();
+
+    if (!$otpRecord) {
+        return response()->json([
+            'status' => false,
+            'message' => 'OTP has not been verified.'
+        ], 400);
+    }
+
+    if ($otpRecord->expires_at->isPast()) {
+        return response()->json([
+            'status' => false,
+            'message' => 'OTP has expired.'
+        ], 400);
+    }
+
+    $user->update([
+        'password' => Hash::make($request->password),
+    ]);
+
+    $otpRecord->delete();
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Password reset successfully.'
+    ]);
+}
 
 
     // logout user

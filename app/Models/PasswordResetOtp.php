@@ -13,10 +13,12 @@ class PasswordResetOtp extends Model
      protected $fillable = [
         'user_id',
         'otp',
-        'expires_at'
+        'expires_at',
+        'is_verified'
     ];
 
     protected $casts = [
         'expires_at' => 'datetime',
+        'is_verified' => 'boolean',
     ];
 }

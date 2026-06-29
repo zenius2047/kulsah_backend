@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Auth\AuthController;
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/forgotton-password', [AuthController::class, 'forgottonPassword']);
+Route::post('/verify-reset-otp', [AuthController::class, 'verifyResetOtp']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 
 // Temporary compatibility route
