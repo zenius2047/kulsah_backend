@@ -230,118 +230,137 @@ public function me()
 
     // manage user authentication
     // login with email and password
-    public function login(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'email' => 'required_without:phone|email|exists:users,email',
-            'phone' => 'required_without:email|string|exists:users,phone',
-            'password' => 'required|string|min:8',
-        ]);
+public function login(Request $request)
+{
+    // =====================
+    // VALIDATION
+    // =====================
+    $validator = Validator::make($request->all(), [
+        'email' => 'required_without:phone|email',
+        'phone' => 'required_without:email|string',
+        'password' => 'required|string|min:8',
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json($validator->errors(), 422);
-        }
+    if ($validator->fails()) {
+        return response()->json($validator->errors(), 422);
+    }
 
-        $credentials = $request->filled('email')
-            ? [
-                'email' => $request->email,
-                'password' => $request->password,
+    // =====================
+    // FIND USER
+    // =====================
+    $user = $request->filled('email')
+        ? DB::table('users')->where('email', $request->email)->first()
+        : DB::table('users')->where('phone', $request->phone)->first();
+
+    if (!$user || !Hash::check($request->password, $user->password)) {
+        return response()->json([
+            'message' => 'Invalid credentials',
+        ], 401);
+    }
+
+    // Convert stdClass to model (needed for Sanctum)
+    $user =User::find($user->id);
+
+    // =====================
+    // OTP ACTIVATION CHECK
+    // =====================
+    if (!$user->activated) {
+
+        $otp = $this->generateOtp();
+
+        DB::table('activation_otp')->updateOrInsert(
+            ['user_id' => $user->id],
+            [
+                'otp' => $otp,
+                'expires_at' => now()->addMinutes(10),
+                'created_at' => now(),
             ]
-            : [
-                'phone' => $request->phone,
-                'password' => $request->password,
-            ];
+        );
 
-        if (! Auth::attempt($credentials)) {
-            return response()->json([
-                'message' => 'Invalid credentials',
-            ], 401);
+        // Send OTP
+        if ($user->email) {
+            $this->sendOtpEmail($user->email, $otp, $user->name);
         }
 
-        $user = Auth::user();
-
-        if (! $user) {
-            return response()->json([
-                'message' => 'Invalid credentials',
-            ], 401);
+        if ($user->phone) {
+            $this->sendOtpSms($user->phone, $otp);
         }
-
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        if (! $user->activated) {
-            $otp = $this->generateOtp();
-
-            DB::table('activation_otp')->updateOrInsert(
-                ['user_id' => $user->id],
-                [
-                    'otp' => $otp,
-                    'expires_at' => now()->addMinutes(10),
-                    'created_at' => now(),
-                ]
-            );
-
-            if ($user->email) {
-                $this->sendOtpEmail($user->email, $otp, $user->name);
-            }
-
-            if ($user->phone) {
-                $this->sendOtpSms($user->phone, $otp);
-            }
-
-            return response()->json([
-                'message' => 'Your account is not activated. Please check your email or phone for the OTP to activate your account.',
-                'requires_activation' => true,
-                'access_token' => $token,
-            ], 403);
-        }
-
-        // always prioritize email for location, if email is not available, use phone number to get location, if both are not available, set location to null
-        if ($user->email) {
-            $location = $this->getLocationFromIp($request->ip());
-        } elseif ($user->phone) {
-            $location = $this->getLocationFromCountryCode($user->country_code);
-        } else {
-            $location = null;
-        }
-
-          // send location, device and who has logged in with the a device to users email
-        
-          // =====================
-        // BUILD DEVICE + LOGIN PAYLOAD (MISSING PIECE)
-        // =====================
-          $agent = new Agent();
-
-            $payload = [
-                'ip_address' => $request->ip(),
-                'location' => $location,
-                'login_time' => now()->toDateTimeString(),
-                'device' => [
-                    'browser' => $agent->browser(),
-                    'platform' => $agent->platform(),
-                    'device' => $agent->device() ?? 'Unknown Device',
-                    'is_mobile' => $agent->isMobile(),
-                ],
-            ];
-
-        // =====================
-        // SEND LOGIN EMAIL ALERT
-        // =====================
-        if ($user->email) {
-            $this->sendEmailForLogin(
-                $user->email,
-                $user->name,
-                $payload
-            );
-        }
-        // update user location
-        DB::table('users')->where('id', $user->id)->update(['location' => $location]);
-
         return response()->json([
-            'message' => 'User logged in successfully',
-            'access_token' => $token,
-            'user' => new UserResource($user),
-        ]);
+            'message' => 'Account not activated. OTP has been sent to your email or phone.',
+            'token'=> $token,
+            'requires_activation' => true,
+        ], 403);
     }
+
+    // =====================
+    // LOGIN USER (SANCTUM TOKEN)
+    // =====================
+    Auth::login($user);
+
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    // =====================
+    // DEVICE INFO
+    // =====================
+    $agent = new Agent();
+
+    // =====================
+    // LOCATION DETECTION
+    // =====================
+    if ($user->email) {
+        $location = $this->getLocationFromIp($request->ip());
+    } elseif ($user->phone) {
+        $location = $this->getLocationFromCountryCode($user->country_code);
+    } else {
+        $location = null;
+    }
+
+    // =====================
+    // LOGIN PAYLOAD
+    // =====================
+    $payload = [
+        'ip_address' => $request->ip(),
+        'location' => $location,
+        'login_time' => now()->toDateTimeString(),
+        'device' => [
+            'browser' => $agent->browser(),
+            'platform' => $agent->platform(),
+            'device' => $agent->device() ?? 'Unknown Device',
+            'is_mobile' => $agent->isMobile(),
+        ],
+    ];
+
+    // =====================
+    // SEND LOGIN ALERT EMAIL
+    // =====================
+    if ($user->email) {
+        $this->sendEmailForLogin(
+            $user->email,
+            $user->name,
+            $payload
+        );
+    }
+
+    // =====================
+    // UPDATE LOCATION
+    // =====================
+    DB::table('users')
+        ->where('id', $user->id)
+        ->update([
+            'location' => $location
+        ]);
+
+    // =====================
+    // RESPONSE
+    // =====================
+    return response()->json([
+        'message' => 'User logged in successfully',
+        'access_token' => $token,
+        'user' => new UserResource($user),
+    ]);
+}
 
 
 
