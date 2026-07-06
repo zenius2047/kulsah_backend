@@ -305,6 +305,7 @@ public function login(Request $request)
     // DEVICE INFO
     // =====================
     $agent = new Agent();
+  
 
     // =====================
     // LOCATION DETECTION

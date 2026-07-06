@@ -93,6 +93,11 @@ class User extends Authenticatable
         return $this->hasMany(PasswordResetToken::class);
     }
 
+    public function wallet()
+    {
+        return $this->hasOne(Wallet::class);
+    }
+
     //GET avatar attribute
     public function getAvatarAttribute($value)
     {

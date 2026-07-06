@@ -9,6 +9,7 @@ use App\Models\Subscription;
 use App\Models\SubscriptionAction;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
+use App\Services\WalletService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -18,6 +19,10 @@ class SubscriptionController extends Controller
 {
     private const CACHE_TTL_MINUTES = 10;
     private const RENEWAL_WINDOW_DAYS = 7;
+
+    public function __construct(private readonly WalletService $walletService)
+    {
+    }
 
     // Return the authenticated creator's own plans, cached in Redis for a short window.
     public function index(Request $request)
@@ -119,6 +124,12 @@ class SubscriptionController extends Controller
         abort_unless($subscriptionPlan->is_active, 422, 'Selected subscription plan is inactive.');
         abort_if((string) $request->user()->id === (string) $subscriptionPlan->creator_id, 422, 'You cannot subscribe to your own plan.');
 
+        $validated = $request->validate([
+            'fx_rate_used' => ['nullable', 'numeric', 'gt:0'],
+            'platform_fee_usd' => ['nullable', 'numeric', 'min:0'],
+            'processor_fee_usd' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
         $existingSubscription = Subscription::query()
             ->where('subscriber_id', $request->user()->id)
             ->where('creator_id', $subscriptionPlan->creator_id)
@@ -128,7 +139,7 @@ class SubscriptionController extends Controller
             abort(403, 'You have been blocked from this creator.');
         }
 
-        $subscription = DB::transaction(function () use ($request, $subscriptionPlan, $existingSubscription) {
+        $subscription = DB::transaction(function () use ($request, $subscriptionPlan, $existingSubscription, $validated) {
             if ($existingSubscription && ! $this->canRenewSubscription($existingSubscription)) {
                 abort(422, 'You can renew this subscription when it is close to expiry or after it expires.');
             }
@@ -136,6 +147,35 @@ class SubscriptionController extends Controller
             $startsAt = $existingSubscription?->expires_at && $existingSubscription->expires_at->isFuture()
                 ? $existingSubscription->expires_at->copy()
                 : now();
+
+            if ((float) $subscriptionPlan->price > 0) {
+                $fxRateUsed = $validated['fx_rate_used'] ?? ($subscriptionPlan->currency === 'USD' ? 1 : null);
+
+                abort_if(
+                    $subscriptionPlan->currency !== 'USD' && ! $fxRateUsed,
+                    422,
+                    'FX rate is required for non-USD subscription plans.'
+                );
+
+                $this->walletService->recordPayment(
+                    payer: $request->user(),
+                    creator: $subscriptionPlan->creator,
+                    localAmount: $subscriptionPlan->price,
+                    localCurrency: $subscriptionPlan->currency,
+                    fxRateUsed: $fxRateUsed,
+                    platformFeeUsd: $validated['platform_fee_usd'] ?? 0,
+                    processorFeeUsd: $validated['processor_fee_usd'] ?? 0,
+                    description: "Subscription payment for {$subscriptionPlan->name}",
+                    metadata: [
+                        'subscription_plan_id' => $subscriptionPlan->id,
+                        'creator_id' => $subscriptionPlan->creator_id,
+                        'subscriber_id' => $request->user()->id,
+                        'subscription_action' => 'subscribe',
+                    ],
+                    actor: $request->user(),
+                    useTransaction: false
+                );
+            }
 
             return Subscription::updateOrCreate(
                 [

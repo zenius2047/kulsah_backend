@@ -24,6 +24,7 @@ class UserResource extends JsonResource
             'bio' => $this->bio,
             'role' => $this->roles->first()?->name,
             'location' => $this->location,
+            'wallet' => $this->whenLoaded('wallet', fn () => new WalletResource($this->wallet)),
             'verified' => $this->verified,
             'verified_at' => $this->verified_at,
             'activated' => $this->activated,

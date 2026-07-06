@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
 use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
+use App\Http\Controllers\Api\V1\Wallet\WalletController;
 
 // Fan routes
 Route::prefix('fan')
@@ -32,7 +33,11 @@ Route::prefix('creator-fan')
 // General routes
 Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
-    Route::post('/upload-avatar', [ProfileController::class, 'uploadAvatar']);
-    Route::post('/update-profile', [ProfileController::class, 'updateProfile']);
-
+        Route::post('/upload-avatar', [ProfileController::class, 'uploadAvatar']);
+        Route::post('/update-profile', [ProfileController::class, 'updateProfile']);
+        Route::get('/wallet', [WalletController::class, 'show']);
+        Route::get('/wallet/transactions', [WalletController::class, 'transactions']);
+        Route::get('/wallet/ledger', [WalletController::class, 'ledger']);
+        Route::post('/wallet/transfer', [WalletController::class, 'transfer']);
+        Route::post('/wallet/top-up', [WalletController::class, 'topUp']);
     });

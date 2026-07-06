@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+psycopg2
+redis
+numpy
+pydantic
