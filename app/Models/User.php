@@ -98,6 +98,31 @@ class User extends Authenticatable
         return $this->hasOne(Wallet::class);
     }
 
+    public function videos()
+    {
+        return $this->hasMany(Video::class);
+    }
+
+    public function videoLikes()
+    {
+        return $this->hasMany(VideoLike::class);
+    }
+
+    public function videoBookmarks()
+    {
+        return $this->hasMany(VideoBookmark::class);
+    }
+
+    public function follows()
+    {
+        return $this->hasMany(UserFollow::class, 'follower_id');
+    }
+
+    public function followers()
+    {
+        return $this->hasMany(UserFollow::class, 'followed_id');
+    }
+
     //GET avatar attribute
     public function getAvatarAttribute($value)
     {

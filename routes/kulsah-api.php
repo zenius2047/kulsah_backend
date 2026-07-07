@@ -2,7 +2,10 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
+use App\Http\Controllers\Api\V1\Feed\FeedController;
+use App\Http\Controllers\Api\V1\Feed\SocialController;
 use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
+use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 
 // Fan routes
@@ -16,6 +19,7 @@ Route::prefix('fan')
 Route::prefix('creator')
     ->middleware(['auth:sanctum', 'role:creator'])
     ->group(function () {
+        Route::post('/videos', [VideoController::class, 'store']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
         Route::patch('/subscription-plans/{subscriptionPlan}', [SubscriptionController::class, 'update']);
@@ -33,6 +37,16 @@ Route::prefix('creator-fan')
 // General routes
 Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
+        Route::get('/feed', [FeedController::class, 'index']);
+        Route::get('/videos/{video}', [VideoController::class, 'show']);
+        Route::post('/videos/{video}/like', [SocialController::class, 'like']);
+        Route::delete('/videos/{video}/like', [SocialController::class, 'unlike']);
+        Route::post('/videos/{video}/bookmark', [SocialController::class, 'bookmark']);
+        Route::delete('/videos/{video}/bookmark', [SocialController::class, 'unbookmark']);
+        Route::post('/videos/{video}/comments', [SocialController::class, 'comment']);
+        Route::post('/videos/{video}/comments/{comment}/reply', [SocialController::class, 'reply']);
+        Route::post('/creators/{creator}/follow', [SocialController::class, 'follow']);
+        Route::delete('/creators/{creator}/follow', [SocialController::class, 'unfollow']);
         Route::post('/upload-avatar', [ProfileController::class, 'uploadAvatar']);
         Route::post('/update-profile', [ProfileController::class, 'updateProfile']);
         Route::get('/wallet', [WalletController::class, 'show']);

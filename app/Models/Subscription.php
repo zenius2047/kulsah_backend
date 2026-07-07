@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\FeedService;
 use Illuminate\Database\Eloquent\Model;
 
 class Subscription extends Model
@@ -23,6 +24,17 @@ class Subscription extends Model
         'expires_at' => 'datetime',
         'blocked_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        static::saved(static function (): void {
+            app(FeedService::class)->invalidateFeedCaches();
+        });
+
+        static::deleted(static function (): void {
+            app(FeedService::class)->invalidateFeedCaches();
+        });
+    }
 
     public function subscriber()
     {

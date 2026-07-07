@@ -22,6 +22,7 @@ use Carbon\Carbon;
 use App\Traits\HashApiToken;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 use Jenssegers\Agent\Agent;
 
 
@@ -90,20 +91,38 @@ public function me()
     // get location from user sessions payload
  private function getLocationFromIp($ip)
 {
-    $response = Http::timeout(5)
-        ->get("https://ipinfo.io/{$ip}/json");
-
-    if (!$response->successful()) {
+    if (! filter_var($ip, FILTER_VALIDATE_IP)) {
         return null;
     }
 
-    $data = $response->json();
+    // Docker and local dev environments often block outbound DNS/network access.
+    // If IP lookup is disabled or fails, we fall back to null and keep auth flowing.
+    if (! (bool) env('IPINFO_LOOKUP_ENABLED', false)) {
+        return null;
+    }
 
-    return collect([
-        $data['city'] ?? null,
-        $data['region'] ?? null,
-        $data['country'] ?? null,
-    ])->filter()->implode(', ');
+    try {
+        $response = Http::timeout(5)->retry(2, 250)->get("https://ipinfo.io/{$ip}/json");
+
+        if (! $response->successful()) {
+            return null;
+        }
+
+        $data = $response->json();
+
+        return collect([
+            $data['city'] ?? null,
+            $data['region'] ?? null,
+            $data['country'] ?? null,
+        ])->filter()->implode(', ');
+    } catch (Throwable $throwable) {
+        Log::warning('IP location lookup failed.', [
+            'ip' => $ip,
+            'message' => $throwable->getMessage(),
+        ]);
+
+        return null;
+    }
 }
 
     //fetch user details

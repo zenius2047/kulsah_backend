@@ -2,6 +2,9 @@
 
 namespace App\Providers;
 
+use App\Jobs\VideoUploaded;
+use App\Services\FeedService;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -19,6 +22,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        Event::listen(VideoUploaded::class, function (VideoUploaded $event): void {
+            app(FeedService::class)->invalidateFeedCaches();
+        });
     }
 }
