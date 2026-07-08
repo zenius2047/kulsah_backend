@@ -105,7 +105,7 @@ class CloudinaryService
         }
 
         return [
-            'cdn_url' => $response['secure_url'],
+            'cdn_url' => $this->generateDerivedVideoUrl($response['public_id']),
             'cloudinary_public_id' => $response['public_id'],
             'thumbnail_url' => $this->generateThumbnailUrl($response['public_id']),
             'duration' => isset($response['duration']) ? (int) round((float) $response['duration']) : null,
@@ -113,11 +113,11 @@ class CloudinaryService
         ];
     }
 
-    public function generateOptimizedUrl(string $publicId): string
+    public function generateDerivedVideoUrl(string $publicId): string
     {
         $cloudName = config('services.cloudinary.cloud_name');
 
-        return "https://res.cloudinary.com/{$cloudName}/video/upload/f_auto,q_auto/{$publicId}";
+        return "https://res.cloudinary.com/{$cloudName}/video/upload/a_auto,f_auto,q_auto/{$publicId}";
     }
 
     public function generateThumbnailUrl(string $publicId): string

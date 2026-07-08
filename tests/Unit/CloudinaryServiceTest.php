@@ -3,7 +3,7 @@
 namespace Tests\Unit;
 
 use App\Services\CloudinaryService;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class CloudinaryServiceTest extends TestCase
 {
@@ -19,5 +19,21 @@ class CloudinaryServiceTest extends TestCase
         $this->assertSame('demo-public-id', $params['public_id']);
         $this->assertSame('transcode_fallback=true', $params['context']);
         $this->assertSame(1700000000, $params['timestamp']);
+    }
+
+    public function testDerivedVideoUrlUsesAutoOrientationAndOptimization(): void
+    {
+        config()->set('services.cloudinary.cloud_name', 'demo');
+
+        $service = new CloudinaryService();
+        $method = new \ReflectionMethod(CloudinaryService::class, 'generateDerivedVideoUrl');
+        $method->setAccessible(true);
+
+        $url = $method->invoke($service, 'videos/originals/demo-public-id');
+
+        $this->assertSame(
+            'https://res.cloudinary.com/demo/video/upload/a_auto,f_auto,q_auto/videos/originals/demo-public-id',
+            $url
+        );
     }
 }
