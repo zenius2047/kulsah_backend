@@ -4,17 +4,12 @@ namespace App\Models;
 
 use App\Services\FeedService;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 
-class VideoComment extends Model
+class VideoCommentLike extends Model
 {
-    use SoftDeletes;
-
     protected $fillable = [
-        'video_id',
+        'video_comment_id',
         'user_id',
-        'parent_id',
-        'body',
     ];
 
     protected static function booted(): void
@@ -28,28 +23,13 @@ class VideoComment extends Model
         });
     }
 
-    public function video()
+    public function comment()
     {
-        return $this->belongsTo(Video::class);
+        return $this->belongsTo(VideoComment::class, 'video_comment_id');
     }
 
     public function user()
     {
         return $this->belongsTo(User::class);
-    }
-
-    public function parent()
-    {
-        return $this->belongsTo(self::class, 'parent_id');
-    }
-
-    public function replies()
-    {
-        return $this->hasMany(self::class, 'parent_id');
-    }
-
-    public function likes()
-    {
-        return $this->hasMany(VideoCommentLike::class, 'video_comment_id');
     }
 }

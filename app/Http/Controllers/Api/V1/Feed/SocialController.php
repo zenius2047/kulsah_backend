@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api\V1\Feed;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\VideoCommentResource;
 use App\Models\User;
 use App\Models\Video;
+use App\Models\VideoComment;
 use App\Services\SocialEngagementService;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -92,6 +94,24 @@ class SocialController extends Controller
         }, 201);
     }
 
+    public function comments(Request $request, string $video)
+    {
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        return $this->handle(function () use ($video, $validated) {
+            $comments = $this->socialEngagementService->listVideoComments(
+                video: Video::query()->findOrFail($video),
+                perPage: (int) ($validated['per_page'] ?? 20),
+            );
+
+            return [
+                'data' => VideoCommentResource::collection($comments),
+            ];
+        });
+    }
+
     public function reply(Request $request, string $video, int $comment)
     {
         $validated = $request->validate([
@@ -106,6 +126,30 @@ class SocialController extends Controller
                 parentId: $comment
             );
         }, 201);
+    }
+
+    public function likeComment(Request $request, string $video, int $comment)
+    {
+        return $this->handle(function () use ($request, $video, $comment) {
+            $videoModel = Video::query()->findOrFail($video);
+            $commentModel = VideoComment::query()
+                ->where('video_id', $videoModel->id)
+                ->findOrFail($comment);
+
+            return $this->socialEngagementService->likeComment($request->user(), $commentModel);
+        });
+    }
+
+    public function unlikeComment(Request $request, string $video, int $comment)
+    {
+        return $this->handle(function () use ($request, $video, $comment) {
+            $videoModel = Video::query()->findOrFail($video);
+            $commentModel = VideoComment::query()
+                ->where('video_id', $videoModel->id)
+                ->findOrFail($comment);
+
+            return $this->socialEngagementService->unlikeComment($request->user(), $commentModel);
+        });
     }
 
     private function handle(callable $callback, int $status = 200)

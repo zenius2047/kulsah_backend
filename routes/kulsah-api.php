@@ -46,7 +46,10 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::post('/videos/{video}/bookmark', [SocialController::class, 'bookmark']);
         Route::delete('/videos/{video}/bookmark', [SocialController::class, 'unbookmark']);
         Route::post('/videos/{video}/comments', [SocialController::class, 'comment']);
+        Route::get('/videos/{video}/comments', [SocialController::class, 'comments']);
         Route::post('/videos/{video}/comments/{comment}/reply', [SocialController::class, 'reply']);
+        Route::post('/videos/{video}/comments/{comment}/like', [SocialController::class, 'likeComment']);
+        Route::delete('/videos/{video}/comments/{comment}/like', [SocialController::class, 'unlikeComment']);
         Route::post('/creators/{creator}/follow', [SocialController::class, 'follow']);
         Route::delete('/creators/{creator}/follow', [SocialController::class, 'unfollow']);
         Route::post('/upload-avatar', [ProfileController::class, 'uploadAvatar']);

@@ -21,6 +21,7 @@ class VideoResource extends JsonResource
             'content_types' => is_array($this->content_types) ? $this->content_types : [],
             'is_premium' => (bool) $this->is_premium,
             'cdn_url' => $this->cdn_url,
+            'stream_url' => data_get($metadata, 'stream_url', $this->cdn_url),
             'thumbnail' => $this->thumbnail_url,
             'duration' => $this->duration,
             'status' => $this->status,

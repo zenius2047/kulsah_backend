@@ -89,7 +89,10 @@ class ProcessVideoJob implements ShouldQueue
                 'cloudinary_public_id' => $result['cloudinary_public_id'],
                 'thumbnail_url' => $result['thumbnail_url'],
                 'duration' => $result['duration'],
-                'metadata' => array_merge($video->metadata ?? [], $result['metadata'] ?? []),
+                'metadata' => array_merge($video->metadata ?? [], $result['metadata'] ?? [], [
+                    'stream_url' => $result['stream_url'] ?? $result['cdn_url'] ?? null,
+                    'streaming_profile' => $result['streaming_profile'] ?? null,
+                ]),
                 'status' => 'ready',
                 'progress_percentage' => 100,
             ]);

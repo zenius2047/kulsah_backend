@@ -7,8 +7,11 @@ use App\Models\UserFollow;
 use App\Models\Video;
 use App\Models\VideoBookmark;
 use App\Models\VideoComment;
+use App\Models\VideoCommentLike;
 use App\Models\VideoLike;
+use App\Http\Resources\VideoCommentResource;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -159,23 +162,75 @@ class SocialEngagementService
             'body' => $body,
         ]);
 
-        $comment->load('user:id,name,username,avatar');
+        $comment->load([
+            'user:id,name,username,avatar,verified',
+            'replies.user:id,name,username,avatar,verified',
+        ]);
+        $comment->loadCount('likes');
 
         return [
             'message' => $parentId ? 'Reply added successfully.' : 'Comment added successfully.',
-            'data' => [
-                'id' => $comment->id,
-                'video_id' => $comment->video_id,
-                'parent_id' => $comment->parent_id,
-                'body' => $comment->body,
-                'user' => [
-                    'id' => $comment->user->id,
-                    'name' => $comment->user->name,
-                    'username' => $comment->user->username,
-                    'avatar' => $comment->user->avatar,
-                ],
-                'created_at' => optional($comment->created_at)?->toIso8601String(),
-            ],
+            'data' => new VideoCommentResource($comment),
+        ];
+    }
+
+    public function listVideoComments(Video $video, int $perPage = 20): LengthAwarePaginator
+    {
+        return VideoComment::query()
+            ->where('video_id', $video->id)
+            ->whereNull('parent_id')
+            ->with([
+                'user:id,name,username,avatar,verified',
+                'replies' => function ($query): void {
+                    $query->oldest()->with('user:id,name,username,avatar,verified')->withCount('likes');
+                },
+            ])
+            ->withCount('likes')
+            ->latest()
+            ->paginate($perPage);
+    }
+
+    public function likeComment(User $user, VideoComment $comment): array
+    {
+        $created = false;
+
+        DB::transaction(function () use ($user, $comment, &$created): void {
+            $like = VideoCommentLike::query()->firstOrCreate([
+                'video_comment_id' => $comment->id,
+                'user_id' => $user->id,
+            ]);
+
+            $created = $like->wasRecentlyCreated;
+        });
+
+        $comment->load([
+            'user:id,name,username,avatar,verified',
+            'replies.user:id,name,username,avatar,verified',
+        ]);
+        $comment->loadCount('likes');
+
+        return [
+            'message' => $created ? 'Comment liked successfully.' : 'Comment was already liked.',
+            'data' => new VideoCommentResource($comment),
+        ];
+    }
+
+    public function unlikeComment(User $user, VideoComment $comment): array
+    {
+        VideoCommentLike::query()
+            ->where('video_comment_id', $comment->id)
+            ->where('user_id', $user->id)
+            ->delete();
+
+        $comment->load([
+            'user:id,name,username,avatar,verified',
+            'replies.user:id,name,username,avatar,verified',
+        ]);
+        $comment->loadCount('likes');
+
+        return [
+            'message' => 'Comment unliked successfully.',
+            'data' => new VideoCommentResource($comment),
         ];
     }
 

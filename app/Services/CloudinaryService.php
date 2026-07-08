@@ -105,19 +105,29 @@ class CloudinaryService
         }
 
         return [
-            'cdn_url' => $this->generateDerivedVideoUrl($response['public_id']),
+            'cdn_url' => $this->generateAdaptiveStreamUrl($response['public_id']),
+            'stream_url' => $this->generateAdaptiveStreamUrl($response['public_id']),
             'cloudinary_public_id' => $response['public_id'],
             'thumbnail_url' => $this->generateThumbnailUrl($response['public_id']),
             'duration' => isset($response['duration']) ? (int) round((float) $response['duration']) : null,
+            'streaming_profile' => config('video.cloudinary_stream_max_resolution', '2160p'),
             'metadata' => $response,
         ];
     }
 
-    public function generateDerivedVideoUrl(string $publicId): string
+    public function generateAdaptiveStreamUrl(string $publicId): string
     {
         $cloudName = config('services.cloudinary.cloud_name');
+        $manifestExtension = ltrim((string) config('video.cloudinary_stream_manifest_extension', 'm3u8'), '.');
+        $maxResolution = (string) config('video.cloudinary_stream_max_resolution', '2160p');
+        $deliveryProfile = 'sp_auto:maxres_'.$maxResolution;
 
-        return "https://res.cloudinary.com/{$cloudName}/video/upload/a_auto,f_auto,q_auto/{$publicId}";
+        return "https://res.cloudinary.com/{$cloudName}/video/upload/{$deliveryProfile}/{$publicId}.{$manifestExtension}";
+    }
+
+    public function generateDerivedVideoUrl(string $publicId): string
+    {
+        return $this->generateAdaptiveStreamUrl($publicId);
     }
 
     public function generateThumbnailUrl(string $publicId): string
@@ -186,7 +196,8 @@ class CloudinaryService
         $targetPath = $outputPath.'.mp4';
         @unlink($outputPath);
 
-        $maxHeight = max(360, (int) config('video.transcode_max_height', 720));
+        // Keep the mezzanine high enough for Cloudinary to generate lower renditions later.
+        $maxHeight = max(2160, (int) config('video.transcode_max_height', 2160));
         $preset = (string) config('video.transcode_preset', 'veryfast');
         $crf = (int) config('video.transcode_crf', 28);
         $audioBitrate = (string) config('video.transcode_audio_bitrate', '128k');
