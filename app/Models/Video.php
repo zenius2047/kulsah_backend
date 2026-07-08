@@ -14,6 +14,8 @@ class Video extends Model
         'title',
         'caption',
         'visibility',
+        'content_type',
+        'content_types',
         'source_url',
         'source_key',
         'cdn_url',
@@ -21,6 +23,8 @@ class Video extends Model
         'thumbnail_url',
         'duration',
         'status',
+        'progress_percentage',
+        'views_count',
         'metadata',
     ];
 
@@ -28,7 +32,10 @@ class Video extends Model
     {
         return [
             'metadata' => 'array',
+            'content_types' => 'array',
             'duration' => 'integer',
+            'progress_percentage' => 'integer',
+            'views_count' => 'integer',
         ];
     }
 

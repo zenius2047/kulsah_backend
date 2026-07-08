@@ -20,6 +20,7 @@ Route::prefix('creator')
     ->middleware(['auth:sanctum', 'role:creator'])
     ->group(function () {
         Route::post('/videos', [VideoController::class, 'store']);
+        Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
         Route::patch('/subscription-plans/{subscriptionPlan}', [SubscriptionController::class, 'update']);
@@ -39,6 +40,7 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/videos/{video}', [VideoController::class, 'show']);
+        Route::post('/videos/{video}/view', [VideoController::class, 'view']);
         Route::post('/videos/{video}/like', [SocialController::class, 'like']);
         Route::delete('/videos/{video}/like', [SocialController::class, 'unlike']);
         Route::post('/videos/{video}/bookmark', [SocialController::class, 'bookmark']);

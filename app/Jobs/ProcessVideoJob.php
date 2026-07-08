@@ -45,6 +45,10 @@ class ProcessVideoJob implements ShouldQueue
             'source_key' => $video->source_key,
         ]);
 
+        $video->update([
+            'progress_percentage' => max((int) ($video->progress_percentage ?? 0), 50),
+        ]);
+
         if ($video->status === 'ready' && $video->cdn_url && $video->cloudinary_public_id) {
             Log::info('ProcessVideoJob skipped because the video is already ready.', [
                 'video_id' => $video->id,
@@ -74,6 +78,10 @@ class ProcessVideoJob implements ShouldQueue
                 'source_key' => $video->source_key,
             ]);
 
+            $video->update([
+                'progress_percentage' => max((int) ($video->progress_percentage ?? 0), 75),
+            ]);
+
             $result = $cloudinaryService->uploadVideoFromS3Key($video->source_key);
 
             $video->update([
@@ -83,6 +91,7 @@ class ProcessVideoJob implements ShouldQueue
                 'duration' => $result['duration'],
                 'metadata' => array_merge($video->metadata ?? [], $result['metadata'] ?? []),
                 'status' => 'ready',
+                'progress_percentage' => 100,
             ]);
 
             event(new VideoUploaded($video->fresh()));
@@ -94,6 +103,7 @@ class ProcessVideoJob implements ShouldQueue
         } catch (Throwable $throwable) {
             $video->update([
                 'status' => 'failed',
+                'progress_percentage' => min((int) ($video->progress_percentage ?? 0), 99),
                 'metadata' => array_merge($video->metadata ?? [], [
                     'error' => $throwable->getMessage(),
                 ]),

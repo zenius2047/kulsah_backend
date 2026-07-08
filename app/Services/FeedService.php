@@ -100,6 +100,8 @@ class FeedService
         $text = strtolower(trim(implode(' ', array_filter([
             $video->title,
             $video->caption,
+            $video->content_type,
+            is_array($video->content_types ?? null) ? implode(' ', $video->content_types) : null,
             data_get($video->metadata, 'topic'),
             data_get($video->metadata, 'category'),
         ]))));

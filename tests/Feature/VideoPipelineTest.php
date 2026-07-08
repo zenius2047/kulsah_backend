@@ -10,11 +10,13 @@ use App\Models\VideoBookmark;
 use App\Models\VideoComment;
 use App\Models\VideoLike;
 use App\Models\Video;
+use App\Notifications\VideoMentionedNotification;
 use App\Services\VideoInspectionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -56,6 +58,7 @@ class VideoPipelineTest extends TestCase
             ->postJson('/api/v1/creator/videos', [
                 'title' => 'Test video',
                 'caption' => 'Test caption',
+                'content_type' => ['dance', 'music'],
                 'visibility' => 'public',
                 'video' => UploadedFile::fake()->create('sample.mp4', 1024, 'video/mp4'),
             ]);
@@ -63,13 +66,157 @@ class VideoPipelineTest extends TestCase
         $response->assertCreated()
             ->assertJsonPath('message', 'Video uploaded successfully and is being processed.');
 
-        $this->assertDatabaseHas('videos', [
-            'user_id' => $creator->id,
-            'title' => 'Test video',
-            'status' => 'processing',
-        ]);
+        $videoId = $response->json('data.id');
+        $video = Video::query()->findOrFail($videoId);
+
+        $this->assertSame('dance', $video->content_type);
+        $this->assertSame(['dance', 'music'], $video->content_types);
+        $this->assertSame(25, $video->progress_percentage);
+        $this->assertSame(0, $video->views_count);
 
         Queue::assertPushed(ProcessVideoJob::class);
+    }
+
+    public function test_creator_can_poll_video_upload_progress(): void
+    {
+        config()->set('logging.default', 'null');
+        $creator = User::factory()->create([
+            'username' => 'creator_progress',
+        ]);
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Processing video',
+            'caption' => 'Still uploading',
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/source.mp4',
+            'source_key' => 'videos/originals/1/example.mp4',
+            'status' => 'processing',
+            'progress_percentage' => 68,
+            'metadata' => [],
+        ]);
+
+        $response = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson("/api/v1/creator/videos/{$video->id}/progress");
+
+        $response->assertOk()
+            ->assertJsonPath('data.video_id', $video->id)
+            ->assertJsonPath('data.status', 'processing')
+            ->assertJsonPath('data.progress_percentage', 68);
+    }
+
+    public function test_creator_upload_mentions_user_and_dispatches_notification(): void
+    {
+        config()->set('logging.default', 'null');
+        $diskRoot = sys_get_temp_dir().DIRECTORY_SEPARATOR.'kulsah-video-tests';
+        File::ensureDirectoryExists($diskRoot);
+
+        config()->set('filesystems.disks.testlocal', [
+            'driver' => 'local',
+            'root' => $diskRoot,
+            'url' => 'http://localhost/storage',
+            'visibility' => 'private',
+            'throw' => false,
+        ]);
+        config()->set('video.storage_disk', 'testlocal');
+        app()->instance(VideoInspectionService::class, new class extends VideoInspectionService
+        {
+            public function getDurationSeconds(string $path): ?float
+            {
+                return 15.0;
+            }
+        });
+        Queue::fake();
+        Notification::fake();
+
+        $creator = User::factory()->create([
+            'name' => 'Creator One',
+            'username' => 'creator_1',
+        ]);
+        $mentioned = User::factory()->create([
+            'name' => 'Mentioned User',
+            'username' => 'mentioned_user',
+        ]);
+
+        $response = $this
+            ->actingAs($creator)
+            ->withoutMiddleware()
+            ->postJson('/api/v1/creator/videos', [
+                'title' => 'Mentions test',
+                'caption' => 'A fun #dance clip with @mentioned_user',
+                'content_type' => ['dance', 'music'],
+                'visibility' => 'public',
+                'video' => UploadedFile::fake()->create('sample.mp4', 1024, 'video/mp4'),
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.content_type', 'dance');
+        $response->assertJsonPath('data.content_types.0', 'dance');
+        $response->assertJsonPath('data.content_types.1', 'music');
+
+        $videoId = $response->json('data.id');
+
+        $this->assertDatabaseHas('videos', [
+            'id' => $videoId,
+            'content_type' => 'dance',
+        ]);
+
+        Notification::assertSentTo(
+            $mentioned,
+            VideoMentionedNotification::class,
+            function (VideoMentionedNotification $notification) use ($videoId, $creator, $mentioned): bool {
+                return (int) $notification->video->id === (int) $videoId
+                    && (int) $notification->actor->id === (int) $creator->id
+                    && in_array('dance', $notification->hashtags, true)
+                    && in_array('mentioned_user', $notification->mentions, true);
+            }
+        );
+    }
+
+    public function test_user_can_record_a_video_view_once_during_cooldown(): void
+    {
+        config()->set('cache.default', 'array');
+
+        $viewer = User::factory()->create([
+            'username' => 'viewer_views',
+        ]);
+        $creator = User::factory()->create([
+            'username' => 'creator_views',
+        ]);
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Viewed video',
+            'caption' => 'A clip',
+            'content_type' => 'dance',
+            'content_types' => ['dance'],
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/source.mp4',
+            'source_key' => 'videos/originals/1/example.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.mp4',
+            'thumbnail_url' => 'https://res.cloudinary.com/demo/video/upload/example.jpg',
+            'duration' => 42,
+            'status' => 'ready',
+            'views_count' => 0,
+            'metadata' => [],
+        ]);
+
+        $first = $this
+            ->actingAs($viewer, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->postJson("/api/v1/general/videos/{$video->id}/view");
+
+        $first->assertOk()
+            ->assertJsonPath('data.views_count', 1);
+
+        $second = $this
+            ->actingAs($viewer, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->postJson("/api/v1/general/videos/{$video->id}/view");
+
+        $second->assertOk()
+            ->assertJsonPath('data.views_count', 1);
     }
 
     public function test_creator_cannot_upload_video_longer_than_two_minutes(): void
@@ -105,6 +252,7 @@ class VideoPipelineTest extends TestCase
             ->postJson('/api/v1/creator/videos', [
                 'title' => 'Too long video',
                 'caption' => 'This should fail',
+                'content_type' => ['education', 'tutorial'],
                 'visibility' => 'public',
                 'video' => UploadedFile::fake()->create('too-long.mp4', 1024, 'video/mp4'),
             ]);

@@ -18,6 +18,18 @@ class VideoController extends Controller
 
     public function store(Request $request)
     {
+        $contentTypesInput = $request->input('content_type');
+        $contentTypes = is_array($contentTypesInput)
+            ? $contentTypesInput
+            : preg_split('/\s*,\s*/', trim((string) $contentTypesInput), -1, PREG_SPLIT_NO_EMPTY);
+
+        $request->merge([
+            'content_type' => array_values(array_filter(array_map(
+                fn ($value) => is_string($value) ? trim($value) : '',
+                $contentTypes
+            ))),
+        ]);
+
         $validated = $request->validate([
             'video' => [
                 'required',
@@ -27,6 +39,8 @@ class VideoController extends Controller
             ],
             'title' => ['nullable', 'string', 'max:255'],
             'caption' => ['nullable', 'string', 'max:5000'],
+            'content_type' => ['required', 'array', 'min:1'],
+            'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['required', 'string', 'in:public,premium'],
         ]);
 
@@ -35,6 +49,8 @@ class VideoController extends Controller
                 data: [
                     'title' => $validated['title'] ?? null,
                     'caption' => $validated['caption'] ?? null,
+                    'content_type' => $validated['content_type'][0],
+                    'content_types' => $validated['content_type'],
                     'visibility' => $validated['visibility'],
                     'original_name' => $request->file('video')->getClientOriginalName(),
                     'mime_type' => $request->file('video')->getMimeType(),
@@ -78,6 +94,27 @@ class VideoController extends Controller
 
         return response()->json([
             'data' => new VideoResource($video),
+        ]);
+    }
+
+    public function progress(Request $request, Video $video)
+    {
+        return response()->json([
+            'data' => [
+                'video_id' => $video->id,
+                'status' => $video->status,
+                'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+            ],
+        ]);
+    }
+
+    public function view(Request $request, Video $video)
+    {
+        $updated = $this->videoService->recordView($video, (int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Video view recorded successfully.',
+            'data' => new VideoResource($updated),
         ]);
     }
 }

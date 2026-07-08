@@ -123,6 +123,11 @@ class User extends Authenticatable
         return $this->hasMany(UserFollow::class, 'followed_id');
     }
 
+    public function receivesBroadcastNotificationsOn(): string
+    {
+        return 'users.'.$this->id;
+    }
+
     //GET avatar attribute
     public function getAvatarAttribute($value)
     {
