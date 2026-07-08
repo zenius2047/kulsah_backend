@@ -66,19 +66,12 @@ class CloudinaryService
 
             $publicId = $this->buildPublicId($sourceKey);
             $timestamp = time();
-            $params = [
-                'folder' => $folder,
-                'public_id' => $publicId,
-                'overwrite' => 'true',
-                'unique_filename' => 'false',
-                'use_filename' => 'false',
-                'timestamp' => $timestamp,
-            ];
+            $params = $this->buildSignatureParams($folder, $publicId, $timestamp, $transcodeFailed);
             $signature = $this->buildSignature($params, $apiSecret);
             $uploadUrl = "https://api.cloudinary.com/v1_1/{$cloudName}/video/upload";
 
             $postFields = [
-            'file' => new \CURLFile($uploadPath, 'video/mp4', basename($sourceKey)),
+                'file' => new \CURLFile($uploadPath, 'video/mp4', basename($sourceKey)),
                 'api_key' => $apiKey,
                 'timestamp' => $timestamp,
                 'folder' => $folder,
@@ -87,8 +80,8 @@ class CloudinaryService
                 'unique_filename' => 'false',
                 'use_filename' => 'false',
                 'signature' => $signature,
-            'resource_type' => 'video',
-        ];
+                'resource_type' => 'video',
+            ];
 
             if ($transcodeFailed) {
                 $postFields['context'] = 'transcode_fallback=true';
@@ -148,10 +141,28 @@ class CloudinaryService
 
         $payload = [];
         foreach ($params as $key => $value) {
-            $payload[] = $key.'='.$value;
+            $payload[] = $key.'='.(string) $value;
         }
 
         return sha1(implode('&', $payload).$apiSecret);
+    }
+
+    private function buildSignatureParams(string $folder, string $publicId, int $timestamp, bool $transcodeFailed): array
+    {
+        $params = [
+            'folder' => $folder,
+            'public_id' => $publicId,
+            'overwrite' => 'true',
+            'unique_filename' => 'false',
+            'use_filename' => 'false',
+            'timestamp' => $timestamp,
+        ];
+
+        if ($transcodeFailed) {
+            $params['context'] = 'transcode_fallback=true';
+        }
+
+        return $params;
     }
 
     private function guessMimeType(string $sourceKey): string
