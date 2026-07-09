@@ -77,6 +77,92 @@ class VideoPipelineTest extends TestCase
         Queue::assertPushed(ProcessVideoJob::class);
     }
 
+    public function test_creator_can_upload_video_first_and_update_metadata_later(): void
+    {
+        config()->set('logging.default', 'null');
+        $diskRoot = sys_get_temp_dir().DIRECTORY_SEPARATOR.'kulsah-video-tests';
+        File::ensureDirectoryExists($diskRoot);
+
+        config()->set('filesystems.disks.testlocal', [
+            'driver' => 'local',
+            'root' => $diskRoot,
+            'url' => 'http://localhost/storage',
+            'visibility' => 'private',
+            'throw' => false,
+        ]);
+        config()->set('video.storage_disk', 'testlocal');
+        app()->instance(VideoInspectionService::class, new class extends VideoInspectionService
+        {
+            public function getDurationSeconds(string $path): ?float
+            {
+                return 15.0;
+            }
+        });
+        Queue::fake();
+        Notification::fake();
+
+        $creator = User::factory()->create([
+            'name' => 'Creator Draft',
+            'username' => 'creator_draft',
+        ]);
+        $mentioned = User::factory()->create([
+            'name' => 'Mentioned Draft User',
+            'username' => 'draft_user',
+        ]);
+
+        $uploadResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->postJson('/api/v1/creator/videos', [
+                'video' => UploadedFile::fake()->create('draft.mp4', 1024, 'video/mp4'),
+            ]);
+
+        $uploadResponse->assertCreated()
+            ->assertJsonPath('message', 'Video uploaded successfully and is being processed.')
+            ->assertJsonPath('data.caption', null)
+            ->assertJsonPath('data.content_type', null)
+            ->assertJsonPath('data.visibility', 'public');
+
+        $videoId = $uploadResponse->json('data.id');
+
+        $updateResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->patchJson("/api/v1/creator/videos/{$videoId}", [
+                'caption' => 'Updated caption for @draft_user',
+                'content_type' => ['education', 'tutorial'],
+                'visibility' => 'premium',
+                'title' => 'My draft video',
+            ]);
+
+        $updateResponse->assertOk()
+            ->assertJsonPath('message', 'Video updated successfully.')
+            ->assertJsonPath('data.title', 'My draft video')
+            ->assertJsonPath('data.caption', 'Updated caption for @draft_user')
+            ->assertJsonPath('data.content_type', 'education')
+            ->assertJsonPath('data.content_types.0', 'education')
+            ->assertJsonPath('data.content_types.1', 'tutorial')
+            ->assertJsonPath('data.visibility', 'premium');
+
+        $this->assertDatabaseHas('videos', [
+            'id' => $videoId,
+            'title' => 'My draft video',
+            'caption' => 'Updated caption for @draft_user',
+            'content_type' => 'education',
+            'visibility' => 'premium',
+        ]);
+
+        Notification::assertSentTo(
+            $mentioned,
+            VideoMentionedNotification::class,
+            function (VideoMentionedNotification $notification) use ($videoId, $creator, $mentioned): bool {
+                return (int) $notification->video->id === (int) $videoId
+                    && (int) $notification->actor->id === (int) $creator->id
+                    && in_array('draft_user', $notification->mentions, true);
+            }
+        );
+    }
+
     public function test_creator_can_poll_video_upload_progress(): void
     {
         config()->set('logging.default', 'null');

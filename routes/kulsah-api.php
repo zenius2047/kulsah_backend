@@ -20,6 +20,7 @@ Route::prefix('creator')
     ->middleware(['auth:sanctum', 'role:creator'])
     ->group(function () {
         Route::post('/videos', [VideoController::class, 'store']);
+        Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);

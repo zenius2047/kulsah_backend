@@ -37,15 +37,12 @@ class VideoService
         $stored = $this->videoStorageService->uploadOriginal($file, $userId);
         $captionData = $this->videoCaptionParserService->parse($data['caption'] ?? null);
         $mentionedUsers = $this->videoCaptionParserService->resolveMentionedUsers($captionData['mentions']);
+        $contentTypes = $this->normalizeContentTypes($data);
+        $primaryContentType = $contentTypes[0] ?? ($data['content_type'] ?? null);
 
         try {
             $video = DB::transaction(function () use ($data, $stored, $userId, $duration, $captionData, $mentionedUsers) {
-                $contentTypes = array_values(array_filter(array_map(
-                    fn ($value) => is_string($value) ? trim($value) : '',
-                    is_array($data['content_types'] ?? null)
-                        ? $data['content_types']
-                        : [$data['content_types'] ?? ($data['content_type'] ?? null)]
-                )));
+                $contentTypes = $this->normalizeContentTypes($data);
                 $primaryContentType = $contentTypes[0] ?? ($data['content_type'] ?? null);
 
                 return Video::create([
@@ -94,6 +91,81 @@ class VideoService
         return $video;
     }
 
+    public function updateVideo(Video $video, array $data, int $userId): Video
+    {
+        $video = $video->fresh();
+
+        if (! $video) {
+            throw ValidationException::withMessages([
+                'video' => 'The selected video does not exist.',
+            ]);
+        }
+
+        if ((int) $video->user_id !== (int) $userId) {
+            throw ValidationException::withMessages([
+                'video' => 'You are not allowed to update this video.',
+            ]);
+        }
+
+        $currentMetadata = is_array($video->metadata) ? $video->metadata : [];
+        $updates = [];
+        $mentionsToNotify = collect();
+        $captionData = null;
+
+        if (array_key_exists('title', $data)) {
+            $updates['title'] = $data['title'];
+        }
+
+        if (array_key_exists('caption', $data)) {
+            $updates['caption'] = $data['caption'];
+            $captionData = $this->videoCaptionParserService->parse($data['caption'] ?? null);
+            $mentionedUsers = $this->videoCaptionParserService->resolveMentionedUsers($captionData['mentions']);
+            $existingMentionIds = collect(data_get($currentMetadata, 'mentioned_user_ids', []))->map(fn ($value) => (int) $value)->all();
+
+            $mentionsToNotify = $mentionedUsers->reject(
+                fn (User $mentionedUser) => in_array((int) $mentionedUser->id, $existingMentionIds, true)
+            )->values();
+
+            $updates['metadata'] = array_merge($currentMetadata, [
+                'caption_hashtags' => $captionData['hashtags'],
+                'caption_mentions' => $captionData['mentions'],
+                'mentioned_user_ids' => $mentionedUsers->pluck('id')->values()->all(),
+            ]);
+        }
+
+        if (array_key_exists('content_type', $data) || array_key_exists('content_types', $data)) {
+            $contentTypes = $this->normalizeContentTypes($data);
+            $updates['content_types'] = $contentTypes;
+            $updates['content_type'] = $contentTypes[0] ?? null;
+        }
+
+        if (array_key_exists('visibility', $data)) {
+            $updates['visibility'] = $data['visibility'] ?? 'public';
+        }
+
+        if ($updates !== []) {
+            $video->update($updates);
+        }
+
+        if ($captionData && $mentionsToNotify->isNotEmpty()) {
+            $actor = User::query()->find($userId);
+
+            if ($actor) {
+                Notification::send(
+                    $mentionsToNotify,
+                    new VideoMentionedNotification(
+                        video: $video->fresh(),
+                        actor: $actor,
+                        mentions: $captionData['mentions'],
+                        hashtags: $captionData['hashtags'],
+                    )
+                );
+            }
+        }
+
+        return $video->fresh();
+    }
+
     public function recordView(Video $video, int $viewerId): Video
     {
         $cooldownMinutes = max(1, (int) config('video.view_cooldown_minutes', 60));
@@ -104,5 +176,23 @@ class VideoService
         }
 
         return $video->refresh();
+    }
+
+    private function normalizeContentTypes(array $data): array
+    {
+        $contentTypesInput = $data['content_types'] ?? ($data['content_type'] ?? null);
+
+        if ($contentTypesInput === null) {
+            return [];
+        }
+
+        $contentTypes = is_array($contentTypesInput)
+            ? $contentTypesInput
+            : preg_split('/\s*,\s*/', trim((string) $contentTypesInput), -1, PREG_SPLIT_NO_EMPTY);
+
+        return array_values(array_filter(array_map(
+            fn ($value) => is_string($value) ? trim($value) : '',
+            $contentTypes
+        )));
     }
 }
