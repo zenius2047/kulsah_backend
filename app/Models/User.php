@@ -98,6 +98,16 @@ class User extends Authenticatable
         return $this->hasOne(Wallet::class);
     }
 
+    public function kulCoinWallet()
+    {
+        return $this->hasOne(KulCoinWallet::class);
+    }
+
+    public function kulCoinTransactions()
+    {
+        return $this->hasMany(KulCoinTransaction::class);
+    }
+
     public function videos()
     {
         return $this->hasMany(Video::class);

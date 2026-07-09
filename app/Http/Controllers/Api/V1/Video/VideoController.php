@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1\Video;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\CreatorVideoResource;
+use App\Http\Resources\CreatorVideoDetailResource;
 use App\Http\Resources\VideoResource;
 use App\Models\Video;
 use App\Services\VideoService;
@@ -14,6 +16,120 @@ class VideoController extends Controller
 {
     public function __construct(private readonly VideoService $videoService)
     {
+    }
+
+    public function index(Request $request)
+    {
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'category' => ['sometimes', 'string', 'max:120'],
+        ]);
+        $draft = $this->parseBooleanQuery($request, 'draft');
+        $premium = $this->parseBooleanQuery($request, 'premium');
+
+        $videos = Video::query()
+            ->withCount('likes')
+            ->where('user_id', $request->user()->id)
+            ->when(
+                $draft !== null,
+                fn ($query) => $draft
+                    ? $query->where('status', '!=', 'ready')
+                    : $query->where('status', 'ready')
+            )
+            ->when(
+                $premium !== null,
+                fn ($query) => $premium
+                    ? $query->where('visibility', 'premium')
+                    : $query->where('visibility', '!=', 'premium')
+            )
+            ->when(
+                isset($validated['category']) && $validated['category'] !== '',
+                fn ($query) => $query->where(function ($query) use ($validated): void {
+                    $query->where('content_type', $validated['category'])
+                        ->orWhereJsonContains('content_types', $validated['category']);
+                })
+            )
+            ->orderByDesc('id')
+            ->paginate((int) ($validated['per_page'] ?? 20));
+
+        return response()->json([
+            'data' => CreatorVideoResource::collection($videos),
+            'meta' => [
+                'current_page' => $videos->currentPage(),
+                'last_page' => $videos->lastPage(),
+                'per_page' => $videos->perPage(),
+                'total' => $videos->total(),
+            ],
+        ]);
+    }
+
+    public function analytics(Request $request)
+    {
+        $videos = Video::query()
+            ->where('user_id', $request->user()->id)
+            ->withCount(['likes', 'comments'])
+            ->get();
+
+        $summary = [
+            'total_videos' => $videos->count(),
+            'ready_videos' => $videos->where('status', 'ready')->count(),
+            'draft_videos' => $videos->where('status', '!=', 'ready')->count(),
+            'premium_videos' => $videos->where('visibility', 'premium')->count(),
+            'public_videos' => $videos->where('visibility', 'public')->count(),
+            'processing_videos' => $videos->where('status', 'processing')->count(),
+            'failed_videos' => $videos->where('status', 'failed')->count(),
+            'total_views' => (int) $videos->sum('views_count'),
+            'total_likes' => (int) $videos->sum('likes_count'),
+            'total_comments' => (int) $videos->sum('comments_count'),
+            'total_duration_seconds' => (int) $videos->sum('duration'),
+            'average_views' => $videos->count() > 0 ? round(((int) $videos->sum('views_count')) / $videos->count(), 2) : 0,
+        ];
+
+        $summary['total_duration'] = $this->formatDuration($summary['total_duration_seconds']);
+
+        return response()->json([
+            'data' => $summary,
+        ]);
+    }
+
+    public function creatorShow(Request $request, Video $video)
+    {
+        abort_unless(
+            (string) $video->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to view this video.'
+        );
+
+        $video->load([
+            'user:id,name,username,avatar',
+            'comments' => function ($query): void {
+                $query->whereNull('parent_id')
+                    ->latest()
+                    ->with([
+                        'user:id,name,username,avatar,verified',
+                        'replies' => function ($replyQuery): void {
+                            $replyQuery->oldest()->with('user:id,name,username,avatar,verified')->withCount('likes');
+                        },
+                    ])
+                    ->withCount('likes');
+            },
+        ]);
+        $video->loadCount(['likes', 'comments']);
+        $video->setRelation(
+            'otherVideos',
+            Video::query()
+                ->with('user:id,name,username,avatar')
+                ->withCount(['likes', 'comments'])
+                ->where('user_id', $request->user()->id)
+                ->whereKeyNot($video->id)
+                ->latest()
+                ->limit(6)
+                ->get()
+        );
+
+        return response()->json([
+            'item' => new CreatorVideoDetailResource($video),
+        ]);
     }
 
     public function store(Request $request)
@@ -172,5 +288,28 @@ class VideoController extends Controller
                 $contentTypes
             ))),
         ]);
+    }
+
+    private function formatDuration(int $seconds): string
+    {
+        $seconds = max(0, $seconds);
+        $hours = intdiv($seconds, 3600);
+        $minutes = intdiv($seconds % 3600, 60);
+        $remainingSeconds = $seconds % 60;
+
+        return $hours > 0
+            ? sprintf('%d:%02d:%02d', $hours, $minutes, $remainingSeconds)
+            : sprintf('%02d:%02d', $minutes, $remainingSeconds);
+    }
+
+    private function parseBooleanQuery(Request $request, string $key): ?bool
+    {
+        if (! $request->has($key)) {
+            return null;
+        }
+
+        $value = filter_var($request->query($key), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+        return is_bool($value) ? $value : null;
     }
 }

@@ -163,6 +163,264 @@ class VideoPipelineTest extends TestCase
         );
     }
 
+    public function test_creator_can_view_single_dashboard_video(): void
+    {
+        config()->set('logging.default', 'null');
+
+        $creator = User::factory()->create([
+            'name' => 'Dashboard Creator',
+            'username' => 'dashboard_creator',
+        ]);
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Dashboard Item',
+            'caption' => 'PRIVATE DROP: Working on Nebula vocal layers #BTS',
+            'content_type' => 'music',
+            'content_types' => ['music', 'performance'],
+            'visibility' => 'premium',
+            'source_url' => 'https://example.com/source.mp4',
+            'source_key' => 'videos/originals/1/dashboard.mp4',
+            'thumbnail_url' => 'https://example.com/dashboard.jpg',
+            'duration' => 125,
+            'status' => 'ready',
+            'views_count' => 2050,
+            'likes_count' => 0,
+            'metadata' => [],
+        ]);
+
+        Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Other Creator Video',
+            'caption' => 'Another clip',
+            'content_type' => 'dance',
+            'content_types' => ['dance'],
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/other-video.mp4',
+            'source_key' => 'videos/originals/1/other-video.mp4',
+            'thumbnail_url' => 'https://example.com/other-video.jpg',
+            'duration' => 45,
+            'status' => 'ready',
+            'views_count' => 12,
+            'metadata' => [],
+        ]);
+
+        VideoLike::create([
+            'video_id' => $video->id,
+            'user_id' => $creator->id,
+        ]);
+
+        VideoComment::create([
+            'video_id' => $video->id,
+            'user_id' => $creator->id,
+            'body' => 'First comment',
+        ]);
+
+        $response = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson("/api/v1/creator/videos/{$video->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('item.id', (string) $video->id)
+            ->assertJsonPath('item.creator', 'Dashboard Creator')
+            ->assertJsonPath('item.creator_id', (string) $creator->id)
+            ->assertJsonPath('item.handle', '@dashboard_creator')
+            ->assertJsonPath('item.avatar', null)
+            ->assertJsonPath('item.caption', 'PRIVATE DROP: Working on Nebula vocal layers #BTS')
+            ->assertJsonPath('item.background', 'https://example.com/dashboard.jpg')
+            ->assertJsonPath('item.video', 'https://example.com/source.mp4')
+            ->assertJsonPath('item.likes', '1')
+            ->assertJsonPath('item.comments_count', '1')
+            ->assertJsonCount(1, 'item.comments')
+            ->assertJsonCount(1, 'item.otherVideos');
+
+        $this->assertSame('First comment', $response->json('item.comments.0.text'));
+        $this->assertSame('Other Creator Video', $response->json('item.otherVideos.0.title'));
+    }
+
+    public function test_creator_video_list_supports_filters(): void
+    {
+        config()->set('logging.default', 'null');
+
+        $creator = User::factory()->create([
+            'username' => 'filter_creator',
+        ]);
+        $otherCreator = User::factory()->create([
+            'username' => 'filter_other_creator',
+        ]);
+
+        $draftPremium = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Draft Premium',
+            'caption' => 'Draft premium caption',
+            'content_type' => 'dance',
+            'content_types' => ['dance'],
+            'visibility' => 'premium',
+            'source_url' => 'https://example.com/draft-premium.mp4',
+            'source_key' => 'videos/originals/1/draft-premium.mp4',
+            'thumbnail_url' => 'https://example.com/draft-premium.jpg',
+            'duration' => 61,
+            'status' => 'processing',
+            'views_count' => 10,
+            'metadata' => [],
+        ]);
+
+        $readyMusic = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Ready Music',
+            'caption' => 'Ready music caption',
+            'content_type' => 'music',
+            'content_types' => ['music'],
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/ready-music.mp4',
+            'source_key' => 'videos/originals/1/ready-music.mp4',
+            'thumbnail_url' => 'https://example.com/ready-music.jpg',
+            'duration' => 40,
+            'status' => 'ready',
+            'views_count' => 30,
+            'metadata' => [],
+        ]);
+
+        Video::create([
+            'user_id' => $otherCreator->id,
+            'title' => 'Other Creator Video',
+            'caption' => 'Not mine',
+            'content_type' => 'music',
+            'content_types' => ['music'],
+            'visibility' => 'premium',
+            'source_url' => 'https://example.com/other.mp4',
+            'source_key' => 'videos/originals/1/other.mp4',
+            'thumbnail_url' => 'https://example.com/other.jpg',
+            'duration' => 33,
+            'status' => 'ready',
+            'views_count' => 1,
+            'metadata' => [],
+        ]);
+
+        $allResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson('/api/v1/creator/videos');
+
+        $allResponse->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('meta.total', 2);
+
+        $draftOnlyResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson('/api/v1/creator/videos?draft=true');
+
+        $draftOnlyResponse->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', (string) $draftPremium->id)
+            ->assertJsonPath('data.0.draft', true);
+
+        $premiumResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson('/api/v1/creator/videos?premium=true');
+
+        $premiumResponse->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', (string) $draftPremium->id)
+            ->assertJsonPath('data.0.premium', true);
+
+        $categoryResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson('/api/v1/creator/videos?category=music');
+
+        $categoryResponse->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', (string) $readyMusic->id)
+            ->assertJsonPath('data.0.category', 'music');
+    }
+
+    public function test_creator_analytics_returns_counts_and_totals(): void
+    {
+        config()->set('logging.default', 'null');
+
+        $creator = User::factory()->create([
+            'username' => 'analytics_creator',
+        ]);
+
+        $first = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Analytics One',
+            'caption' => 'First analytics video',
+            'content_type' => 'music',
+            'content_types' => ['music'],
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/analytics-1.mp4',
+            'source_key' => 'videos/originals/1/analytics-1.mp4',
+            'thumbnail_url' => 'https://example.com/analytics-1.jpg',
+            'duration' => 90,
+            'status' => 'ready',
+            'views_count' => 100,
+            'metadata' => [],
+        ]);
+
+        $second = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Analytics Two',
+            'caption' => 'Second analytics video',
+            'content_type' => 'dance',
+            'content_types' => ['dance'],
+            'visibility' => 'premium',
+            'source_url' => 'https://example.com/analytics-2.mp4',
+            'source_key' => 'videos/originals/1/analytics-2.mp4',
+            'thumbnail_url' => 'https://example.com/analytics-2.jpg',
+            'duration' => 150,
+            'status' => 'processing',
+            'views_count' => 50,
+            'metadata' => [],
+        ]);
+
+        VideoLike::create([
+            'video_id' => $first->id,
+            'user_id' => $creator->id,
+        ]);
+
+        VideoLike::create([
+            'video_id' => $second->id,
+            'user_id' => $creator->id,
+        ]);
+
+        VideoComment::create([
+            'video_id' => $first->id,
+            'user_id' => $creator->id,
+            'body' => 'Nice one',
+        ]);
+
+        VideoComment::create([
+            'video_id' => $second->id,
+            'user_id' => $creator->id,
+            'body' => 'Great one',
+        ]);
+
+        $response = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson('/api/v1/creator/videos/analytics');
+
+        $response->assertOk()
+            ->assertJsonPath('data.total_videos', 2)
+            ->assertJsonPath('data.ready_videos', 1)
+            ->assertJsonPath('data.draft_videos', 1)
+            ->assertJsonPath('data.premium_videos', 1)
+            ->assertJsonPath('data.public_videos', 1)
+            ->assertJsonPath('data.processing_videos', 1)
+            ->assertJsonPath('data.failed_videos', 0)
+            ->assertJsonPath('data.total_views', 150)
+            ->assertJsonPath('data.total_likes', 2)
+            ->assertJsonPath('data.total_comments', 2)
+            ->assertJsonPath('data.total_duration_seconds', 240)
+            ->assertJsonPath('data.total_duration', '04:00')
+            ->assertJsonPath('data.average_views', 75);
+    }
+
     public function test_creator_can_poll_video_upload_progress(): void
     {
         config()->set('logging.default', 'null');

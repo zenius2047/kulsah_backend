@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
+use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
 use App\Http\Controllers\Api\V1\Feed\FeedController;
 use App\Http\Controllers\Api\V1\Feed\SocialController;
 use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
@@ -19,6 +20,9 @@ Route::prefix('fan')
 Route::prefix('creator')
     ->middleware(['auth:sanctum', 'role:creator'])
     ->group(function () {
+        Route::get('/videos', [VideoController::class, 'index']);
+        Route::get('/videos/analytics', [VideoController::class, 'analytics']);
+        Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
         Route::post('/videos', [VideoController::class, 'store']);
         Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
@@ -42,6 +46,14 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/videos/{video}', [VideoController::class, 'show']);
         Route::post('/videos/{video}/view', [VideoController::class, 'view']);
+        Route::get('/kulcoin/wallet', [KulCoinController::class, 'wallet']);
+        Route::get('/kulcoin/ledger', [KulCoinController::class, 'ledger']);
+        Route::get('/kulcoin/packages', [KulCoinController::class, 'packages']);
+        Route::get('/kulcoin/gifts', [KulCoinController::class, 'gifts']);
+        Route::post('/kulcoin/purchase', [KulCoinController::class, 'purchase']);
+        Route::post('/kulcoin/gifts/send', [KulCoinController::class, 'sendGift']);
+        Route::post('/kulcoin/votes', [KulCoinController::class, 'vote']);
+        Route::post('/kulcoin/bonus', [KulCoinController::class, 'bonus']);
         Route::post('/videos/{video}/like', [SocialController::class, 'like']);
         Route::delete('/videos/{video}/like', [SocialController::class, 'unlike']);
         Route::post('/videos/{video}/bookmark', [SocialController::class, 'bookmark']);
