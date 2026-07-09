@@ -4,23 +4,17 @@ namespace App\Notifications;
 
 use App\Models\User;
 use App\Models\Video;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Notification;
 
-class VideoMentionedNotification extends Notification implements ShouldQueue
+class VideoMentionedNotification extends Notification
 {
-    use Queueable;
-
     public function __construct(
         public readonly Video $video,
         public readonly User $actor,
         public readonly array $mentions = [],
         public readonly array $hashtags = [],
     ) {
-        $this->onConnection('redis');
-        $this->onQueue('notifications');
     }
 
     public function via(object $notifiable): array

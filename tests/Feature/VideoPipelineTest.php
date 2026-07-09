@@ -64,14 +64,16 @@ class VideoPipelineTest extends TestCase
             ]);
 
         $response->assertCreated()
-            ->assertJsonPath('message', 'Video uploaded successfully and is being processed.');
+            ->assertJsonPath('message', 'Video uploaded successfully and is now in draft while processing starts.')
+            ->assertJsonPath('data.status', 'draft')
+            ->assertJsonPath('data.progress_percentage', 100);
 
         $videoId = $response->json('data.id');
         $video = Video::query()->findOrFail($videoId);
 
         $this->assertSame('dance', $video->content_type);
         $this->assertSame(['dance', 'music'], $video->content_types);
-        $this->assertSame(25, $video->progress_percentage);
+        $this->assertSame(100, $video->progress_percentage);
         $this->assertSame(0, $video->views_count);
 
         Queue::assertPushed(ProcessVideoJob::class);
@@ -118,7 +120,7 @@ class VideoPipelineTest extends TestCase
             ]);
 
         $uploadResponse->assertCreated()
-            ->assertJsonPath('message', 'Video uploaded successfully and is being processed.')
+            ->assertJsonPath('message', 'Video uploaded successfully and is now in draft while processing starts.')
             ->assertJsonPath('data.caption', null)
             ->assertJsonPath('data.content_type', null)
             ->assertJsonPath('data.visibility', 'public');
@@ -428,26 +430,42 @@ class VideoPipelineTest extends TestCase
             'username' => 'creator_progress',
         ]);
 
-        $video = Video::create([
-            'user_id' => $creator->id,
-            'title' => 'Processing video',
-            'caption' => 'Still uploading',
-            'visibility' => 'public',
-            'source_url' => 'https://example.com/source.mp4',
-            'source_key' => 'videos/originals/1/example.mp4',
-            'status' => 'processing',
-            'progress_percentage' => 68,
-            'metadata' => [],
-        ]);
+        $draftResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->postJson('/api/v1/creator/videos/drafts', [
+                'title' => 'Processing video',
+                'caption' => 'Still uploading',
+                'visibility' => 'public',
+            ]);
+
+        $draftResponse->assertCreated()
+            ->assertJsonPath('data.status', 'draft')
+            ->assertJsonPath('data.progress_percentage', 0);
+
+        $videoId = $draftResponse->json('data.id');
 
         $response = $this
             ->actingAs($creator, 'sanctum')
             ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
-            ->getJson("/api/v1/creator/videos/{$video->id}/progress");
+            ->patchJson("/api/v1/creator/videos/{$videoId}/progress", [
+                'progress_percentage' => 68,
+            ]);
 
         $response->assertOk()
-            ->assertJsonPath('data.video_id', $video->id)
-            ->assertJsonPath('data.status', 'processing')
+            ->assertJsonPath('message', 'Video upload progress updated successfully.')
+            ->assertJsonPath('data.video_id', $videoId)
+            ->assertJsonPath('data.status', 'draft')
+            ->assertJsonPath('data.progress_percentage', 68);
+
+        $polled = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson("/api/v1/creator/videos/{$videoId}/progress");
+
+        $polled->assertOk()
+            ->assertJsonPath('data.video_id', $videoId)
+            ->assertJsonPath('data.status', 'draft')
             ->assertJsonPath('data.progress_percentage', 68);
     }
 

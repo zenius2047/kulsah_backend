@@ -23,7 +23,10 @@ Route::prefix('creator')
         Route::get('/videos', [VideoController::class, 'index']);
         Route::get('/videos/analytics', [VideoController::class, 'analytics']);
         Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
+        Route::post('/videos/drafts', [VideoController::class, 'draft']);
         Route::post('/videos', [VideoController::class, 'store']);
+        Route::post('/videos/{video}/upload', [VideoController::class, 'upload']);
+        Route::patch('/videos/{video}/progress', [VideoController::class, 'updateProgress']);
         Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);

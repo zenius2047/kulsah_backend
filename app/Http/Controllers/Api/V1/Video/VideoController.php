@@ -136,7 +136,7 @@ class VideoController extends Controller
     {
         $this->normalizeContentTypes($request);
 
-        $validated = $request->validate([
+        $request->validate([
             'video' => [
                 'required',
                 'file',
@@ -151,13 +151,15 @@ class VideoController extends Controller
         ]);
 
         try {
+            $contentTypes = $this->resolveContentTypes($request);
+
             $video = $this->videoService->uploadVideo(
                 data: [
-                    'title' => $validated['title'] ?? null,
-                    'caption' => $validated['caption'] ?? null,
-                    'content_type' => $validated['content_type'][0] ?? null,
-                    'content_types' => $validated['content_type'] ?? [],
-                    'visibility' => $validated['visibility'] ?? 'public',
+                    'title' => $request->input('title'),
+                    'caption' => $request->input('caption'),
+                    'content_type' => $contentTypes[0] ?? null,
+                    'content_types' => $contentTypes,
+                    'visibility' => $request->input('visibility', 'public'),
                     'original_name' => $request->file('video')->getClientOriginalName(),
                     'mime_type' => $request->file('video')->getMimeType(),
                     'size' => $request->file('video')->getSize(),
@@ -184,7 +186,83 @@ class VideoController extends Controller
         $video->refresh();
 
         return response()->json([
-            'message' => 'Video uploaded successfully and is being processed.',
+            'message' => 'Video uploaded successfully and is now in draft while processing starts.',
+            'data' => new VideoResource($video),
+        ], 201);
+    }
+
+    public function draft(Request $request)
+    {
+        $this->normalizeContentTypes($request);
+
+        $validated = $request->validate([
+            'title' => ['nullable', 'string', 'max:255'],
+            'caption' => ['nullable', 'string', 'max:5000'],
+            'content_type' => ['sometimes', 'array', 'min:1'],
+            'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
+            'visibility' => ['sometimes', 'string', 'in:public,premium'],
+        ]);
+
+        $contentTypes = $this->resolveContentTypes($request);
+
+        $video = $this->videoService->createDraftVideo(
+            data: [
+                'title' => $request->input('title'),
+                'caption' => $request->input('caption'),
+                'content_type' => $contentTypes[0] ?? null,
+                'content_types' => $contentTypes,
+                'visibility' => $request->input('visibility', 'public'),
+            ],
+            userId: (int) $request->user()->id,
+        );
+
+        return response()->json([
+            'message' => 'Video draft created successfully.',
+            'data' => new VideoResource($video),
+        ], 201);
+    }
+
+    public function upload(Request $request, Video $video)
+    {
+        abort_unless(
+            (string) $video->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to update this video.'
+        );
+
+        $validated = $request->validate([
+            'video' => [
+                'required',
+                'file',
+                'mimetypes:'.implode(',', config('video.allowed_mimetypes', [])),
+                'max:'.config('video.max_upload_kb', 102400),
+            ],
+        ]);
+
+        try {
+            $video = $this->videoService->attachUploadedVideo(
+                video: $video,
+                file: $request->file('video'),
+                userId: (int) $request->user()->id,
+            );
+        } catch (Throwable $throwable) {
+            report($throwable);
+
+            if ($throwable instanceof ValidationException) {
+                return response()->json([
+                    'message' => 'Unable to upload video.',
+                    'errors' => $throwable->errors(),
+                ], 422);
+            }
+
+            return response()->json([
+                'message' => 'Unable to upload video.',
+                'error' => $throwable->getMessage(),
+            ], 500);
+        }
+
+        return response()->json([
+            'message' => 'Video uploaded successfully and is now in draft while processing starts.',
             'data' => new VideoResource($video),
         ], 201);
     }
@@ -251,7 +329,40 @@ class VideoController extends Controller
 
     public function progress(Request $request, Video $video)
     {
+        abort_unless(
+            (string) $video->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to view this video.'
+        );
+
         return response()->json([
+            'data' => [
+                'video_id' => $video->id,
+                'status' => $video->status,
+                'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+            ],
+        ]);
+    }
+
+    public function updateProgress(Request $request, Video $video)
+    {
+        abort_unless(
+            (string) $video->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to update this video.'
+        );
+
+        $validated = $request->validate([
+            'progress_percentage' => ['required', 'integer', 'min:0', 'max:100'],
+        ]);
+
+        $video = $this->videoService->updateUploadProgress(
+            video: $video,
+            progressPercentage: (int) $validated['progress_percentage'],
+        );
+
+        return response()->json([
+            'message' => 'Video upload progress updated successfully.',
             'data' => [
                 'video_id' => $video->id,
                 'status' => $video->status,
@@ -311,5 +422,19 @@ class VideoController extends Controller
         $value = filter_var($request->query($key), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
 
         return is_bool($value) ? $value : null;
+    }
+
+    private function resolveContentTypes(Request $request): array
+    {
+        $contentTypesInput = $request->input('content_type', $request->input('content_types', []));
+
+        if (! is_array($contentTypesInput)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            fn ($value) => is_string($value) ? trim($value) : '',
+            $contentTypesInput
+        )));
     }
 }

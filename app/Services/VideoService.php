@@ -23,6 +23,43 @@ class VideoService
     ) {
     }
 
+    public function createDraftVideo(array $data, int $userId): Video
+    {
+        $contentTypes = $this->normalizeContentTypes($data);
+        $primaryContentType = $data['content_type'] ?? null;
+
+        if (is_array($primaryContentType)) {
+            $primaryContentType = $primaryContentType[0] ?? null;
+        }
+
+        $primaryContentType = $contentTypes[0] ?? $primaryContentType;
+
+        $video = Video::create([
+            'user_id' => $userId,
+            'title' => $data['title'] ?? null,
+            'caption' => $data['caption'] ?? null,
+            'content_type' => $primaryContentType,
+            'content_types' => $contentTypes,
+            'visibility' => $data['visibility'] ?? 'public',
+            'status' => 'draft',
+            'progress_percentage' => 0,
+            'metadata' => [
+                'caption_hashtags' => [],
+                'caption_mentions' => [],
+                'mentioned_user_ids' => [],
+            ],
+        ]);
+
+        tap($video, function (Video $video) use ($primaryContentType, $contentTypes): void {
+            $video->update([
+                'content_type' => $primaryContentType,
+                'content_types' => $contentTypes,
+            ]);
+        });
+
+        return $video->fresh();
+    }
+
     public function uploadVideo(array $data, UploadedFile $file, int $userId): Video
     {
         $duration = $this->videoInspectionService->getDurationSeconds($file->getPathname());
@@ -37,26 +74,16 @@ class VideoService
         $stored = $this->videoStorageService->uploadOriginal($file, $userId);
         $captionData = $this->videoCaptionParserService->parse($data['caption'] ?? null);
         $mentionedUsers = $this->videoCaptionParserService->resolveMentionedUsers($captionData['mentions']);
-        $contentTypes = $this->normalizeContentTypes($data);
-        $primaryContentType = $contentTypes[0] ?? ($data['content_type'] ?? null);
 
         try {
             $video = DB::transaction(function () use ($data, $stored, $userId, $duration, $captionData, $mentionedUsers) {
-                $contentTypes = $this->normalizeContentTypes($data);
-                $primaryContentType = $contentTypes[0] ?? ($data['content_type'] ?? null);
+                $video = $this->createDraftVideo($data, $userId);
 
-                return Video::create([
-                    'user_id' => $userId,
-                    'title' => $data['title'] ?? null,
-                    'caption' => $data['caption'] ?? null,
-                    'content_type' => $primaryContentType,
-                    'content_types' => $contentTypes,
-                    'visibility' => $data['visibility'] ?? 'public',
+                $video->update([
                     'source_url' => $stored['source_url'],
                     'source_key' => $stored['source_key'],
-                    'status' => 'processing',
-                    'progress_percentage' => 25,
-                    'metadata' => [
+                    'progress_percentage' => 100,
+                    'metadata' => array_merge($video->metadata ?? [], [
                         'storage_disk' => $stored['disk'],
                         'original_name' => $data['original_name'] ?? null,
                         'mime_type' => $data['mime_type'] ?? null,
@@ -65,8 +92,10 @@ class VideoService
                         'caption_hashtags' => $captionData['hashtags'],
                         'caption_mentions' => $captionData['mentions'],
                         'mentioned_user_ids' => $mentionedUsers->pluck('id')->values()->all(),
-                    ],
+                    ]),
                 ]);
+
+                return $video->fresh();
             });
         } catch (Throwable $throwable) {
             $this->videoStorageService->delete($stored['source_key'], $stored['disk']);
@@ -75,7 +104,7 @@ class VideoService
 
         $creator = User::query()->find($userId);
         if ($creator && $mentionedUsers->isNotEmpty()) {
-            Notification::send(
+            Notification::sendNow(
                 $mentionedUsers,
                 new VideoMentionedNotification(
                     video: $video->fresh(),
@@ -89,6 +118,80 @@ class VideoService
         ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
 
         return $video;
+    }
+
+    public function attachUploadedVideo(Video $video, UploadedFile $file, int $userId): Video
+    {
+        $video = $video->fresh();
+
+        if (! $video) {
+            throw ValidationException::withMessages([
+                'video' => 'The selected video does not exist.',
+            ]);
+        }
+
+        if ((int) $video->user_id !== (int) $userId) {
+            throw ValidationException::withMessages([
+                'video' => 'You are not allowed to update this video.',
+            ]);
+        }
+
+        $duration = $this->videoInspectionService->getDurationSeconds($file->getPathname());
+        $maxDuration = (int) config('video.max_duration_seconds', 120);
+
+        if ($duration !== null && $duration > $maxDuration) {
+            throw ValidationException::withMessages([
+                'video' => "Video duration must not exceed {$maxDuration} seconds.",
+            ]);
+        }
+
+        $stored = $this->videoStorageService->uploadOriginal($file, $userId);
+
+        try {
+            $video->update([
+                'source_url' => $stored['source_url'],
+                'source_key' => $stored['source_key'],
+                'status' => 'draft',
+                'progress_percentage' => 100,
+                'metadata' => array_merge($video->metadata ?? [], [
+                    'storage_disk' => $stored['disk'],
+                    'original_name' => $file->getClientOriginalName(),
+                    'mime_type' => $file->getMimeType(),
+                    'size' => $file->getSize(),
+                    'duration_seconds' => $duration,
+                ]),
+            ]);
+        } catch (Throwable $throwable) {
+            $this->videoStorageService->delete($stored['source_key'], $stored['disk']);
+            throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
+        }
+
+        ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
+
+        return $video->fresh();
+    }
+
+    public function updateUploadProgress(Video $video, int $progressPercentage): Video
+    {
+        $video = $video->fresh();
+
+        if (! $video) {
+            throw ValidationException::withMessages([
+                'video' => 'The selected video does not exist.',
+            ]);
+        }
+
+        if (in_array($video->status, ['ready', 'failed'], true)) {
+            throw ValidationException::withMessages([
+                'video' => 'Upload progress can no longer be updated for this video.',
+            ]);
+        }
+
+        $video->update([
+            'progress_percentage' => max(0, min(100, $progressPercentage)),
+        ]);
+
+        return $video->fresh();
     }
 
     public function updateVideo(Video $video, array $data, int $userId): Video
@@ -151,7 +254,7 @@ class VideoService
             $actor = User::query()->find($userId);
 
             if ($actor) {
-                Notification::send(
+                Notification::sendNow(
                     $mentionsToNotify,
                     new VideoMentionedNotification(
                         video: $video->fresh(),
@@ -180,7 +283,11 @@ class VideoService
 
     private function normalizeContentTypes(array $data): array
     {
-        $contentTypesInput = $data['content_types'] ?? ($data['content_type'] ?? null);
+        $contentTypesInput = $data['content_types'] ?? null;
+
+        if ($contentTypesInput === null || $contentTypesInput === []) {
+            $contentTypesInput = $data['content_type'] ?? null;
+        }
 
         if ($contentTypesInput === null) {
             return [];

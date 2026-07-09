@@ -21,6 +21,7 @@ class FeedCardResource extends JsonResource
         return [
             'id' => (string) $video->id,
             'creator' => $creatorName,
+            'creatorId' => (string) ($creator?->id ?: data_get($metadata, 'creator_id')),
             'handle' => $creatorHandle,
             'avatar' => $creator?->avatar,
             'caption' => (string) ($video->caption ?: $video->title ?: ''),
