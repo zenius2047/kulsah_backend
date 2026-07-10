@@ -12,7 +12,9 @@ class KulCoinGift extends Model
     protected $fillable = [
         'code',
         'name',
+        'category',
         'coin_cost',
+        'sort_order',
         'is_active',
         'icon_url',
         'animation_url',
@@ -21,6 +23,7 @@ class KulCoinGift extends Model
 
     protected $casts = [
         'coin_cost' => 'integer',
+        'sort_order' => 'integer',
         'is_active' => 'boolean',
         'metadata' => 'array',
     ];

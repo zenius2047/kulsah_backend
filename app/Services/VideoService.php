@@ -10,6 +10,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
 use Throwable;
@@ -62,16 +63,45 @@ class VideoService
 
     public function uploadVideo(array $data, UploadedFile $file, int $userId): Video
     {
+        Log::info('Video upload started.', [
+            'stage' => 'inspect',
+            'user_id' => $userId,
+            'original_name' => $data['original_name'] ?? $file->getClientOriginalName(),
+            'mime_type' => $data['mime_type'] ?? $file->getMimeType(),
+            'size' => $data['size'] ?? $file->getSize(),
+        ]);
+
         $duration = $this->videoInspectionService->getDurationSeconds($file->getPathname());
         $maxDuration = (int) config('video.max_duration_seconds', 120);
 
         if ($duration !== null && $duration > $maxDuration) {
+            Log::warning('Video upload rejected because duration is too long.', [
+                'stage' => 'inspect',
+                'user_id' => $userId,
+                'duration_seconds' => $duration,
+                'max_duration_seconds' => $maxDuration,
+            ]);
+
             throw ValidationException::withMessages([
                 'video' => "Video duration must not exceed {$maxDuration} seconds.",
             ]);
         }
 
+        Log::info('Video duration inspection completed.', [
+            'stage' => 'inspect',
+            'user_id' => $userId,
+            'duration_seconds' => $duration,
+        ]);
+
         $stored = $this->videoStorageService->uploadOriginal($file, $userId);
+
+        Log::info('Video stored in primary storage.', [
+            'stage' => 'storage',
+            'user_id' => $userId,
+            'disk' => $stored['disk'],
+            'source_key' => $stored['source_key'],
+        ]);
+
         $captionData = $this->videoCaptionParserService->parse($data['caption'] ?? null);
         $mentionedUsers = $this->videoCaptionParserService->resolveMentionedUsers($captionData['mentions']);
 
@@ -98,6 +128,14 @@ class VideoService
                 return $video->fresh();
             });
         } catch (Throwable $throwable) {
+            Log::error('Video record creation failed after storage succeeded.', [
+                'stage' => 'database',
+                'user_id' => $userId,
+                'source_key' => $stored['source_key'] ?? null,
+                'error' => $throwable->getMessage(),
+                'exception' => get_class($throwable),
+            ]);
+
             $this->videoStorageService->delete($stored['source_key'], $stored['disk']);
             throw new RuntimeException('Failed to create the video record: '.$throwable->getMessage(), previous: $throwable);
         }
@@ -116,6 +154,13 @@ class VideoService
         }
 
         ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
+
+        Log::info('Video processing job dispatched.', [
+            'stage' => 'queue',
+            'user_id' => $userId,
+            'video_id' => $video->id,
+            'queue' => config('video.processing_queue', 'videos'),
+        ]);
 
         return $video;
     }
@@ -136,16 +181,48 @@ class VideoService
             ]);
         }
 
+        Log::info('Video re-upload started.', [
+            'stage' => 'inspect',
+            'user_id' => $userId,
+            'video_id' => $video->id,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type' => $file->getMimeType(),
+            'size' => $file->getSize(),
+        ]);
+
         $duration = $this->videoInspectionService->getDurationSeconds($file->getPathname());
         $maxDuration = (int) config('video.max_duration_seconds', 120);
 
         if ($duration !== null && $duration > $maxDuration) {
+            Log::warning('Video re-upload rejected because duration is too long.', [
+                'stage' => 'inspect',
+                'user_id' => $userId,
+                'video_id' => $video->id,
+                'duration_seconds' => $duration,
+                'max_duration_seconds' => $maxDuration,
+            ]);
+
             throw ValidationException::withMessages([
                 'video' => "Video duration must not exceed {$maxDuration} seconds.",
             ]);
         }
 
+        Log::info('Video duration inspection completed for re-upload.', [
+            'stage' => 'inspect',
+            'user_id' => $userId,
+            'video_id' => $video->id,
+            'duration_seconds' => $duration,
+        ]);
+
         $stored = $this->videoStorageService->uploadOriginal($file, $userId);
+
+        Log::info('Video stored in primary storage for re-upload.', [
+            'stage' => 'storage',
+            'user_id' => $userId,
+            'video_id' => $video->id,
+            'disk' => $stored['disk'],
+            'source_key' => $stored['source_key'],
+        ]);
 
         try {
             $video->update([
@@ -163,10 +240,17 @@ class VideoService
             ]);
         } catch (Throwable $throwable) {
             $this->videoStorageService->delete($stored['source_key'], $stored['disk']);
-            throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
+                throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
         }
 
         ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
+
+        Log::info('Video processing job dispatched for re-upload.', [
+            'stage' => 'queue',
+            'user_id' => $userId,
+            'video_id' => $video->id,
+            'queue' => config('video.processing_queue', 'videos'),
+        ]);
 
         return $video->fresh();
     }
@@ -186,6 +270,12 @@ class VideoService
                 'video' => 'Upload progress can no longer be updated for this video.',
             ]);
         }
+
+        Log::info('Video upload progress updated.', [
+            'stage' => 'progress',
+            'video_id' => $video->id,
+            'progress_percentage' => $progressPercentage,
+        ]);
 
         $video->update([
             'progress_percentage' => max(0, min(100, $progressPercentage)),

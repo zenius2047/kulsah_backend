@@ -47,7 +47,9 @@ class KulCoinSystemTest extends TestCase
         $gift = KulCoinGift::create([
             'code' => 'test-gift',
             'name' => 'Test Gift',
+            'category' => 'romance',
             'coin_cost' => 50,
+            'sort_order' => 1,
             'is_active' => true,
             'metadata' => [],
         ]);

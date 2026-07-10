@@ -5,7 +5,9 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use App\Models\User;
+use App\Models\Role;
 use App\Models\Onboarding;
 use App\Services\FirebaseAuthService;
 use App\Models\PasswordResetOtp;
@@ -63,7 +65,7 @@ public function me()
     ]);
 }
 
-    public function updateVibe(Request $request)
+public function updateVibe(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'onboarding' => 'required|array',
@@ -85,6 +87,32 @@ public function me()
         return response()->json([
             'message' => 'Vibe updated successfully.',
             'data' => new UserResource($user->load('onboarding', 'roles')),
+        ]);
+    }
+
+    public function switchRole(Request $request)
+    {
+        $validated = $request->validate([
+            'role' => ['required', 'string', Rule::in(['fan', 'creator'])],
+        ]);
+
+        $role = Role::query()
+            ->where('name', $validated['role'])
+            ->first();
+
+        if (! $role) {
+            return response()->json([
+                'message' => 'Role not found.',
+            ], 404);
+        }
+
+        $user = $request->user();
+        $user->roles()->sync([$role->id]);
+        $user->load(['roles', 'wallet', 'onboarding']);
+
+        return response()->json([
+            'message' => 'Role switched successfully.',
+            'data' => new UserResource($user),
         ]);
     }
 

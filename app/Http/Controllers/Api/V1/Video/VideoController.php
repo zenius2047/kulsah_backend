@@ -9,6 +9,7 @@ use App\Http\Resources\VideoResource;
 use App\Models\Video;
 use App\Services\VideoService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -169,17 +170,22 @@ class VideoController extends Controller
             );
         } catch (Throwable $throwable) {
             report($throwable);
+            Log::error('Video upload failed.', $this->uploadErrorContext($throwable, 'store', $request));
 
             if ($throwable instanceof ValidationException) {
                 return response()->json([
                     'message' => 'Unable to upload video.',
                     'errors' => $throwable->errors(),
+                    'stage' => 'validation',
+                    'debug' => $this->debugPayload($throwable, 'store'),
                 ], 422);
             }
 
             return response()->json([
                 'message' => 'Unable to upload video.',
                 'error' => $throwable->getMessage(),
+                'stage' => 'storage_or_processing',
+                'debug' => $this->debugPayload($throwable, 'store'),
             ], 500);
         }
 
@@ -247,17 +253,22 @@ class VideoController extends Controller
             );
         } catch (Throwable $throwable) {
             report($throwable);
+            Log::error('Video re-upload failed.', $this->uploadErrorContext($throwable, 'upload', $request, $video));
 
             if ($throwable instanceof ValidationException) {
                 return response()->json([
                     'message' => 'Unable to upload video.',
                     'errors' => $throwable->errors(),
+                    'stage' => 'validation',
+                    'debug' => $this->debugPayload($throwable, 'upload', $video->id),
                 ], 422);
             }
 
             return response()->json([
                 'message' => 'Unable to upload video.',
                 'error' => $throwable->getMessage(),
+                'stage' => 'storage_or_processing',
+                'debug' => $this->debugPayload($throwable, 'upload', $video->id),
             ], 500);
         }
 
@@ -436,5 +447,30 @@ class VideoController extends Controller
             fn ($value) => is_string($value) ? trim($value) : '',
             $contentTypesInput
         )));
+    }
+
+    private function debugPayload(Throwable $throwable, string $stage, int|string|null $videoId = null): array
+    {
+        if (! config('app.debug')) {
+            return [];
+        }
+
+        return array_filter([
+            'stage' => $stage,
+            'video_id' => $videoId,
+            'exception' => get_class($throwable),
+            'message' => $throwable->getMessage(),
+        ], static fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function uploadErrorContext(Throwable $throwable, string $stage, Request $request, ?Video $video = null): array
+    {
+        return array_filter([
+            'stage' => $stage,
+            'user_id' => $request->user()?->id,
+            'video_id' => $video?->id,
+            'exception' => get_class($throwable),
+            'message' => $throwable->getMessage(),
+        ], static fn ($value) => $value !== null && $value !== '');
     }
 }

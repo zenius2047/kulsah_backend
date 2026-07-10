@@ -75,6 +75,7 @@ class KulCoinService
     {
         return KulCoinGift::query()
             ->active()
+            ->orderBy('sort_order')
             ->orderBy('coin_cost')
             ->orderBy('name')
             ->get();

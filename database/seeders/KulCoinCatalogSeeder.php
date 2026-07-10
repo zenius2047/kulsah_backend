@@ -31,13 +31,23 @@ class KulCoinCatalogSeeder extends Seeder
         }
 
         $gifts = [
-            ['code' => 'rose', 'name' => 'Rose', 'coin_cost' => 50, 'sort_order' => 10],
-            ['code' => 'heart', 'name' => 'Heart', 'coin_cost' => 100, 'sort_order' => 20],
-            ['code' => 'fire', 'name' => 'Fire', 'coin_cost' => 200, 'sort_order' => 30],
-            ['code' => 'trophy', 'name' => 'Trophy', 'coin_cost' => 500, 'sort_order' => 40],
-            ['code' => 'crown', 'name' => 'Crown', 'coin_cost' => 1000, 'sort_order' => 50],
-            ['code' => 'diamond', 'name' => 'Diamond', 'coin_cost' => 2000, 'sort_order' => 60],
-            ['code' => 'super-star', 'name' => 'Super Star', 'coin_cost' => 5999, 'sort_order' => 70],
+            ['code' => 'rose', 'name' => 'Rose', 'category' => 'romance', 'coin_cost' => 50, 'sort_order' => 10],
+            ['code' => 'heart', 'name' => 'Heart', 'category' => 'romance', 'coin_cost' => 100, 'sort_order' => 20],
+            ['code' => 'fire', 'name' => 'Fire', 'category' => 'hype', 'coin_cost' => 200, 'sort_order' => 30],
+            ['code' => 'trophy', 'name' => 'Trophy', 'category' => 'achievement', 'coin_cost' => 500, 'sort_order' => 40],
+            ['code' => 'crown', 'name' => 'Crown', 'category' => 'premium', 'coin_cost' => 1000, 'sort_order' => 50],
+            ['code' => 'diamond', 'name' => 'Diamond', 'category' => 'premium', 'coin_cost' => 2000, 'sort_order' => 60],
+            ['code' => 'super-star', 'name' => 'Super Star', 'category' => 'featured', 'coin_cost' => 5999, 'sort_order' => 70],
+            ['code' => 'ankara-glow', 'name' => 'Ankara Glow', 'category' => 'fashion', 'coin_cost' => 120, 'sort_order' => 80],
+            ['code' => 'kente-drip', 'name' => 'Kente Drip', 'category' => 'fashion', 'coin_cost' => 180, 'sort_order' => 90],
+            ['code' => 'dashiki-style', 'name' => 'Dashiki Style', 'category' => 'fashion', 'coin_cost' => 240, 'sort_order' => 100],
+            ['code' => 'gele-queen', 'name' => 'Gele Queen', 'category' => 'fashion', 'coin_cost' => 320, 'sort_order' => 110],
+            ['code' => 'african-pride', 'name' => 'African Pride', 'category' => 'fashion', 'coin_cost' => 500, 'sort_order' => 120],
+            ['code' => 'jollof-love', 'name' => 'Jollof Love', 'category' => 'food', 'coin_cost' => 90, 'sort_order' => 130],
+            ['code' => 'suya-spice', 'name' => 'Suya Spice', 'category' => 'food', 'coin_cost' => 140, 'sort_order' => 140],
+            ['code' => 'injera-feast', 'name' => 'Injera Feast', 'category' => 'food', 'coin_cost' => 200, 'sort_order' => 150],
+            ['code' => 'fufu-bowl', 'name' => 'Fufu Bowl', 'category' => 'food', 'coin_cost' => 260, 'sort_order' => 160],
+            ['code' => 'maize-harvest', 'name' => 'Maize Harvest', 'category' => 'food', 'coin_cost' => 400, 'sort_order' => 170],
         ];
 
         foreach ($gifts as $gift) {
