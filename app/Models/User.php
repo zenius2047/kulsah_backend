@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Notifications\Notifiable;
 
@@ -208,7 +209,14 @@ class User extends Authenticatable
             return (int) $this->attributes['likes_received_count'];
         }
 
-        return (int) $this->likesReceived()->count();
+        if ($this->relationLoaded('videos')) {
+            return (int) $this->videos->sum(fn ($video) => (int) ($video->likes_count ?? $video->likes()->count()));
+        }
+
+        return (int) DB::table('video_likes')
+            ->join('videos', 'videos.id', '=', 'video_likes.video_id')
+            ->where('videos.user_id', $this->id)
+            ->count();
     }
 
 

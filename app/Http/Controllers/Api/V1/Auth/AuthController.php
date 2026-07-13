@@ -58,7 +58,11 @@ class AuthController extends Controller
 
 public function me()
 {
-    $user = auth()->user()->loadCount(['followers', 'subscribers', 'likesReceived']);
+    $user = auth()->user()->loadCount([
+        'followers',
+        'subscribers',
+        'likesReceived as likes_received_count',
+    ]);
 
     return response()->json([
         'data' => new UserResource($user),
