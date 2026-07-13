@@ -9,9 +9,9 @@ use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 
-// Fan routes
+// Fan and creator routes
 Route::prefix('fan')
-    ->middleware(['auth:sanctum', 'role:fan'])
+    ->middleware(['auth:sanctum', 'role:creator|fan'])
     ->group(function () {
         Route::post('/subscription-plans/{subscriptionPlan}/subscribe', [SubscriptionController::class, 'subscribe']);
     });
