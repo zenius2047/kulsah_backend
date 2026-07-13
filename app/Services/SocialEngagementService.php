@@ -17,6 +17,11 @@ use Illuminate\Validation\ValidationException;
 
 class SocialEngagementService
 {
+    public function __construct(
+        private readonly FastApiRecommendationService $fastApiRecommendationService,
+    ) {
+    }
+
     public function likeVideo(User $user, Video $video): array
     {
         $videoId = (int) $video->getKey();
@@ -30,6 +35,10 @@ class SocialEngagementService
 
             $created = $like->wasRecentlyCreated;
         });
+
+        if ($created) {
+            $this->recordVideoEvent($user, 'like', $video, 1.0);
+        }
 
         return $this->videoState($user, $video, [
             'isLiked' => true,
@@ -67,6 +76,10 @@ class SocialEngagementService
 
             $created = $bookmark->wasRecentlyCreated;
         });
+
+        if ($created) {
+            $this->recordVideoEvent($user, 'save', $video, 1.0);
+        }
 
         return $this->videoState($user, $video, [
             'isBookmarked' => true,
@@ -110,6 +123,10 @@ class SocialEngagementService
 
             $created = $follow->wasRecentlyCreated;
         });
+
+        if ($created) {
+            $this->recordFollowEvent($user, $creator);
+        }
 
         return [
             'message' => $created ? 'Creator followed successfully.' : 'You were already following this creator.',
@@ -168,6 +185,8 @@ class SocialEngagementService
         ]);
         $comment->loadCount('likes');
 
+        $this->recordVideoEvent($user, 'like', $video, 0.8);
+
         return [
             'message' => $parentId ? 'Reply added successfully.' : 'Comment added successfully.',
             'data' => new VideoCommentResource($comment),
@@ -208,6 +227,8 @@ class SocialEngagementService
             'replies.user:id,name,username,avatar,verified',
         ]);
         $comment->loadCount('likes');
+
+        $this->recordVideoEvent($user, 'like', $comment->video, 0.5);
 
         return [
             'message' => $created ? 'Comment liked successfully.' : 'Comment was already liked.',
@@ -250,5 +271,28 @@ class SocialEngagementService
                 'isBookmarked' => (bool) ($payload['isBookmarked'] ?? false),
             ],
         ];
+    }
+
+    private function recordVideoEvent(User $user, string $eventType, Video $video, float $value = 1.0): void
+    {
+        $this->fastApiRecommendationService->recordEvent(
+            userId: (int) $user->id,
+            eventType: $eventType,
+            videoId: (int) $video->id,
+            value: $value
+        );
+    }
+
+    private function recordFollowEvent(User $user, User $creator): void
+    {
+        $this->fastApiRecommendationService->recordEvent(
+            userId: (int) $user->id,
+            eventType: 'follow',
+            value: 1.0,
+            terms: array_values(array_filter([
+                $creator->username,
+                $creator->name,
+            ]))
+        );
     }
 }

@@ -16,6 +16,8 @@ services:
       DB_PASSWORD: password
       REDIS_HOST: redis
       FASTAPI_URL: http://fastapi:8000
+      FASTAPI_SHARED_SECRET: ${FASTAPI_SHARED_SECRET}
+      FASTAPI_SIGNATURE_TTL_SECONDS: ${FASTAPI_SIGNATURE_TTL_SECONDS:-300}
 
   nginx:
     image: nginx:alpine
@@ -39,6 +41,8 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/kulsah
       REDIS_URL: redis://redis:6379
+      FASTAPI_SHARED_SECRET: ${FASTAPI_SHARED_SECRET}
+      FASTAPI_SIGNATURE_TTL_SECONDS: ${FASTAPI_SIGNATURE_TTL_SECONDS:-300}
 
   postgres:
     image: postgres:15

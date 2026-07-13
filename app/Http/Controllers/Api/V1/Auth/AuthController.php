@@ -58,7 +58,7 @@ class AuthController extends Controller
 
 public function me()
 {
-    $user = auth()->user();
+    $user = auth()->user()->loadCount(['followers', 'subscribers', 'likesReceived']);
 
     return response()->json([
         'data' => new UserResource($user),
@@ -179,7 +179,6 @@ public function updateVibe(Request $request)
             'country_code' => 'nullable|string|max:255',
             'onboarding' => 'nullable|array',
             'onboarding.vibe' => 'nullable|array',
-            
         ]);
 
         if ($validator->fails()) {

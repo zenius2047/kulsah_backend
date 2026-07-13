@@ -17,6 +17,12 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
 
+    protected $appends = [
+        'total_followers',
+        'total_subscribers',
+        'total_likes',
+    ];
+
     // fillable attributes
     protected $fillable = [
         'username',
@@ -118,6 +124,19 @@ class User extends Authenticatable
         return $this->hasMany(VideoLike::class);
     }
 
+    // likes received on this user's videos
+    public function likesReceived()
+    {
+        return $this->hasManyThrough(
+            VideoLike::class,
+            Video::class,
+            'user_id',   // videos.user_id
+            'video_id',  // video_likes.video_id
+            'id',
+            'id'
+        );
+    }
+
     public function videoBookmarks()
     {
         return $this->hasMany(VideoBookmark::class);
@@ -149,6 +168,33 @@ class User extends Authenticatable
         return $value;
     }
      return Storage::disk('s3')->url($value);
+    }
+
+    public function getTotalFollowersAttribute(): int
+    {
+        if (array_key_exists('followers_count', $this->attributes)) {
+            return (int) $this->attributes['followers_count'];
+        }
+
+        return (int) $this->followers()->count();
+    }
+
+    public function getTotalSubscribersAttribute(): int
+    {
+        if (array_key_exists('subscribers_count', $this->attributes)) {
+            return (int) $this->attributes['subscribers_count'];
+        }
+
+        return (int) $this->subscribers()->count();
+    }
+
+    public function getTotalLikesAttribute(): int
+    {
+        if (array_key_exists('likes_received_count', $this->attributes)) {
+            return (int) $this->attributes['likes_received_count'];
+        }
+
+        return (int) $this->likesReceived()->count();
     }
 
 

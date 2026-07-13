@@ -1,4 +1,9 @@
+import hashlib
+import hmac
+import json
+import os
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -11,7 +16,23 @@ from app.main import app
 
 class TestFastAPIEndpoints(unittest.TestCase):
     def setUp(self) -> None:
+        os.environ.setdefault("FASTAPI_SHARED_SECRET", "test-secret")
         self.client = TestClient(app)
+
+    def _signed_headers(self, method: str, path: str, body: str) -> dict[str, str]:
+        timestamp = str(int(time.time()))
+        signature = hmac.new(
+            os.environ["FASTAPI_SHARED_SECRET"].encode("utf-8"),
+            "\n".join([timestamp, method.upper(), path, body]).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        return {
+            "X-Kulsah-Timestamp": timestamp,
+            "X-Kulsah-Signature": signature,
+            "X-Kulsah-Service": "laravel",
+            "Content-Type": "application/json",
+        }
 
     def test_health_endpoint_returns_ok(self) -> None:
         response = self.client.get("/health")
@@ -22,14 +43,19 @@ class TestFastAPIEndpoints(unittest.TestCase):
         self.assertEqual(payload["service"], "kulsah-ai-recommendation")
 
     def test_events_endpoint_records_signal(self) -> None:
-        response = self.client.post(
-            "/events",
-            json={
+        body = json.dumps(
+            {
                 "user_id": 210,
                 "event_type": "search",
                 "value": 1,
                 "terms": ["food", "recipe"],
             },
+            separators=(",", ":"),
+        )
+        response = self.client.post(
+            "/events",
+            data=body,
+            headers=self._signed_headers("POST", "/events", body),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -40,14 +66,19 @@ class TestFastAPIEndpoints(unittest.TestCase):
         self.assertIn("search_terms", payload["signals"])
 
     def test_recommend_endpoint_returns_ranked_videos(self) -> None:
-        response = self.client.post(
-            "/recommend",
-            json={
+        body = json.dumps(
+            {
                 "user_id": 210,
                 "limit": 3,
                 "search_query": "food",
                 "interest_terms": ["cooking", "ramen"],
                 "peer_strength": 0.3,
+                "followed_creator_ids": [12],
+                "subscribed_creator_ids": [13],
+                "liked_video_ids": [101],
+                "bookmarked_video_ids": [102],
+                "favorite_categories": ["food", "music"],
+                "favorite_creator_ids": [12, 13],
                 "include_breakdown": True,
                 "videos": [
                     {
@@ -69,6 +100,7 @@ class TestFastAPIEndpoints(unittest.TestCase):
                         "share_velocity": 18,
                         "completion_rate": 0.89,
                         "age_hours": 7,
+                        "history_affinity": 0.8,
                     },
                     {
                         "video_id": 102,
@@ -89,9 +121,16 @@ class TestFastAPIEndpoints(unittest.TestCase):
                         "share_velocity": 2,
                         "completion_rate": 0.44,
                         "age_hours": 42,
+                        "history_affinity": 0.1,
                     },
                 ],
             },
+            separators=(",", ":"),
+        )
+        response = self.client.post(
+            "/recommend",
+            data=body,
+            headers=self._signed_headers("POST", "/recommend", body),
         )
 
         self.assertEqual(response.status_code, 200)

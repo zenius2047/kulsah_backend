@@ -21,6 +21,7 @@ The service combines the signals from the design doc into one final score:
 - `Peer score` from social influence and followed creators
 - `Search score` from keyword relevance and search-session behavior
 - `Viral boost` from velocity and stored virality bias
+- `History affinity` from Laravel-provided user history such as follows, subscriptions, likes, bookmarks, and favorite categories
 
 Final ranking:
 
@@ -136,6 +137,29 @@ Generates a ranked list of videos for a user.
 
 If `videos` is omitted or empty, the service generates cold-start candidates automatically.
 
+### `POST /recommendations`
+
+Laravel exposes this route as a dedicated feed-helper endpoint and returns ranked video IDs only.
+
+It uses the same FastAPI ranking engine under the hood, but the response is intentionally minimal:
+
+```json
+{
+  "data": [101, 102, 103],
+  "meta": {
+    "cache_hit": false,
+    "cache_key": "feed:user:210:limit:20:page:1:v1:abc123def456",
+    "pagination": {
+      "current_page": 1,
+      "per_page": 20,
+      "total": 3,
+      "last_page": 1,
+      "has_more_pages": false
+    }
+  }
+}
+```
+
 ### `POST /events`
 
 Records a lightweight signal for a user.
@@ -185,6 +209,12 @@ Main inputs:
 - `search_query`
 - `interest_terms`
 - `peer_strength`
+- `followed_creator_ids`
+- `subscribed_creator_ids`
+- `liked_video_ids`
+- `bookmarked_video_ids`
+- `favorite_categories`
+- `favorite_creator_ids`
 - `videos`
 - `include_breakdown`
 
@@ -263,3 +293,23 @@ The service uses:
 - The scoring hooks are structured so a future PyTorch model can replace the formula without changing the API contract.
 - The response format is intentionally simple so Laravel can enrich and cache results efficiently.
 
+## Service-to-service signing
+
+If `FASTAPI_SHARED_SECRET` is set, the service requires Laravel to send HMAC-signed requests.
+
+Laravel should include these headers:
+
+- `X-Kulsah-Timestamp`
+- `X-Kulsah-Signature`
+- `X-Kulsah-Service: laravel`
+
+The signature is computed over:
+
+```text
+timestamp
+HTTP method
+request path
+raw JSON body
+```
+
+Requests older than `FASTAPI_SIGNATURE_TTL_SECONDS` are rejected.

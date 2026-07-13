@@ -1,11 +1,14 @@
 import json
+import hashlib
+import hmac
 import math
 import os
 import random
+import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 try:
@@ -44,6 +47,7 @@ class VideoCandidate(BaseModel):
     share_velocity: float | None = None
     completion_rate: float | None = None
     age_hours: float | None = None
+    history_affinity: float | None = None
 
 
 class RecommendationRequest(BaseModel):
@@ -51,7 +55,15 @@ class RecommendationRequest(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
     search_query: str | None = None
     interest_terms: list[str] = Field(default_factory=list)
+    vibe_terms: list[str] = Field(default_factory=list)
+    initial_feed: bool = False
     peer_strength: float = Field(default=0.0, ge=0.0, le=1.0)
+    followed_creator_ids: list[int] = Field(default_factory=list)
+    subscribed_creator_ids: list[int] = Field(default_factory=list)
+    liked_video_ids: list[int] = Field(default_factory=list)
+    bookmarked_video_ids: list[int] = Field(default_factory=list)
+    favorite_categories: list[str] = Field(default_factory=list)
+    favorite_creator_ids: list[int] = Field(default_factory=list)
     videos: list[VideoCandidate] = Field(default_factory=list)
     include_breakdown: bool = False
 
@@ -179,6 +191,50 @@ class SignalStore:
 signal_store = SignalStore.from_env()
 
 
+async def verify_internal_request(request: Request) -> None:
+    shared_secret = os.getenv("FASTAPI_SHARED_SECRET")
+    if not shared_secret:
+        return
+
+    timestamp_header = request.headers.get("x-kulsah-timestamp")
+    signature_header = request.headers.get("x-kulsah-signature")
+
+    if not timestamp_header or not signature_header:
+        raise HTTPException(status_code=401, detail="Missing FastAPI service signature.")
+
+    try:
+        timestamp = int(timestamp_header)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid FastAPI service timestamp.") from exc
+
+    ttl_seconds = int(os.getenv("FASTAPI_SIGNATURE_TTL_SECONDS", "300"))
+    if abs(int(_utc_timestamp()) - timestamp) > ttl_seconds:
+        raise HTTPException(status_code=401, detail="Expired FastAPI service signature.")
+
+    raw_body = await request.body()
+    body_text = raw_body.decode("utf-8") if raw_body else ""
+    query_text = request.url.query or ""
+    path = request.url.path if not query_text else f"{request.url.path}?{query_text}"
+    canonical = "\n".join([
+        str(timestamp),
+        request.method.upper(),
+        path,
+        body_text,
+    ])
+    expected_signature = hmac.new(
+        shared_secret.encode("utf-8"),
+        canonical.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature_header, expected_signature):
+        raise HTTPException(status_code=401, detail="Invalid FastAPI service signature.")
+
+
+def _utc_timestamp() -> float:
+    return time.time()
+
+
 def derive_watch_score(candidate: VideoCandidate, signals: dict[str, Any]) -> float:
     # Watch score blends the candidate hint with lightweight user history.
     base = normalize(candidate.watch_time_score, fallback=0.5)
@@ -209,9 +265,21 @@ def derive_interest_match(candidate: VideoCandidate, request: RecommendationRequ
     base = normalize(candidate.interest_match, fallback=0.35)
     candidate_tokens = tokenize(candidate.title) | set(token.lower() for token in candidate.tags)
     query_tokens = tokenize(request.search_query) | {term.lower() for term in request.interest_terms}
+    query_tokens |= {term.lower() for term in request.vibe_terms}
     query_tokens |= set(signals.get("search_terms", {}).keys())
+    query_tokens |= {term.lower() for term in request.favorite_categories}
     profile_boost = compute_overlap_score(query_tokens, candidate_tokens)
-    return clamp((0.6 * base) + (0.4 * profile_boost))
+
+    category_bias = 0.0
+    if candidate.category:
+        favorite_categories = {term.lower() for term in request.favorite_categories}
+        vibe_terms = {term.lower() for term in request.vibe_terms}
+        if request.initial_feed and vibe_terms:
+            category_bias = 0.2 if candidate.category.lower() in vibe_terms else 0.0
+        else:
+            category_bias = 0.15 if candidate.category.lower() in favorite_categories else 0.0
+
+    return clamp((0.55 * base) + (0.35 * profile_boost) + category_bias)
 
 
 def derive_freshness(candidate: VideoCandidate) -> float:
@@ -235,12 +303,16 @@ def derive_peer_score(candidate: VideoCandidate, request: RecommendationRequest,
     base = normalize(candidate.peer_score, fallback=0.0)
     user_peer = normalize(request.peer_strength, fallback=0.0)
     history_peer = normalize(float(signals.get("peer_score", 0.0)), fallback=0.0)
+    creator_affinity = 0.0
+    if candidate.creator_id is not None and candidate.creator_id in request.favorite_creator_ids:
+        creator_affinity = 0.15
+
     followed_creator_boost = 0.0
     if candidate.creator_name:
         followed = signals.get("followed_creators", {})
         followed_creator_boost = 0.2 if candidate.creator_name.lower() in followed else 0.0
 
-    return clamp((0.45 * base) + (0.35 * user_peer) + (0.2 * history_peer) + followed_creator_boost)
+    return clamp((0.4 * base) + (0.3 * user_peer) + (0.15 * history_peer) + creator_affinity + followed_creator_boost)
 
 
 def derive_search_score(candidate: VideoCandidate, request: RecommendationRequest, signals: dict[str, Any]) -> float:
@@ -276,11 +348,12 @@ def derive_viral_boost(candidate: VideoCandidate, signals: dict[str, Any]) -> fl
 def score_video(candidate: VideoCandidate, request: RecommendationRequest, signals: dict[str, Any]) -> tuple[float, dict[str, float]]:
     # This is the MVP ranking formula from the design doc.
     ai_score = (
-        0.40 * derive_watch_score(candidate, signals)
-        + 0.25 * derive_engagement_score(candidate, signals)
-        + 0.20 * derive_interest_match(candidate, request, signals)
+        0.37 * derive_watch_score(candidate, signals)
+        + 0.23 * derive_engagement_score(candidate, signals)
+        + 0.18 * derive_interest_match(candidate, request, signals)
         + 0.10 * derive_freshness(candidate)
         + 0.05 * derive_creator_quality(candidate)
+        + 0.07 * normalize(candidate.history_affinity, fallback=0.0)
     )
 
     peer_score = derive_peer_score(candidate, request, signals)
@@ -293,6 +366,7 @@ def score_video(candidate: VideoCandidate, request: RecommendationRequest, signa
         "peer_score": round(peer_score, 4),
         "search_score": round(search_score, 4),
         "viral_boost": round(viral_boost, 4),
+        "history_affinity": round(normalize(candidate.history_affinity, fallback=0.0), 4),
     }
     return round(final_score, 4), breakdown
 
@@ -364,7 +438,7 @@ def health() -> dict[str, Any]:
 
 
 @app.post("/events")
-def ingest_event(payload: EventPayload) -> dict[str, Any]:
+def ingest_event(payload: EventPayload, _: None = Depends(verify_internal_request)) -> dict[str, Any]:
     # Laravel can call this after watches, likes, shares, saves, searches, and follows.
     signals = signal_store.record(payload)
     return {
@@ -375,7 +449,7 @@ def ingest_event(payload: EventPayload) -> dict[str, Any]:
 
 
 @app.post("/recommend", response_model=RecommendationResponse)
-def recommend(request: RecommendationRequest) -> RecommendationResponse:
+def recommend(request: RecommendationRequest, _: None = Depends(verify_internal_request)) -> RecommendationResponse:
     # Rank the supplied candidate set, or fall back to cold-start generation.
     signals = signal_store.get(request.user_id)
     candidates = request.videos or build_cold_start_candidates(request)

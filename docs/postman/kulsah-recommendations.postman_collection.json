@@ -1,0 +1,102 @@
+{
+  "info": {
+    "name": "Kulsah Recommendations",
+    "_postman_id": "c8d0c6d2-6e7f-4d0f-9d2b-4c2b2f4f3d10",
+    "description": "Requests for testing the Laravel recommendation endpoint backed by FastAPI.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Ranked Video IDs",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/general/recommendations?limit=10&search_query=music&interest_terms[]=music&interest_terms[]=dance",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "general",
+            "recommendations"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "10"
+            },
+            {
+              "key": "search_query",
+              "value": "music"
+            },
+            {
+              "key": "interest_terms[]",
+              "value": "music"
+            },
+            {
+              "key": "interest_terms[]",
+              "value": "dance"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Full Feed",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/general/feed?limit=10&search_query=music&interest_terms[]=music&interest_terms[]=dance",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "general",
+            "feed"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "10"
+            },
+            {
+              "key": "search_query",
+              "value": "music"
+            },
+            {
+              "key": "interest_terms[]",
+              "value": "music"
+            },
+            {
+              "key": "interest_terms[]",
+              "value": "dance"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

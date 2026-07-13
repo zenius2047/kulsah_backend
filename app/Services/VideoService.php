@@ -6,6 +6,7 @@ use App\Jobs\ProcessVideoJob;
 use App\Models\Video;
 use App\Models\User;
 use App\Notifications\VideoMentionedNotification;
+use App\Services\FeedService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
@@ -21,6 +22,8 @@ class VideoService
         private readonly VideoStorageService $videoStorageService,
         private readonly VideoInspectionService $videoInspectionService,
         private readonly VideoCaptionParserService $videoCaptionParserService,
+        private readonly FastApiRecommendationService $fastApiRecommendationService,
+        private readonly FeedService $feedService,
     ) {
     }
 
@@ -366,6 +369,13 @@ class VideoService
 
         if (Cache::add($cacheKey, true, now()->addMinutes($cooldownMinutes))) {
             $video->increment('views_count');
+            $this->fastApiRecommendationService->recordEvent(
+                userId: $viewerId,
+                eventType: 'watch',
+                videoId: (int) $video->id,
+                value: 1.0
+            );
+            $this->feedService->invalidateFeedCaches();
         }
 
         return $video->refresh();
