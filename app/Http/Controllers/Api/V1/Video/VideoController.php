@@ -7,7 +7,9 @@ use App\Http\Resources\CreatorVideoResource;
 use App\Http\Resources\CreatorVideoDetailResource;
 use App\Http\Resources\VideoResource;
 use App\Models\Video;
+use App\Models\VideoView;
 use App\Services\VideoService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -392,6 +394,54 @@ class VideoController extends Controller
         ]);
     }
 
+    public function watched(Request $request)
+    {
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $watchedVideos = Video::query()
+            ->joinSub(
+                VideoView::query()
+                    ->selectRaw('video_id, MAX(viewed_at) as last_watched_at')
+                    ->where('user_id', $request->user()->id)
+                    ->groupBy('video_id'),
+                'watched_videos',
+                'watched_videos.video_id',
+                '=',
+                'videos.id'
+            )
+            ->select('videos.*', 'watched_videos.last_watched_at')
+            ->with('user:id,name,username,avatar,banner')
+            ->orderByDesc('watched_videos.last_watched_at')
+            ->paginate((int) ($validated['per_page'] ?? 20));
+
+        $videos = $watchedVideos->getCollection()->map(function (Video $video) {
+            return [
+                'id' => (string) $video->id,
+                'title' => (string) ($video->title ?: $video->caption ?: ''),
+                'views' => $this->formatCount($video->views_count ?? 0),
+                'duration' => $this->formatDuration((int) ($video->duration ?? 0)),
+                'img' => $video->thumbnail_url ?: $video->cdn_url ?: data_get($video->metadata ?? [], 'thumbnail'),
+                'watched_at' => $video->last_watched_at
+                    ? Carbon::parse($video->last_watched_at)->toIso8601String()
+                    : null,
+            ];
+        })->values();
+
+        return response()->json([
+            'data' => [
+                'videos' => $videos,
+            ],
+            'meta' => [
+                'current_page' => $watchedVideos->currentPage(),
+                'last_page' => $watchedVideos->lastPage(),
+                'per_page' => $watchedVideos->perPage(),
+                'total' => $watchedVideos->total(),
+            ],
+        ]);
+    }
+
     private function normalizeContentTypes(Request $request): void
     {
         $contentTypesInput = $request->input('content_type', $request->input('content_types'));
@@ -422,6 +472,33 @@ class VideoController extends Controller
         return $hours > 0
             ? sprintf('%d:%02d:%02d', $hours, $minutes, $remainingSeconds)
             : sprintf('%02d:%02d', $minutes, $remainingSeconds);
+    }
+
+    private function formatCount(mixed $value): string
+    {
+        if (is_string($value) && $value !== '') {
+            return $value;
+        }
+
+        if (! is_numeric($value)) {
+            return '0';
+        }
+
+        $value = (float) $value;
+
+        if ($value >= 1000000000) {
+            return rtrim(rtrim(number_format($value / 1000000000, 1), '0'), '.').'B';
+        }
+
+        if ($value >= 1000000) {
+            return rtrim(rtrim(number_format($value / 1000000, 1), '0'), '.').'M';
+        }
+
+        if ($value >= 1000) {
+            return rtrim(rtrim(number_format($value / 1000, 1), '0'), '.').'k';
+        }
+
+        return (string) (int) $value;
     }
 
     private function parseBooleanQuery(Request $request, string $key): ?bool

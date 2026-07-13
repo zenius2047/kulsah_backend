@@ -48,6 +48,7 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
+        Route::get('/videos/watched', [VideoController::class, 'watched']);
         Route::get('/videos/{video}', [VideoController::class, 'show']);
         Route::post('/videos/{video}/view', [VideoController::class, 'view']);
         Route::get('/kulcoin/wallet', [KulCoinController::class, 'wallet']);
