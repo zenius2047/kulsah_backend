@@ -36,7 +36,7 @@ class FeedService
 
         $query = Video::query()
             ->ready()
-            ->with(['user:id,name,username,avatar'])
+            ->with(['user:id,name,username,avatar,banner'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->latest()
             ->take(max($limit * $page, $limit));

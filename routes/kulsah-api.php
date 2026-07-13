@@ -70,6 +70,7 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::post('/creators/{creator}/follow', [SocialController::class, 'follow']);
         Route::delete('/creators/{creator}/follow', [SocialController::class, 'unfollow']);
         Route::post('/upload-avatar', [ProfileController::class, 'uploadAvatar']);
+        Route::post('/upload-banner', [ProfileController::class, 'uploadBanner']);
         Route::post('/update-profile', [ProfileController::class, 'updateProfile']);
         Route::get('/wallet', [WalletController::class, 'show']);
         Route::get('/wallet/transactions', [WalletController::class, 'transactions']);

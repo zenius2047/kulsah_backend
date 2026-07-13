@@ -58,6 +58,54 @@
             font-weight: 600;
             color: var(--text);
         }
+
+        /* App identity block */
+        .app-identity {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+        .app-logo {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            object-fit: cover;
+            flex-shrink: 0;
+            background: var(--card);
+        }
+        .app-logo-fallback {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            flex-shrink: 0;
+            background: var(--brand);
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .app-identity-text {
+            min-width: 0;
+        }
+        .app-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            margin: 0 0 2px;
+            overflow-wrap: anywhere;
+        }
+        .app-description {
+            font-size: 13px;
+            color: var(--muted);
+            margin: 0;
+            line-height: 1.5;
+        }
+
         h1 {
             margin: 0 0 6px;
             font-size: 20px;
@@ -184,6 +232,20 @@
             <span class="brand-name">Kulsah</span>
         </div>
 
+        <div class="app-identity">
+            @if (!empty($client->logo_url))
+                <img class="app-logo" src="{{ $client->logo_url }}" alt="{{ $client->name }} logo">
+            @else
+                <span class="app-logo-fallback">{{ strtoupper(substr($client->name, 0, 1)) }}</span>
+            @endif
+            <div class="app-identity-text">
+                <p class="app-name">{{ $client->name }}</p>
+                @if (!empty($client->description))
+                    <p class="app-description">{{ $client->description }}</p>
+                @endif
+            </div>
+        </div>
+
         <h1>{{ $client->name }} wants to access your Kulsah account</h1>
         <p class="subtitle">
             Signed in as <strong>{{ $user->name ?? $user->email ?? 'Current user' }}</strong>
@@ -211,10 +273,7 @@
         </div>
 
         <p class="fine-print">
-            Make sure you trust {{ $client->name }}. You can review or remove this access anytime from your Kulsah account settings.
-            @if (!empty($client->description))
-                <br>{{ $client->description }}
-            @endif
+            Make sure you trust {{ $client->name }} before continuing. You can review or remove this access anytime from your Kulsah account settings.
             <br class="redirect">Redirecting to: <span class="redirect">{{ $client->redirect_uris[0] ?? 'Not set' }}</span>
         </p>
 

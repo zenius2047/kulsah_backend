@@ -180,8 +180,8 @@ class SocialEngagementService
         ]);
 
         $comment->load([
-            'user:id,name,username,avatar,verified',
-            'replies.user:id,name,username,avatar,verified',
+            'user:id,name,username,avatar,banner,verified',
+            'replies.user:id,name,username,avatar,banner,verified',
         ]);
         $comment->loadCount('likes');
 
@@ -199,9 +199,9 @@ class SocialEngagementService
             ->where('video_id', $video->id)
             ->whereNull('parent_id')
             ->with([
-                'user:id,name,username,avatar,verified',
+                'user:id,name,username,avatar,banner,verified',
                 'replies' => function ($query): void {
-                    $query->oldest()->with('user:id,name,username,avatar,verified')->withCount('likes');
+                    $query->oldest()->with('user:id,name,username,avatar,banner,verified')->withCount('likes');
                 },
             ])
             ->withCount('likes')
@@ -223,8 +223,8 @@ class SocialEngagementService
         });
 
         $comment->load([
-            'user:id,name,username,avatar,verified',
-            'replies.user:id,name,username,avatar,verified',
+            'user:id,name,username,avatar,banner,verified',
+            'replies.user:id,name,username,avatar,banner,verified',
         ]);
         $comment->loadCount('likes');
 
@@ -244,8 +244,8 @@ class SocialEngagementService
             ->delete();
 
         $comment->load([
-            'user:id,name,username,avatar,verified',
-            'replies.user:id,name,username,avatar,verified',
+            'user:id,name,username,avatar,banner,verified',
+            'replies.user:id,name,username,avatar,banner,verified',
         ]);
         $comment->loadCount('likes');
 

@@ -21,6 +21,7 @@ class CreatorVideoDetailResource extends JsonResource
             'creator_id' => (string) $video->user_id,
             'handle' => '@'.ltrim((string) ($creator?->username ?: $creator?->name ?: 'unknown'), '@'),
             'avatar' => $creator?->avatar,
+            'banner' => $creator?->banner,
             'caption' => (string) ($video->caption ?: $video->title ?: ''),
             'background' => $video->thumbnail_url ?: data_get($metadata, 'background'),
             'video' => $video->cdn_url ?: $video->source_url ?: data_get($metadata, 'stream_url'),

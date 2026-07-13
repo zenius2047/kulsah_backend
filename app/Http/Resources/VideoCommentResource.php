@@ -19,6 +19,7 @@ class VideoCommentResource extends JsonResource
             'id' => (string) $comment->id,
             'handle' => $this->resolveHandle($user?->username, $user?->name),
             'avatar' => $user?->avatar,
+            'banner' => $user?->banner,
             'text' => (string) $comment->body,
             'stickerUrl' => data_get($metadata, 'stickerUrl', data_get($metadata, 'sticker_url')),
             'gift' => data_get($metadata, 'gift'),
@@ -51,6 +52,7 @@ class VideoCommentResource extends JsonResource
         return [
             'handle' => $this->resolveHandle($replyUser?->username, $replyUser?->name),
             'avatar' => $replyUser?->avatar,
+            'banner' => $replyUser?->banner,
             'text' => (string) $reply->body,
             'time' => optional($reply->created_at)?->diffForHumans(),
         ];

@@ -29,6 +29,7 @@ class SubscriptionPlanResource extends JsonResource
                     'name' => $this->creator->name,
                     'username' => $this->creator->username,
                     'avatar' => $this->creator->avatar,
+                    'banner' => $this->creator->banner,
                 ];
             }),
             'created_at' => $this->created_at,

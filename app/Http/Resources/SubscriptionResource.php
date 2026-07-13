@@ -31,6 +31,7 @@ class SubscriptionResource extends JsonResource
                     'name' => $this->subscriber->name,
                     'username' => $this->subscriber->username,
                     'avatar' => $this->subscriber->avatar,
+                    'banner' => $this->subscriber->banner,
                 ];
             }),
             'creator' => $this->whenLoaded('creator', function () {
@@ -39,6 +40,7 @@ class SubscriptionResource extends JsonResource
                     'name' => $this->creator->name,
                     'username' => $this->creator->username,
                     'avatar' => $this->creator->avatar,
+                    'banner' => $this->creator->banner,
                 ];
             }),
             'plan' => $this->whenLoaded('plan', function () {

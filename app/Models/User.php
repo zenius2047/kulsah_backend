@@ -32,6 +32,7 @@ class User extends Authenticatable
         'provider',
         'provider_id',
         'avatar',
+        'banner',
         'bio',
         'location',
         'activation_otp',
@@ -157,17 +158,30 @@ class User extends Authenticatable
         return 'users.'.$this->id;
     }
 
-    //GET avatar attribute
+    // Get avatar attribute
     public function getAvatarAttribute($value)
     {
-    if (!$value) {
-        return null;
+        return $this->resolveS3MediaUrl($value);
     }
-    // If already a full URL, return as is
-    if (filter_var($value, FILTER_VALIDATE_URL)) {
-        return $value;
+
+    // Get banner attribute
+    public function getBannerAttribute($value)
+    {
+        return $this->resolveS3MediaUrl($value);
     }
-     return Storage::disk('s3')->url($value);
+
+    private function resolveS3MediaUrl($value)
+    {
+        if (! $value) {
+            return null;
+        }
+
+        // If already a full URL, return as is.
+        if (filter_var($value, FILTER_VALIDATE_URL)) {
+            return $value;
+        }
+
+        return Storage::disk('s3')->url($value);
     }
 
     public function getTotalFollowersAttribute(): int

@@ -82,7 +82,7 @@ class SubscriptionController extends Controller
                 ]);
         });
 
-        $plan->load('creator:id,name,username,avatar');
+        $plan->load('creator:id,name,username,avatar,banner');
         $this->forgetCreatorPlansCache($request->user()->id);
 
         return response()->json([
@@ -109,7 +109,7 @@ class SubscriptionController extends Controller
         });
 
         $subscriptionPlan->refresh();
-        $subscriptionPlan->load('creator:id,name,username,avatar');
+        $subscriptionPlan->load('creator:id,name,username,avatar,banner');
         $this->forgetCreatorPlansCache($subscriptionPlan->creator_id);
 
         return response()->json([
@@ -195,8 +195,8 @@ class SubscriptionController extends Controller
         });
 
         $subscription->load([
-            'subscriber:id,name,username,avatar',
-            'creator:id,name,username,avatar',
+            'subscriber:id,name,username,avatar,banner',
+            'creator:id,name,username,avatar,banner',
             'plan',
         ]);
 
@@ -240,8 +240,8 @@ class SubscriptionController extends Controller
         });
 
         $subscription->load([
-            'subscriber:id,name,username,avatar',
-            'creator:id,name,username,avatar',
+            'subscriber:id,name,username,avatar,banner',
+            'creator:id,name,username,avatar,banner',
             'plan',
         ]);
 
@@ -277,7 +277,7 @@ class SubscriptionController extends Controller
 
         $this->forgetCreatorPlansCache($subscriptionPlan->creator_id);
 
-        $subscriptionPlan->load('creator:id,name,username,avatar');
+        $subscriptionPlan->load('creator:id,name,username,avatar,banner');
 
         return response()->json([
             'message' => 'Subscription plan disabled successfully.',
@@ -346,7 +346,7 @@ class SubscriptionController extends Controller
 
         $plans = $request->user()
             ->subscriptionPlans()
-            ->with('creator:id,name,username,avatar')
+            ->with('creator:id,name,username,avatar,banner')
             ->orderByDesc('is_active')
             ->orderBy('price')
             ->get()
@@ -373,7 +373,7 @@ class SubscriptionController extends Controller
 
         $plans = $creator->subscriptionPlans()
             ->active()
-            ->with('creator:id,name,username,avatar')
+            ->with('creator:id,name,username,avatar,banner')
             ->orderByDesc('is_active')
             ->orderBy('price')
             ->get()

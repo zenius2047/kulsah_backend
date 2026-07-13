@@ -102,14 +102,14 @@ class VideoController extends Controller
         );
 
         $video->load([
-            'user:id,name,username,avatar',
+            'user:id,name,username,avatar,banner',
             'comments' => function ($query): void {
                 $query->whereNull('parent_id')
                     ->latest()
                     ->with([
-                        'user:id,name,username,avatar,verified',
+                        'user:id,name,username,avatar,banner,verified',
                         'replies' => function ($replyQuery): void {
-                            $replyQuery->oldest()->with('user:id,name,username,avatar,verified')->withCount('likes');
+                            $replyQuery->oldest()->with('user:id,name,username,avatar,banner,verified')->withCount('likes');
                         },
                     ])
                     ->withCount('likes');
@@ -119,7 +119,7 @@ class VideoController extends Controller
         $video->setRelation(
             'otherVideos',
             Video::query()
-                ->with('user:id,name,username,avatar')
+                ->with('user:id,name,username,avatar,banner')
                 ->withCount(['likes', 'comments'])
                 ->where('user_id', $request->user()->id)
                 ->whereKeyNot($video->id)

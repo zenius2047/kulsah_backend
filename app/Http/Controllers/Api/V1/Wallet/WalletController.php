@@ -20,7 +20,7 @@ class WalletController extends Controller
     {
         $wallet = $this->walletService->getOrCreateUserWallet($request->user());
 
-        $wallet->load('user:id,name,username,avatar');
+        $wallet->load('user:id,name,username,avatar,banner');
 
         return response()->json([
             'data' => new WalletResource($wallet),
