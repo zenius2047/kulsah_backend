@@ -25,6 +25,14 @@ Route::prefix('creator')
         Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
         Route::post('/videos/drafts', [VideoController::class, 'draft']);
         Route::post('/videos', [VideoController::class, 'store']);
+        Route::get('/video-playlists', [VideoController::class, 'playlists']);
+        Route::get('/video-playlists/{playlist}', [VideoController::class, 'showPlaylist']);
+        Route::get('/video-playlists/{playlist}/videos', [VideoController::class, 'playlistVideos']);
+        Route::post('/video-playlists', [VideoController::class, 'storePlaylist']);
+        Route::patch('/video-playlists/{playlist}', [VideoController::class, 'updatePlaylist']);
+        Route::delete('/video-playlists/{playlist}', [VideoController::class, 'destroyPlaylist']);
+        Route::post('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'moveToPlaylist']);
+        Route::delete('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'removeFromPlaylist']);
         Route::post('/videos/{video}/upload', [VideoController::class, 'upload']);
         Route::patch('/videos/{video}/progress', [VideoController::class, 'updateProgress']);
         Route::patch('/videos/{video}', [VideoController::class, 'update']);

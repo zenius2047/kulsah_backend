@@ -19,6 +19,12 @@ class VideoResource extends JsonResource
             'visibility' => $this->visibility,
             'content_type' => $this->content_type,
             'content_types' => is_array($this->content_types) ? $this->content_types : [],
+            'playlist_ids' => $this->relationLoaded('playlists')
+                ? $this->playlists->pluck('id')->sort()->values()->all()
+                : [],
+            'playlists_count' => $this->relationLoaded('playlists')
+                ? $this->playlists->count()
+                : null,
             'is_premium' => (bool) $this->is_premium,
             'cdn_url' => $this->cdn_url,
             'stream_url' => data_get($metadata, 'stream_url', $this->cdn_url),

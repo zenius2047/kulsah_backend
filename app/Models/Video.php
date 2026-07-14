@@ -49,6 +49,12 @@ class Video extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function playlists()
+    {
+        return $this->belongsToMany(VideoPlaylist::class, 'video_playlist_video')
+            ->withTimestamps();
+    }
+
     public function likes()
     {
         return $this->hasMany(VideoLike::class);

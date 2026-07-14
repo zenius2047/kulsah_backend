@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1\Video;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CreatorVideoResource;
 use App\Http\Resources\CreatorVideoDetailResource;
+use App\Http\Resources\VideoPlaylistResource;
 use App\Http\Resources\VideoResource;
 use App\Models\Video;
+use App\Models\VideoPlaylist;
 use App\Models\VideoView;
 use App\Services\VideoService;
 use Carbon\Carbon;
@@ -105,6 +107,7 @@ class VideoController extends Controller
 
         $video->load([
             'user:id,name,username,avatar,banner',
+            'playlists:id,name',
             'comments' => function ($query): void {
                 $query->whereNull('parent_id')
                     ->latest()
@@ -197,6 +200,151 @@ class VideoController extends Controller
             'message' => 'Video uploaded successfully and is now in draft while processing starts.',
             'data' => new VideoResource($video),
         ], 201);
+    }
+
+    public function storePlaylist(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+        ]);
+
+        $playlist = VideoPlaylist::query()->create([
+            'user_id' => $request->user()->id,
+            'name' => $validated['name'],
+        ]);
+
+        return response()->json([
+            'message' => 'Video playlist created successfully.',
+            'data' => new VideoPlaylistResource($playlist),
+        ], 201);
+    }
+
+    public function playlists(Request $request)
+    {
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $playlists = VideoPlaylist::query()
+            ->where('user_id', $request->user()->id)
+            ->withCount('videos')
+            ->latest('id')
+            ->paginate((int) ($validated['per_page'] ?? 20));
+
+        return response()->json([
+            'data' => VideoPlaylistResource::collection($playlists),
+            'meta' => [
+                'current_page' => $playlists->currentPage(),
+                'last_page' => $playlists->lastPage(),
+                'per_page' => $playlists->perPage(),
+                'total' => $playlists->total(),
+            ],
+        ]);
+    }
+
+    public function showPlaylist(Request $request, VideoPlaylist $playlist)
+    {
+        $this->authorizePlaylist($request, $playlist);
+
+        $playlist->load([
+            'videos' => function ($query): void {
+                $query->orderByDesc('videos.id')
+                    ->withCount(['likes', 'comments'])
+                    ->with(['playlists:id,name']);
+            },
+        ])->loadCount('videos');
+
+        return response()->json([
+            'data' => new VideoPlaylistResource($playlist),
+        ]);
+    }
+
+    public function playlistVideos(Request $request, VideoPlaylist $playlist)
+    {
+        $this->authorizePlaylist($request, $playlist);
+
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $videos = $playlist->videos()
+            ->withCount(['likes', 'comments'])
+            ->with('playlists:id,name')
+            ->orderByDesc('videos.id')
+            ->paginate((int) ($validated['per_page'] ?? 20));
+
+        return response()->json([
+            'data' => VideoResource::collection($videos),
+            'meta' => [
+                'current_page' => $videos->currentPage(),
+                'last_page' => $videos->lastPage(),
+                'per_page' => $videos->perPage(),
+                'total' => $videos->total(),
+            ],
+        ]);
+    }
+
+    public function updatePlaylist(Request $request, VideoPlaylist $playlist)
+    {
+        $this->authorizePlaylist($request, $playlist);
+
+        $validated = $request->validate([
+            'name' => ['sometimes', 'required', 'string', 'max:255'],
+        ]);
+
+        $playlist->update($validated);
+
+        $playlist->loadCount('videos');
+
+        return response()->json([
+            'message' => 'Video playlist updated successfully.',
+            'data' => new VideoPlaylistResource($playlist),
+        ]);
+    }
+
+    public function destroyPlaylist(Request $request, VideoPlaylist $playlist)
+    {
+        $this->authorizePlaylist($request, $playlist);
+
+        $playlist->delete();
+
+        return response()->json([
+            'message' => 'Video playlist deleted successfully.',
+        ]);
+    }
+
+    public function moveToPlaylist(Request $request, VideoPlaylist $playlist, Video $video)
+    {
+        $this->authorizePlaylistAndVideo($request, $playlist, $video);
+
+        $video->playlists()->syncWithoutDetaching([$playlist->id]);
+
+        $video->load('playlists:id,name');
+
+        return response()->json([
+            'message' => 'Video added to playlist successfully.',
+            'data' => new VideoResource($video),
+        ]);
+    }
+
+    public function removeFromPlaylist(Request $request, VideoPlaylist $playlist, Video $video)
+    {
+        $this->authorizePlaylistAndVideo($request, $playlist, $video);
+
+        if (! $video->playlists()->whereKey($playlist->id)->exists()) {
+            return response()->json([
+                'message' => 'Video does not belong to this playlist.',
+            ], 409);
+        }
+
+        $video->playlists()->detach($playlist->id);
+
+        $video->load('playlists:id,name');
+
+        return response()->json([
+            'message' => 'Video removed from playlist successfully.',
+            'data' => new VideoResource($video),
+        ]);
     }
 
     public function draft(Request $request)
@@ -334,6 +482,8 @@ class VideoController extends Controller
             403,
             'You are not allowed to view this video.'
         );
+
+        $video->load('playlists:id,name');
 
         return response()->json([
             'data' => new VideoResource($video),
@@ -549,5 +699,24 @@ class VideoController extends Controller
             'exception' => get_class($throwable),
             'message' => $throwable->getMessage(),
         ], static fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function authorizePlaylist(Request $request, VideoPlaylist $playlist): void
+    {
+        abort_unless(
+            (string) $playlist->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to modify this playlist.'
+        );
+    }
+
+    private function authorizePlaylistAndVideo(Request $request, VideoPlaylist $playlist, Video $video): void
+    {
+        abort_unless(
+            (string) $playlist->user_id === (string) $request->user()->id
+                && (string) $video->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to modify this playlist.'
+        );
     }
 }
