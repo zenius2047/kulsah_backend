@@ -9,6 +9,9 @@ use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 
+Route::pattern('video', '[0-9]+');
+Route::pattern('playlist', '[0-9]+');
+
 // Fan and creator routes
 Route::prefix('fan')
     ->middleware(['auth:sanctum', 'role:creator|fan'])
@@ -22,19 +25,20 @@ Route::prefix('creator')
     ->group(function () {
         Route::get('/videos', [VideoController::class, 'index']);
         Route::get('/videos/analytics', [VideoController::class, 'analytics']);
-        Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
         Route::post('/videos/drafts', [VideoController::class, 'draft']);
         Route::post('/videos', [VideoController::class, 'store']);
         Route::get('/video-playlists', [VideoController::class, 'playlists']);
-        Route::get('/video-playlists/{playlist}', [VideoController::class, 'showPlaylist']);
-        Route::get('/video-playlists/{playlist}/videos', [VideoController::class, 'playlistVideos']);
         Route::post('/video-playlists', [VideoController::class, 'storePlaylist']);
+        Route::post('/video-playlists/{playlist}/videos/bulk', [VideoController::class, 'moveManyToPlaylist']);
+        Route::post('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'moveToPlaylist']);
+        Route::get('/video-playlists/{playlist}/videos', [VideoController::class, 'playlistVideos']);
+        Route::get('/video-playlists/{playlist}', [VideoController::class, 'showPlaylist']);
         Route::patch('/video-playlists/{playlist}', [VideoController::class, 'updatePlaylist']);
         Route::delete('/video-playlists/{playlist}', [VideoController::class, 'destroyPlaylist']);
-        Route::post('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'moveToPlaylist']);
         Route::delete('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'removeFromPlaylist']);
         Route::post('/videos/{video}/upload', [VideoController::class, 'upload']);
         Route::patch('/videos/{video}/progress', [VideoController::class, 'updateProgress']);
+        Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
         Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
@@ -57,8 +61,8 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
         Route::get('/videos/watched', [VideoController::class, 'watched']);
-        Route::get('/videos/{video}', [VideoController::class, 'show']);
         Route::post('/videos/{video}/view', [VideoController::class, 'view']);
+        Route::get('/videos/{video}', [VideoController::class, 'show']);
         Route::get('/kulcoin/wallet', [KulCoinController::class, 'wallet']);
         Route::get('/kulcoin/ledger', [KulCoinController::class, 'ledger']);
         Route::get('/kulcoin/packages', [KulCoinController::class, 'packages']);

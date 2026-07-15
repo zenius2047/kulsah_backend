@@ -28,7 +28,7 @@ class CreatorVideoDetailResource extends JsonResource
             'likes' => $this->formatCount($video->likes_count ?? data_get($metadata, 'likes', data_get($metadata, 'likes_count', 0))),
             'comments_count' => $this->formatCount($video->comments_count ?? data_get($metadata, 'comments_count', data_get($metadata, 'comments', 0))),
             'comments' => VideoCommentResource::collection($this->whenLoaded('comments')),
-            'otherVideos' => CreatorVideoResource::collection($this->whenLoaded('otherVideos')),
+            'otherVideos' => CreatorVideoDetailResource::collection($this->whenLoaded('otherVideos')),
         ];
     }
 

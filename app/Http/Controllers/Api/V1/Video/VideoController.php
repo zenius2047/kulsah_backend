@@ -13,6 +13,7 @@ use App\Models\VideoView;
 use App\Services\VideoService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -108,23 +109,16 @@ class VideoController extends Controller
         $video->load([
             'user:id,name,username,avatar,banner',
             'playlists:id,name',
-            'comments' => function ($query): void {
-                $query->whereNull('parent_id')
-                    ->latest()
-                    ->with([
-                        'user:id,name,username,avatar,banner,verified',
-                        'replies' => function ($replyQuery): void {
-                            $replyQuery->oldest()->with('user:id,name,username,avatar,banner,verified')->withCount('likes');
-                        },
-                    ])
-                    ->withCount('likes');
-            },
+            'comments' => $this->creatorVideoCommentsLoad(),
         ]);
         $video->loadCount(['likes', 'comments']);
         $video->setRelation(
             'otherVideos',
             Video::query()
                 ->with('user:id,name,username,avatar,banner')
+                ->with([
+                    'comments' => $this->creatorVideoCommentsLoad(),
+                ])
                 ->withCount(['likes', 'comments'])
                 ->where('user_id', $request->user()->id)
                 ->whereKeyNot($video->id)
@@ -136,6 +130,21 @@ class VideoController extends Controller
         return response()->json([
             'item' => new CreatorVideoDetailResource($video),
         ]);
+    }
+
+    private function creatorVideoCommentsLoad(): \Closure
+    {
+        return function ($query): void {
+            $query->whereNull('parent_id')
+                ->latest()
+                ->with([
+                    'user:id,name,username,avatar,banner,verified',
+                    'replies' => function ($replyQuery): void {
+                        $replyQuery->oldest()->with('user:id,name,username,avatar,banner,verified')->withCount('likes');
+                    },
+                ])
+                ->withCount('likes');
+        };
     }
 
     public function store(Request $request)
@@ -324,6 +333,40 @@ class VideoController extends Controller
         return response()->json([
             'message' => 'Video added to playlist successfully.',
             'data' => new VideoResource($video),
+        ]);
+    }
+
+    public function moveManyToPlaylist(Request $request, VideoPlaylist $playlist)
+    {
+        $this->authorizePlaylist($request, $playlist);
+
+        $validated = $request->validate([
+            'video_ids' => ['required', 'array', 'min:1', 'max:100'],
+            'video_ids.*' => ['required', 'integer', 'distinct', 'exists:videos,id'],
+        ]);
+
+        $videoIds = array_values(array_unique(array_map('intval', $validated['video_ids'])));
+
+        $videos = Video::query()
+            ->whereKey($videoIds)
+            ->where('user_id', $request->user()->id)
+            ->get();
+
+        if ($videos->count() !== count($videoIds)) {
+            abort(403, 'You are not allowed to modify one or more of these videos.');
+        }
+
+        DB::transaction(function () use ($playlist, $videos): void {
+            $videos->each(function (Video $video) use ($playlist): void {
+                $video->playlists()->syncWithoutDetaching([$playlist->id]);
+            });
+        });
+
+        $videos->load('playlists:id,name');
+
+        return response()->json([
+            'message' => 'Videos added to playlist successfully.',
+            'data' => VideoResource::collection($videos),
         ]);
     }
 

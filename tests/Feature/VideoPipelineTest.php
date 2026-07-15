@@ -238,7 +238,15 @@ class VideoPipelineTest extends TestCase
             ->assertJsonCount(1, 'item.otherVideos');
 
         $this->assertSame('First comment', $response->json('item.comments.0.text'));
-        $this->assertSame('Other Creator Video', $response->json('item.otherVideos.0.title'));
+        $this->assertSame((string) $creator->id, $response->json('item.otherVideos.0.creator_id'));
+        $this->assertSame('Dashboard Creator', $response->json('item.otherVideos.0.creator'));
+        $this->assertSame('@dashboard_creator', $response->json('item.otherVideos.0.handle'));
+        $this->assertSame('Another clip', $response->json('item.otherVideos.0.caption'));
+        $this->assertSame('https://example.com/other-video.jpg', $response->json('item.otherVideos.0.background'));
+        $this->assertSame('https://example.com/other-video.mp4', $response->json('item.otherVideos.0.video'));
+        $this->assertSame('0', $response->json('item.otherVideos.0.likes'));
+        $this->assertSame('0', $response->json('item.otherVideos.0.comments_count'));
+        $response->assertJsonCount(0, 'item.otherVideos.0.comments');
     }
 
     public function test_creator_video_list_supports_filters(): void

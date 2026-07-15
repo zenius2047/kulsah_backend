@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Log;
 class FeedService
 {
     private const CACHE_VERSION_KEY = 'feed:version';
+    private const FEED_RULES_VERSION = 2;
 
     public function __construct(
         private readonly FastApiRecommendationService $fastApiRecommendationService,
@@ -36,6 +37,7 @@ class FeedService
 
         $query = Video::query()
             ->ready()
+            ->where('user_id', '!=', $userId)
             ->with(['user:id,name,username,avatar,banner'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->latest()
@@ -233,6 +235,7 @@ class FeedService
     private function cacheKey(int $userId, int $limit, int $page, int $version, array $context = []): string
     {
         $hash = substr(sha1(json_encode([
+            'feed_rules_version' => self::FEED_RULES_VERSION,
             'followed_creator_ids' => array_values(array_map('intval', $context['followed_creator_ids'] ?? [])),
             'interest_terms' => array_values(array_map('strtolower', $context['interest_terms'] ?? [])),
             'search_query' => strtolower((string) ($context['search_query'] ?? '')),
