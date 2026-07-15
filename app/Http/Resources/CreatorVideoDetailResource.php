@@ -25,6 +25,7 @@ class CreatorVideoDetailResource extends JsonResource
             'caption' => (string) ($video->caption ?: $video->title ?: ''),
             'background' => $video->thumbnail_url ?: data_get($metadata, 'background'),
             'video' => $video->cdn_url ?: $video->source_url ?: data_get($metadata, 'stream_url'),
+            'views' => $this->formatCount($video->views_count ?? data_get($metadata, 'views', data_get($metadata, 'views_count', 0))),
             'likes' => $this->formatCount($video->likes_count ?? data_get($metadata, 'likes', data_get($metadata, 'likes_count', 0))),
             'comments_count' => $this->formatCount($video->comments_count ?? data_get($metadata, 'comments_count', data_get($metadata, 'comments', 0))),
             'comments' => VideoCommentResource::collection($this->whenLoaded('comments')),

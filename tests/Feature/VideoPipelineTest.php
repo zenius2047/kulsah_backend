@@ -232,6 +232,7 @@ class VideoPipelineTest extends TestCase
             ->assertJsonPath('item.caption', 'PRIVATE DROP: Working on Nebula vocal layers #BTS')
             ->assertJsonPath('item.background', 'https://example.com/dashboard.jpg')
             ->assertJsonPath('item.video', 'https://example.com/source.mp4')
+            ->assertJsonPath('item.views', '2.1K')
             ->assertJsonPath('item.likes', '1')
             ->assertJsonPath('item.comments_count', '1')
             ->assertJsonCount(1, 'item.comments')
@@ -244,6 +245,7 @@ class VideoPipelineTest extends TestCase
         $this->assertSame('Another clip', $response->json('item.otherVideos.0.caption'));
         $this->assertSame('https://example.com/other-video.jpg', $response->json('item.otherVideos.0.background'));
         $this->assertSame('https://example.com/other-video.mp4', $response->json('item.otherVideos.0.video'));
+        $this->assertSame('12', $response->json('item.otherVideos.0.views'));
         $this->assertSame('0', $response->json('item.otherVideos.0.likes'));
         $this->assertSame('0', $response->json('item.otherVideos.0.comments_count'));
         $response->assertJsonCount(0, 'item.otherVideos.0.comments');
@@ -315,7 +317,9 @@ class VideoPipelineTest extends TestCase
 
         $allResponse->assertOk()
             ->assertJsonCount(2, 'data')
-            ->assertJsonPath('meta.total', 2);
+            ->assertJsonPath('meta.total', 2)
+            ->assertJsonPath('data.0.views', '30')
+            ->assertJsonPath('data.1.views', '10');
 
         $draftOnlyResponse = $this
             ->actingAs($creator, 'sanctum')
@@ -325,7 +329,8 @@ class VideoPipelineTest extends TestCase
         $draftOnlyResponse->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', (string) $draftPremium->id)
-            ->assertJsonPath('data.0.draft', true);
+            ->assertJsonPath('data.0.draft', true)
+            ->assertJsonPath('data.0.views', '10');
 
         $premiumResponse = $this
             ->actingAs($creator, 'sanctum')
@@ -345,7 +350,8 @@ class VideoPipelineTest extends TestCase
         $categoryResponse->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', (string) $readyMusic->id)
-            ->assertJsonPath('data.0.category', 'music');
+            ->assertJsonPath('data.0.category', 'music')
+            ->assertJsonPath('data.0.views', '30');
     }
 
     public function test_creator_analytics_returns_counts_and_totals(): void
