@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 
 class FeedService
 {
+    private const ROOT_TAG = 'feed';
     private const CACHE_VERSION_KEY = 'feed:version';
     private const FEED_RULES_VERSION = 2;
 
@@ -22,7 +23,7 @@ class FeedService
 
     public function getFeed(int $userId, int $limit = 20, int $page = 1, array $context = []): array
     {
-        $cache = $this->cacheStore();
+        $cache = $this->taggedCache($this->feedTags($userId));
         $version = $this->feedCacheVersion();
         $cacheKey = $this->cacheKey($userId, $limit, $page, $version, $context);
 
@@ -71,12 +72,22 @@ class FeedService
 
     public function invalidateFeedCaches(): int
     {
-        $cache = $this->cacheStore();
+        $cache = $this->taggedCache(['feed']);
         $version = (int) $cache->get(self::CACHE_VERSION_KEY, 1);
         $version++;
         $cache->forever(self::CACHE_VERSION_KEY, $version);
 
         return $version;
+    }
+
+    public function flushFeedCaches(): void
+    {
+        $this->taggedCache(['feed'])->flush();
+    }
+
+    public function currentFeedCacheVersion(): int
+    {
+        return $this->feedCacheVersion();
     }
 
     /**
@@ -227,6 +238,20 @@ class FeedService
         return Cache::store(config('cache.default'));
     }
 
+    /**
+     * @param  array<int, string>  $tags
+     */
+    private function taggedCache(array $tags): CacheRepository
+    {
+        $cache = $this->cacheStore();
+
+        if (method_exists($cache, 'tags')) {
+            return $cache->tags(array_values(array_unique(array_merge([self::ROOT_TAG], $tags))));
+        }
+
+        return $cache;
+    }
+
     private function feedCacheVersion(): int
     {
         return (int) $this->cacheStore()->get(self::CACHE_VERSION_KEY, 1);
@@ -244,5 +269,13 @@ class FeedService
         ])), 0, 12);
 
         return "feed:user:{$userId}:limit:{$limit}:page:{$page}:v{$version}:{$hash}";
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function feedTags(int $userId): array
+    {
+        return ['feed:user', "feed:user:{$userId}"];
     }
 }

@@ -48,6 +48,7 @@ class CloudinaryService
 
             $uploadPath = $tempPath;
             $transcodeFailed = false;
+            $sourceDiagnostics = $this->buildMediaDiagnostics($tempPath, 'source');
 
             if (filter_var(config('video.transcode_enabled', true), FILTER_VALIDATE_BOOL)) {
                 try {
@@ -64,14 +65,17 @@ class CloudinaryService
                 }
             }
 
+            $uploadDiagnostics = $this->buildMediaDiagnostics($uploadPath, 'upload');
+
             $publicId = $this->buildPublicId($sourceKey);
             $timestamp = time();
             $params = $this->buildSignatureParams($folder, $publicId, $timestamp, $transcodeFailed);
             $signature = $this->buildSignature($params, $apiSecret);
             $uploadUrl = "https://api.cloudinary.com/v1_1/{$cloudName}/video/upload";
+            $mimeType = $this->guessMimeType($uploadPath);
 
             $postFields = [
-                'file' => new \CURLFile($uploadPath, 'video/mp4', basename($sourceKey)),
+                'file' => new \CURLFile($uploadPath, $mimeType, basename($sourceKey)),
                 'api_key' => $apiKey,
                 'timestamp' => $timestamp,
                 'folder' => $folder,
@@ -95,23 +99,55 @@ class CloudinaryService
             }
         }
 
-        if (isset($response['error'])) {
-            $message = is_array($response['error']) ? ($response['error']['message'] ?? 'Cloudinary upload failed.') : (string) $response['error'];
-            throw new RuntimeException($message);
+        $cloudinaryDiagnostics = array_filter([
+            'http_status' => $response['status'] ?? null,
+            'raw_body' => $response['body'] ?? null,
+            'decoded_response' => $response['decoded'] ?? null,
+            'curl_error' => $response['curl_error'] ?? null,
+        ], static fn ($value) => $value !== null && $value !== '');
+
+        if (($response['status'] ?? 0) >= 400 || isset($response['decoded']['error'])) {
+            Log::error('Cloudinary rejected video upload.', array_filter([
+                'source_key' => $sourceKey,
+                'folder' => $folder,
+                'public_id' => $publicId,
+                'transcode_failed' => $transcodeFailed,
+                'source_diagnostics' => $sourceDiagnostics,
+                'upload_diagnostics' => $uploadDiagnostics,
+                'cloudinary' => $cloudinaryDiagnostics,
+            ], static fn ($value) => $value !== null && $value !== ''));
+
+            $message = is_array($response['decoded']['error'] ?? null)
+                ? ($response['decoded']['error']['message'] ?? 'Cloudinary upload failed.')
+                : (string) ($response['decoded']['error'] ?? 'Cloudinary upload failed.');
+
+            throw new RuntimeException($message.' Cloudinary response: '.($response['body'] ?? ''));
         }
 
-        if (! isset($response['secure_url'], $response['public_id'])) {
-            throw new RuntimeException('Cloudinary did not return a valid video response.');
+        if (! isset($response['decoded']['secure_url'], $response['decoded']['public_id'])) {
+            Log::error('Cloudinary returned an invalid video response.', array_filter([
+                'source_key' => $sourceKey,
+                'folder' => $folder,
+                'public_id' => $publicId,
+                'source_diagnostics' => $sourceDiagnostics,
+                'upload_diagnostics' => $uploadDiagnostics,
+                'cloudinary' => $cloudinaryDiagnostics,
+            ], static fn ($value) => $value !== null && $value !== ''));
+
+            throw new RuntimeException('Cloudinary did not return a valid video response. Response body: '.($response['body'] ?? ''));
         }
 
         return [
-            'cdn_url' => $this->generateAdaptiveStreamUrl($response['public_id']),
-            'stream_url' => $this->generateAdaptiveStreamUrl($response['public_id']),
-            'cloudinary_public_id' => $response['public_id'],
-            'thumbnail_url' => $this->generateThumbnailUrl($response['public_id']),
-            'duration' => isset($response['duration']) ? (int) round((float) $response['duration']) : null,
+            'cdn_url' => $this->generateAdaptiveStreamUrl($response['decoded']['public_id']),
+            'stream_url' => $this->generateAdaptiveStreamUrl($response['decoded']['public_id']),
+            'cloudinary_public_id' => $response['decoded']['public_id'],
+            'thumbnail_url' => $this->generateThumbnailUrl($response['decoded']['public_id']),
+            'duration' => isset($response['decoded']['duration']) ? (int) round((float) $response['decoded']['duration']) : null,
             'streaming_profile' => config('video.cloudinary_stream_max_resolution', '2160p'),
-            'metadata' => $response,
+            'metadata' => array_merge($response['decoded'], [
+                'upload_diagnostics' => $uploadDiagnostics,
+                'source_diagnostics' => $sourceDiagnostics,
+            ]),
         ];
     }
 
@@ -264,14 +300,82 @@ class CloudinaryService
 
         $decoded = json_decode($body, true);
 
-        if (! is_array($decoded)) {
-            throw new RuntimeException('Cloudinary returned an invalid response.');
+        return [
+            'status' => $status,
+            'body' => $body,
+            'decoded' => is_array($decoded) ? $decoded : [],
+            'curl_error' => $error !== '' ? $error : null,
+        ];
+    }
+
+    private function buildMediaDiagnostics(string $path, string $label): array
+    {
+        $diagnostics = [
+            'label' => $label,
+            'path' => $path,
+            'exists' => is_file($path),
+            'size_bytes' => is_file($path) ? filesize($path) : null,
+            'mime_type' => function_exists('mime_content_type') && is_file($path) ? @mime_content_type($path) : null,
+        ];
+
+        if (! is_file($path)) {
+            return $diagnostics;
         }
 
-        if ($status >= 400) {
-            return $decoded + ['http_status' => $status];
+        $process = new Process([
+            'ffprobe',
+            '-v',
+            'error',
+            '-show_format',
+            '-show_streams',
+            '-print_format',
+            'json',
+            $path,
+        ]);
+
+        $process->setTimeout(20);
+        $process->run();
+
+        $diagnostics['ffprobe_success'] = $process->isSuccessful();
+        $diagnostics['ffprobe_exit_code'] = $process->getExitCode();
+
+        if ($process->isSuccessful()) {
+            $decoded = json_decode($process->getOutput(), true);
+
+            if (is_array($decoded)) {
+                $diagnostics['format'] = array_filter([
+                    'format_name' => data_get($decoded, 'format.format_name'),
+                    'format_long_name' => data_get($decoded, 'format.format_long_name'),
+                    'duration' => data_get($decoded, 'format.duration'),
+                    'bit_rate' => data_get($decoded, 'format.bit_rate'),
+                    'size' => data_get($decoded, 'format.size'),
+                ], static fn ($value) => $value !== null && $value !== '');
+
+                $diagnostics['streams'] = collect(data_get($decoded, 'streams', []))
+                    ->map(static function (array $stream): array {
+                        return array_filter([
+                            'index' => $stream['index'] ?? null,
+                            'codec_type' => $stream['codec_type'] ?? null,
+                            'codec_name' => $stream['codec_name'] ?? null,
+                            'codec_long_name' => $stream['codec_long_name'] ?? null,
+                            'profile' => $stream['profile'] ?? null,
+                            'width' => $stream['width'] ?? null,
+                            'height' => $stream['height'] ?? null,
+                            'pix_fmt' => $stream['pix_fmt'] ?? null,
+                            'sample_rate' => $stream['sample_rate'] ?? null,
+                            'channels' => $stream['channels'] ?? null,
+                            'channel_layout' => $stream['channel_layout'] ?? null,
+                            'duration' => $stream['duration'] ?? null,
+                            'bit_rate' => $stream['bit_rate'] ?? null,
+                        ], static fn ($value) => $value !== null && $value !== '');
+                    })
+                    ->values()
+                    ->all();
+            }
+        } else {
+            $diagnostics['ffprobe_error'] = trim($process->getErrorOutput());
         }
 
-        return $decoded;
+        return $diagnostics;
     }
 }

@@ -13,6 +13,8 @@ return [
     'transcode_audio_bitrate' => env('VIDEO_TRANSCODE_AUDIO_BITRATE', '128k'),
     'cloudinary_stream_manifest_extension' => env('CLOUDINARY_STREAM_MANIFEST_EXTENSION', 'm3u8'),
     'cloudinary_stream_max_resolution' => env('CLOUDINARY_STREAM_MAX_RESOLUTION', '2160p'),
+    'cache_ttl_seconds' => (int) env('VIDEO_CACHE_TTL_SECONDS', 300),
+    'direct_upload_ttl_minutes' => (int) env('VIDEO_DIRECT_UPLOAD_TTL_MINUTES', 60),
     'feed_cache_ttl_seconds' => (int) env('FEED_CACHE_TTL_SECONDS', 600),
     'processing_queue' => env('VIDEO_PROCESSING_QUEUE', 'videos'),
     'cloudinary_upload_timeout_seconds' => (int) env('CLOUDINARY_UPLOAD_TIMEOUT_SECONDS', 120),

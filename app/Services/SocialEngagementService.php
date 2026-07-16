@@ -19,6 +19,8 @@ class SocialEngagementService
 {
     public function __construct(
         private readonly FastApiRecommendationService $fastApiRecommendationService,
+        private readonly FeedService $feedService,
+        private readonly VideoCacheService $videoCacheService,
     ) {
     }
 
@@ -40,6 +42,8 @@ class SocialEngagementService
             $this->recordVideoEvent($user, 'like', $video, 1.0);
         }
 
+        $this->invalidateVideoState($user, $video);
+
         return $this->videoState($user, $video, [
             'isLiked' => true,
             'created' => $created,
@@ -55,6 +59,8 @@ class SocialEngagementService
             ->where('video_id', $videoId)
             ->where('user_id', $user->id)
             ->delete();
+
+        $this->invalidateVideoState($user, $video);
 
         return $this->videoState($user, $video, [
             'isLiked' => false,
@@ -81,6 +87,8 @@ class SocialEngagementService
             $this->recordVideoEvent($user, 'save', $video, 1.0);
         }
 
+        $this->invalidateVideoState($user, $video);
+
         return $this->videoState($user, $video, [
             'isBookmarked' => true,
             'created' => $created,
@@ -96,6 +104,8 @@ class SocialEngagementService
             ->where('video_id', $videoId)
             ->where('user_id', $user->id)
             ->delete();
+
+        $this->invalidateVideoState($user, $video);
 
         return $this->videoState($user, $video, [
             'isBookmarked' => false,
@@ -128,6 +138,9 @@ class SocialEngagementService
             $this->recordFollowEvent($user, $creator);
         }
 
+        $this->invalidateViewerState($user);
+        $this->feedService->invalidateFeedCaches();
+
         return [
             'message' => $created ? 'Creator followed successfully.' : 'You were already following this creator.',
             'data' => [
@@ -145,6 +158,9 @@ class SocialEngagementService
             ->where('follower_id', $user->id)
             ->where('followed_id', $creator->id)
             ->delete();
+
+        $this->invalidateViewerState($user);
+        $this->feedService->invalidateFeedCaches();
 
         return [
             'message' => 'Creator unfollowed successfully.',
@@ -186,6 +202,7 @@ class SocialEngagementService
         $comment->loadCount('likes');
 
         $this->recordVideoEvent($user, 'like', $video, 0.8);
+        $this->invalidateVideoState($user, $video);
 
         return [
             'message' => $parentId ? 'Reply added successfully.' : 'Comment added successfully.',
@@ -229,6 +246,7 @@ class SocialEngagementService
         $comment->loadCount('likes');
 
         $this->recordVideoEvent($user, 'like', $comment->video, 0.5);
+        $this->invalidateVideoState($user, $comment->video);
 
         return [
             'message' => $created ? 'Comment liked successfully.' : 'Comment was already liked.',
@@ -248,6 +266,8 @@ class SocialEngagementService
             'replies.user:id,name,username,avatar,banner,verified',
         ]);
         $comment->loadCount('likes');
+
+        $this->invalidateVideoState($user, $comment->video);
 
         return [
             'message' => 'Comment unliked successfully.',
@@ -294,5 +314,18 @@ class SocialEngagementService
                 $creator->name,
             ]))
         );
+    }
+
+    private function invalidateVideoState(User $user, Video $video): void
+    {
+        $this->videoCacheService->invalidateViewer((int) $user->id);
+        $this->videoCacheService->invalidateCreator((int) $video->user_id);
+        $this->videoCacheService->invalidateVideo((int) $video->id);
+        $this->feedService->invalidateFeedCaches();
+    }
+
+    private function invalidateViewerState(User $user): void
+    {
+        $this->videoCacheService->invalidateViewer((int) $user->id);
     }
 }

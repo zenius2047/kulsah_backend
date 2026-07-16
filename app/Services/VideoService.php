@@ -11,6 +11,7 @@ use App\Services\FeedService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -255,6 +256,94 @@ class VideoService
             'video_id' => $video->id,
             'queue' => config('video.processing_queue', 'videos'),
         ]);
+
+        return $video->fresh();
+    }
+
+    public function createDirectUploadSession(array $data, int $userId): array
+    {
+        $contentTypes = $this->normalizeContentTypes($data);
+        $primaryContentType = $data['content_type'] ?? null;
+
+        if (is_array($primaryContentType)) {
+            $primaryContentType = $primaryContentType[0] ?? null;
+        }
+
+        $primaryContentType = $contentTypes[0] ?? $primaryContentType;
+
+        $upload = $this->videoStorageService->createTemporaryUpload(
+            userId: $userId,
+            originalName: $data['original_name'] ?? null,
+            mimeType: $data['mime_type'] ?? null,
+        );
+
+        $video = Video::create([
+            'user_id' => $userId,
+            'title' => $data['title'] ?? null,
+            'caption' => $data['caption'] ?? null,
+            'content_type' => $primaryContentType,
+            'content_types' => $contentTypes,
+            'visibility' => $data['visibility'] ?? 'public',
+            'source_url' => $upload['source_url'],
+            'source_key' => $upload['source_key'],
+            'status' => 'draft',
+            'progress_percentage' => 0,
+            'metadata' => [
+                'upload_mode' => 'direct',
+                'upload_state' => 'awaiting_upload',
+                'storage_disk' => $upload['disk'],
+                'original_name' => $data['original_name'] ?? null,
+                'mime_type' => $data['mime_type'] ?? null,
+                'size' => $data['size'] ?? null,
+            ],
+        ]);
+
+        return [
+            'video' => $video->fresh(),
+            'upload' => $upload,
+        ];
+    }
+
+    public function finalizeDirectUpload(Video $video, int $userId): Video
+    {
+        $video = $video->fresh();
+
+        if (! $video) {
+            throw ValidationException::withMessages([
+                'video' => 'The selected video does not exist.',
+            ]);
+        }
+
+        if ((int) $video->user_id !== (int) $userId) {
+            throw ValidationException::withMessages([
+                'video' => 'You are not allowed to update this video.',
+            ]);
+        }
+
+        if (! $video->source_key) {
+            throw ValidationException::withMessages([
+                'video' => 'The upload session is missing a source key.',
+            ]);
+        }
+
+        $disk = data_get($video->metadata, 'storage_disk', config('video.storage_disk', 's3'));
+
+        if (! Storage::disk($disk)->exists($video->source_key)) {
+            throw ValidationException::withMessages([
+                'video' => 'The uploaded file has not been received yet. Please finish the upload and try again.',
+            ]);
+        }
+
+        $video->update([
+            'status' => 'draft',
+            'progress_percentage' => 100,
+            'metadata' => array_merge($video->metadata ?? [], [
+                'upload_state' => 'uploaded',
+                'upload_completed_at' => now()->toISOString(),
+            ]),
+        ]);
+
+        ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
 
         return $video->fresh();
     }

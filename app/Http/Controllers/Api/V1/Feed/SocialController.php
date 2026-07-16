@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Video;
 use App\Models\VideoComment;
 use App\Services\SocialEngagementService;
+use App\Services\VideoCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
@@ -15,8 +16,10 @@ use Throwable;
 
 class SocialController extends Controller
 {
-    public function __construct(private readonly SocialEngagementService $socialEngagementService)
-    {
+    public function __construct(
+        private readonly SocialEngagementService $socialEngagementService,
+        private readonly VideoCacheService $videoCacheService,
+    ) {
     }
 
     public function like(Request $request, string $video)
@@ -99,17 +102,38 @@ class SocialController extends Controller
         $validated = $request->validate([
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
+        $page = max(1, (int) $request->query('page', 1));
+        $perPage = (int) ($validated['per_page'] ?? 20);
+        $videoModel = Video::query()->findOrFail($video);
 
-        return $this->handle(function () use ($video, $validated) {
-            $comments = $this->socialEngagementService->listVideoComments(
-                video: Video::query()->findOrFail($video),
-                perPage: (int) ($validated['per_page'] ?? 20),
-            );
+        $payload = $this->videoCacheService->rememberVideo(
+            videoId: (int) $videoModel->id,
+            scope: 'comments:index',
+            context: [
+                'page' => $page,
+                'per_page' => $perPage,
+            ],
+            resolver: function () use ($videoModel, $perPage, $page, $request): array {
+                $comments = $this->socialEngagementService->listVideoComments(
+                    video: $videoModel,
+                    perPage: $perPage,
+                );
 
-            return [
-                'data' => VideoCommentResource::collection($comments),
-            ];
-        });
+                $comments->setCollection($comments->getCollection()->values());
+
+                return [
+                    'data' => VideoCommentResource::collection($comments->getCollection())->resolve($request),
+                    'meta' => [
+                        'current_page' => $comments->currentPage(),
+                        'last_page' => $comments->lastPage(),
+                        'per_page' => $comments->perPage(),
+                        'total' => $comments->total(),
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function reply(Request $request, string $video, int $comment)

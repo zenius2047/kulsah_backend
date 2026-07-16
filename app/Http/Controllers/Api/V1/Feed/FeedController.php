@@ -11,13 +11,16 @@ use App\Models\VideoBookmark;
 use App\Models\VideoLike;
 use App\Models\Video;
 use App\Services\FeedService;
+use App\Services\VideoCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 
 class FeedController extends Controller
 {
-    public function __construct(private readonly FeedService $feedService)
-    {
+    public function __construct(
+        private readonly FeedService $feedService,
+        private readonly VideoCacheService $videoCacheService,
+    ) {
     }
 
     public function index(Request $request)
@@ -28,27 +31,46 @@ class FeedController extends Controller
             searchQuery: $validated['search_query'] ?? null,
             interestTerms: $validated['interest_terms'] ?? [],
         );
+        $userId = (int) $request->user()->id;
+        $limit = (int) ($validated['limit'] ?? 20);
+        $page = (int) ($validated['page'] ?? 1);
+        $feedVersion = $this->feedService->currentFeedCacheVersion();
 
-        $feed = $this->feedService->getFeed(
-            userId: (int) $request->user()->id,
-            limit: (int) ($validated['limit'] ?? 20),
-            page: (int) ($validated['page'] ?? 1),
-            context: $context,
-        );
-
-        $videos = $this->loadVideosInFeedOrder(
-            collect($feed['data']),
-            (int) $request->user()->id
-        );
-
-        return response()->json([
-            'data' => FeedCardResource::collection($videos),
-            'meta' => [
-                'cache_hit' => $feed['cache_hit'],
-                'cache_key' => $feed['cache_key'],
-                'pagination' => $feed['pagination'] ?? null,
+        $payload = $this->videoCacheService->rememberViewer(
+            viewerId: $userId,
+            scope: 'feed:index',
+            context: [
+                'feed_version' => $feedVersion,
+                'limit' => $limit,
+                'page' => $page,
+                'search_query' => $validated['search_query'] ?? null,
+                'interest_terms' => $validated['interest_terms'] ?? [],
             ],
-        ]);
+            resolver: function () use ($request, $userId, $limit, $page, $context): array {
+                $feed = $this->feedService->getFeed(
+                    userId: $userId,
+                    limit: $limit,
+                    page: $page,
+                    context: $context,
+                );
+
+                $videos = $this->loadVideosInFeedOrder(
+                    collect($feed['data']),
+                    $userId
+                );
+
+                return [
+                    'data' => FeedCardResource::collection($videos)->resolve($request),
+                    'meta' => [
+                        'cache_hit' => $feed['cache_hit'],
+                        'cache_key' => $feed['cache_key'],
+                        'pagination' => $feed['pagination'] ?? null,
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function recommendations(Request $request)
@@ -59,28 +81,47 @@ class FeedController extends Controller
             searchQuery: $validated['search_query'] ?? null,
             interestTerms: $validated['interest_terms'] ?? [],
         );
+        $userId = (int) $request->user()->id;
+        $limit = (int) ($validated['limit'] ?? 20);
+        $page = (int) ($validated['page'] ?? 1);
+        $feedVersion = $this->feedService->currentFeedCacheVersion();
 
-        $feed = $this->feedService->getFeed(
-            userId: (int) $request->user()->id,
-            limit: (int) ($validated['limit'] ?? 20),
-            page: (int) ($validated['page'] ?? 1),
-            context: $context,
+        $payload = $this->videoCacheService->rememberViewer(
+            viewerId: $userId,
+            scope: 'feed:recommendations',
+            context: [
+                'feed_version' => $feedVersion,
+                'limit' => $limit,
+                'page' => $page,
+                'search_query' => $validated['search_query'] ?? null,
+                'interest_terms' => $validated['interest_terms'] ?? [],
+            ],
+            resolver: function () use ($request, $userId, $limit, $page, $context): array {
+                $feed = $this->feedService->getFeed(
+                    userId: $userId,
+                    limit: $limit,
+                    page: $page,
+                    context: $context,
+                );
+
+                $rankedIds = collect($feed['data'])
+                    ->pluck('id')
+                    ->filter()
+                    ->map(static fn ($id) => (int) $id)
+                    ->values();
+
+                return [
+                    'data' => $rankedIds,
+                    'meta' => [
+                        'cache_hit' => $feed['cache_hit'],
+                        'cache_key' => $feed['cache_key'],
+                        'pagination' => $feed['pagination'] ?? null,
+                    ],
+                ];
+            }
         );
 
-        $rankedIds = collect($feed['data'])
-            ->pluck('id')
-            ->filter()
-            ->map(static fn ($id) => (int) $id)
-            ->values();
-
-        return response()->json([
-            'data' => $rankedIds,
-            'meta' => [
-                'cache_hit' => $feed['cache_hit'],
-                'cache_key' => $feed['cache_key'],
-                'pagination' => $feed['pagination'] ?? null,
-            ],
-        ]);
+        return response()->json($payload);
     }
 
     /**

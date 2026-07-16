@@ -35,6 +35,22 @@ class VideoPlaylistTest extends TestCase
             'metadata' => [],
         ]);
 
+        $nextVideo = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Next playlist video',
+            'caption' => 'Another clip for the same playlist',
+            'content_type' => 'music',
+            'content_types' => ['music'],
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/next-source.mp4',
+            'source_key' => 'videos/originals/1/next-playlist-video.mp4',
+            'thumbnail_url' => 'https://example.com/next-playlist-video.jpg',
+            'duration' => 50,
+            'status' => 'ready',
+            'views_count' => 7,
+            'metadata' => [],
+        ]);
+
         $firstPlaylistResponse = $this
             ->actingAs($creator, 'sanctum')
             ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
@@ -84,8 +100,10 @@ class VideoPlaylistTest extends TestCase
             ->getJson("/api/v1/creator/video-playlists/{$firstPlaylistId}/videos");
 
         $videosResponse->assertOk()
-            ->assertJsonCount(0, 'data')
-            ->assertJsonPath('meta.total', 0);
+            ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
+            ->assertJsonPath('playlist_name', 'Workout Mix')
+            ->assertJsonPath('item', null)
+            ->assertJsonCount(0, 'next_videos');
 
         $moveResponse = $this
             ->actingAs($creator, 'sanctum')
@@ -104,9 +122,35 @@ class VideoPlaylistTest extends TestCase
             ->getJson("/api/v1/creator/video-playlists/{$firstPlaylistId}/videos");
 
         $videosResponse->assertOk()
-            ->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.id', $video->id)
-            ->assertJsonPath('meta.total', 1);
+            ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
+            ->assertJsonPath('playlist_name', 'Workout Mix')
+            ->assertJsonPath('item.id', (string) $video->id)
+            ->assertJsonPath('item.views', '0')
+            ->assertJsonCount(0, 'next_videos');
+
+        $moveNextResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->postJson("/api/v1/creator/video-playlists/{$firstPlaylistId}/videos/{$nextVideo->id}");
+
+        $moveNextResponse->assertOk()
+            ->assertJsonPath('data.id', $nextVideo->id)
+            ->assertJsonPath('data.playlist_ids.0', $firstPlaylistId)
+            ->assertJsonPath('data.playlists_count', 1);
+
+        $videosResponse = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->getJson("/api/v1/creator/video-playlists/{$firstPlaylistId}/videos");
+
+        $videosResponse->assertOk()
+            ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
+            ->assertJsonPath('playlist_name', 'Workout Mix')
+            ->assertJsonPath('item.id', (string) $nextVideo->id)
+            ->assertJsonPath('item.views', '7')
+            ->assertJsonCount(1, 'next_videos')
+            ->assertJsonPath('next_videos.0.id', (string) $video->id)
+            ->assertJsonPath('next_videos.0.views', '0');
 
         $this->assertDatabaseHas('video_playlist_video', [
             'video_playlist_id' => $firstPlaylistId,

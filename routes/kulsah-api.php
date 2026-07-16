@@ -27,6 +27,8 @@ Route::prefix('creator')
         Route::get('/videos/analytics', [VideoController::class, 'analytics']);
         Route::post('/videos/drafts', [VideoController::class, 'draft']);
         Route::post('/videos', [VideoController::class, 'store']);
+        Route::post('/videos/uploads/init', [VideoController::class, 'initFastUpload']);
+        Route::post('/videos/{video}/upload/complete', [VideoController::class, 'completeFastUpload']);
         Route::get('/video-playlists', [VideoController::class, 'playlists']);
         Route::post('/video-playlists', [VideoController::class, 'storePlaylist']);
         Route::post('/video-playlists/{playlist}/videos/bulk', [VideoController::class, 'moveManyToPlaylist']);

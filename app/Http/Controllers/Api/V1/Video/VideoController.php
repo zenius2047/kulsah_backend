@@ -11,6 +11,7 @@ use App\Models\Video;
 use App\Models\VideoPlaylist;
 use App\Models\VideoView;
 use App\Services\VideoService;
+use App\Services\VideoCacheService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,8 +21,10 @@ use Throwable;
 
 class VideoController extends Controller
 {
-    public function __construct(private readonly VideoService $videoService)
-    {
+    public function __construct(
+        private readonly VideoService $videoService,
+        private readonly VideoCacheService $videoCacheService,
+    ) {
     }
 
     public function index(Request $request)
@@ -32,70 +35,96 @@ class VideoController extends Controller
         ]);
         $draft = $this->parseBooleanQuery($request, 'draft');
         $premium = $this->parseBooleanQuery($request, 'premium');
+        $page = max(1, (int) $request->query('page', 1));
+        $perPage = (int) ($validated['per_page'] ?? 20);
 
-        $videos = Video::query()
-            ->withCount('likes')
-            ->where('user_id', $request->user()->id)
-            ->when(
-                $draft !== null,
-                fn ($query) => $draft
-                    ? $query->where('status', '!=', 'ready')
-                    : $query->where('status', 'ready')
-            )
-            ->when(
-                $premium !== null,
-                fn ($query) => $premium
-                    ? $query->where('visibility', 'premium')
-                    : $query->where('visibility', '!=', 'premium')
-            )
-            ->when(
-                isset($validated['category']) && $validated['category'] !== '',
-                fn ($query) => $query->where(function ($query) use ($validated): void {
-                    $query->where('content_type', $validated['category'])
-                        ->orWhereJsonContains('content_types', $validated['category']);
-                })
-            )
-            ->orderByDesc('id')
-            ->paginate((int) ($validated['per_page'] ?? 20));
-
-        return response()->json([
-            'data' => CreatorVideoResource::collection($videos),
-            'meta' => [
-                'current_page' => $videos->currentPage(),
-                'last_page' => $videos->lastPage(),
-                'per_page' => $videos->perPage(),
-                'total' => $videos->total(),
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $request->user()->id,
+            scope: 'videos:index',
+            context: [
+                'page' => $page,
+                'per_page' => $perPage,
+                'draft' => $draft,
+                'premium' => $premium,
+                'category' => $validated['category'] ?? null,
             ],
-        ]);
+            resolver: function () use ($request, $validated, $draft, $premium, $page, $perPage): array {
+                $videos = Video::query()
+                    ->withCount('likes')
+                    ->where('user_id', $request->user()->id)
+                    ->when(
+                        $draft !== null,
+                        fn ($query) => $draft
+                            ? $query->where('status', '!=', 'ready')
+                            : $query->where('status', 'ready')
+                    )
+                    ->when(
+                        $premium !== null,
+                        fn ($query) => $premium
+                            ? $query->where('visibility', 'premium')
+                            : $query->where('visibility', '!=', 'premium')
+                    )
+                    ->when(
+                        isset($validated['category']) && $validated['category'] !== '',
+                        fn ($query) => $query->where(function ($query) use ($validated): void {
+                            $query->where('content_type', $validated['category'])
+                                ->orWhereJsonContains('content_types', $validated['category']);
+                        })
+                    )
+                    ->orderByDesc('id')
+                    ->paginate($perPage, ['*'], 'page', $page);
+
+                return [
+                    'data' => CreatorVideoResource::collection($videos)->resolve($request),
+                    'meta' => [
+                        'current_page' => $videos->currentPage(),
+                        'last_page' => $videos->lastPage(),
+                        'per_page' => $videos->perPage(),
+                        'total' => $videos->total(),
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function analytics(Request $request)
     {
-        $videos = Video::query()
-            ->where('user_id', $request->user()->id)
-            ->withCount(['likes', 'comments'])
-            ->get();
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $request->user()->id,
+            scope: 'videos:analytics',
+            context: [],
+            resolver: function () use ($request): array {
+                $videos = Video::query()
+                    ->where('user_id', $request->user()->id)
+                    ->withCount(['likes', 'comments'])
+                    ->get();
 
-        $summary = [
-            'total_videos' => $videos->count(),
-            'ready_videos' => $videos->where('status', 'ready')->count(),
-            'draft_videos' => $videos->where('status', '!=', 'ready')->count(),
-            'premium_videos' => $videos->where('visibility', 'premium')->count(),
-            'public_videos' => $videos->where('visibility', 'public')->count(),
-            'processing_videos' => $videos->where('status', 'processing')->count(),
-            'failed_videos' => $videos->where('status', 'failed')->count(),
-            'total_views' => (int) $videos->sum('views_count'),
-            'total_likes' => (int) $videos->sum('likes_count'),
-            'total_comments' => (int) $videos->sum('comments_count'),
-            'total_duration_seconds' => (int) $videos->sum('duration'),
-            'average_views' => $videos->count() > 0 ? round(((int) $videos->sum('views_count')) / $videos->count(), 2) : 0,
-        ];
+                $summary = [
+                    'total_videos' => $videos->count(),
+                    'ready_videos' => $videos->where('status', 'ready')->count(),
+                    'draft_videos' => $videos->where('status', '!=', 'ready')->count(),
+                    'premium_videos' => $videos->where('visibility', 'premium')->count(),
+                    'public_videos' => $videos->where('visibility', 'public')->count(),
+                    'processing_videos' => $videos->where('status', 'processing')->count(),
+                    'failed_videos' => $videos->where('status', 'failed')->count(),
+                    'total_views' => (int) $videos->sum('views_count'),
+                    'total_likes' => (int) $videos->sum('likes_count'),
+                    'total_comments' => (int) $videos->sum('comments_count'),
+                    'total_duration_seconds' => (int) $videos->sum('duration'),
+                    'average_views' => $videos->count() > 0 ? round(((int) $videos->sum('views_count')) / $videos->count(), 2) : 0,
+                ];
 
-        $summary['total_duration'] = $this->formatDuration($summary['total_duration_seconds']);
+                $summary['total_duration'] = $this->formatDuration($summary['total_duration_seconds']);
 
-        return response()->json([
-            'data' => $summary,
-        ]);
+                return [
+                    'data' => $summary,
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function creatorShow(Request $request, Video $video)
@@ -106,30 +135,39 @@ class VideoController extends Controller
             'You are not allowed to view this video.'
         );
 
-        $video->load([
-            'user:id,name,username,avatar,banner',
-            'playlists:id,name',
-            'comments' => $this->creatorVideoCommentsLoad(),
-        ]);
-        $video->loadCount(['likes', 'comments']);
-        $video->setRelation(
-            'otherVideos',
-            Video::query()
-                ->with('user:id,name,username,avatar,banner')
-                ->with([
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $request->user()->id,
+            scope: 'videos:creator-show',
+            context: ['video_id' => (int) $video->id],
+            resolver: function () use ($request, $video): array {
+                $video->load([
+                    'user:id,name,username,avatar,banner',
+                    'playlists:id,name',
                     'comments' => $this->creatorVideoCommentsLoad(),
-                ])
-                ->withCount(['likes', 'comments'])
-                ->where('user_id', $request->user()->id)
-                ->whereKeyNot($video->id)
-                ->latest()
-                ->limit(6)
-                ->get()
+                ]);
+                $video->loadCount(['likes', 'comments']);
+                $video->setRelation(
+                    'otherVideos',
+                    Video::query()
+                        ->with('user:id,name,username,avatar,banner')
+                        ->with([
+                            'comments' => $this->creatorVideoCommentsLoad(),
+                        ])
+                        ->withCount(['likes', 'comments'])
+                        ->where('user_id', $request->user()->id)
+                        ->whereKeyNot($video->id)
+                        ->latest()
+                        ->limit(6)
+                        ->get()
+                );
+
+                return [
+                    'item' => (new CreatorVideoDetailResource($video))->resolve($request),
+                ];
+            }
         );
 
-        return response()->json([
-            'item' => new CreatorVideoDetailResource($video),
-        ]);
+        return response()->json($payload);
     }
 
     private function creatorVideoCommentsLoad(): \Closure
@@ -204,9 +242,105 @@ class VideoController extends Controller
         }
 
         $video->refresh();
+        $this->invalidateCreatorCaches((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Video uploaded successfully and is now in draft while processing starts.',
+            'data' => new VideoResource($video),
+        ], 201);
+    }
+
+    public function initFastUpload(Request $request)
+    {
+        $this->normalizeContentTypes($request);
+
+        $validated = $request->validate([
+            'title' => ['nullable', 'string', 'max:255'],
+            'caption' => ['nullable', 'string', 'max:5000'],
+            'content_type' => ['sometimes', 'array', 'min:1'],
+            'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
+            'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'original_name' => ['nullable', 'string', 'max:255'],
+            'mime_type' => ['nullable', 'string', 'max:120'],
+            'size' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $contentTypes = $this->resolveContentTypes($request);
+
+        try {
+            $session = $this->videoService->createDirectUploadSession(
+                data: [
+                    'title' => $request->input('title'),
+                    'caption' => $request->input('caption'),
+                    'content_type' => $contentTypes[0] ?? null,
+                    'content_types' => $contentTypes,
+                    'visibility' => $request->input('visibility', 'public'),
+                    'original_name' => $request->input('original_name'),
+                    'mime_type' => $request->input('mime_type'),
+                    'size' => $request->input('size'),
+                ],
+                userId: (int) $request->user()->id,
+            );
+        } catch (Throwable $throwable) {
+            report($throwable);
+
+            if ($throwable instanceof ValidationException) {
+                return response()->json([
+                    'message' => 'Unable to create direct upload session.',
+                    'errors' => $throwable->errors(),
+                ], 422);
+            }
+
+            return response()->json([
+                'message' => 'Unable to create direct upload session.',
+                'error' => $throwable->getMessage(),
+            ], 500);
+        }
+
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Direct upload session created successfully.',
+            'data' => [
+                'video' => new VideoResource($session['video']),
+                'upload' => $session['upload'],
+            ],
+        ], 201);
+    }
+
+    public function completeFastUpload(Request $request, Video $video)
+    {
+        abort_unless(
+            (string) $video->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to update this video.'
+        );
+
+        try {
+            $video = $this->videoService->finalizeDirectUpload(
+                video: $video,
+                userId: (int) $request->user()->id,
+            );
+        } catch (Throwable $throwable) {
+            report($throwable);
+
+            if ($throwable instanceof ValidationException) {
+                return response()->json([
+                    'message' => 'Unable to complete upload.',
+                    'errors' => $throwable->errors(),
+                ], 422);
+            }
+
+            return response()->json([
+                'message' => 'Unable to complete upload.',
+                'error' => $throwable->getMessage(),
+            ], 500);
+        }
+
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Direct upload completed successfully and processing has started.',
             'data' => new VideoResource($video),
         ], 201);
     }
@@ -222,6 +356,8 @@ class VideoController extends Controller
             'name' => $validated['name'],
         ]);
 
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
         return response()->json([
             'message' => 'Video playlist created successfully.',
             'data' => new VideoPlaylistResource($playlist),
@@ -233,64 +369,97 @@ class VideoController extends Controller
         $validated = $request->validate([
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
+        $page = max(1, (int) $request->query('page', 1));
+        $perPage = (int) ($validated['per_page'] ?? 20);
 
-        $playlists = VideoPlaylist::query()
-            ->where('user_id', $request->user()->id)
-            ->withCount('videos')
-            ->latest('id')
-            ->paginate((int) ($validated['per_page'] ?? 20));
-
-        return response()->json([
-            'data' => VideoPlaylistResource::collection($playlists),
-            'meta' => [
-                'current_page' => $playlists->currentPage(),
-                'last_page' => $playlists->lastPage(),
-                'per_page' => $playlists->perPage(),
-                'total' => $playlists->total(),
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $request->user()->id,
+            scope: 'playlists:index',
+            context: [
+                'page' => $page,
+                'per_page' => $perPage,
             ],
-        ]);
+            resolver: function () use ($request, $page, $perPage): array {
+                $playlists = VideoPlaylist::query()
+                    ->where('user_id', $request->user()->id)
+                    ->withCount('videos')
+                    ->latest('id')
+                    ->paginate($perPage, ['*'], 'page', $page);
+
+                return [
+                    'data' => VideoPlaylistResource::collection($playlists)->resolve($request),
+                    'meta' => [
+                        'current_page' => $playlists->currentPage(),
+                        'last_page' => $playlists->lastPage(),
+                        'per_page' => $playlists->perPage(),
+                        'total' => $playlists->total(),
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function showPlaylist(Request $request, VideoPlaylist $playlist)
     {
         $this->authorizePlaylist($request, $playlist);
 
-        $playlist->load([
-            'videos' => function ($query): void {
-                $query->orderByDesc('videos.id')
-                    ->withCount(['likes', 'comments'])
-                    ->with(['playlists:id,name']);
-            },
-        ])->loadCount('videos');
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $request->user()->id,
+            scope: 'playlists:show',
+            context: ['playlist_id' => (int) $playlist->id],
+            resolver: function () use ($request, $playlist): array {
+                $playlist->load([
+                    'videos' => function ($query): void {
+                        $query->orderByDesc('videos.id')
+                            ->withCount(['likes', 'comments'])
+                            ->with(['playlists:id,name']);
+                    },
+                ])->loadCount('videos');
 
-        return response()->json([
-            'data' => new VideoPlaylistResource($playlist),
-        ]);
+                return [
+                    'data' => (new VideoPlaylistResource($playlist))->resolve($request),
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function playlistVideos(Request $request, VideoPlaylist $playlist)
     {
         $this->authorizePlaylist($request, $playlist);
 
-        $validated = $request->validate([
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-        ]);
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $request->user()->id,
+            scope: 'playlists:videos',
+            context: ['playlist_id' => (int) $playlist->id],
+            resolver: function () use ($request, $playlist): array {
+                $videos = $playlist->videos()
+                    ->with([
+                        'user:id,name,username,avatar,banner',
+                        'comments' => $this->creatorVideoCommentsLoad(),
+                    ])
+                    ->withCount(['likes', 'comments'])
+                    ->orderByDesc('videos.id')
+                    ->get();
 
-        $videos = $playlist->videos()
-            ->withCount(['likes', 'comments'])
-            ->with('playlists:id,name')
-            ->orderByDesc('videos.id')
-            ->paginate((int) ($validated['per_page'] ?? 20));
+                $currentVideo = $videos->first();
+                $nextVideos = $videos->slice(1)->values();
 
-        return response()->json([
-            'data' => VideoResource::collection($videos),
-            'meta' => [
-                'current_page' => $videos->currentPage(),
-                'last_page' => $videos->lastPage(),
-                'per_page' => $videos->perPage(),
-                'total' => $videos->total(),
-            ],
-        ]);
+                return [
+                    'playlist_id' => (string) $playlist->id,
+                    'playlist_name' => (string) $playlist->name,
+                    'item' => $currentVideo
+                        ? (new CreatorVideoDetailResource($currentVideo))->resolve($request)
+                        : null,
+                    'next_videos' => CreatorVideoResource::collection($nextVideos)->resolve($request),
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function updatePlaylist(Request $request, VideoPlaylist $playlist)
@@ -304,6 +473,7 @@ class VideoController extends Controller
         $playlist->update($validated);
 
         $playlist->loadCount('videos');
+        $this->invalidateCreatorCaches((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Video playlist updated successfully.',
@@ -316,6 +486,7 @@ class VideoController extends Controller
         $this->authorizePlaylist($request, $playlist);
 
         $playlist->delete();
+        $this->invalidateCreatorCaches((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Video playlist deleted successfully.',
@@ -329,6 +500,7 @@ class VideoController extends Controller
         $video->playlists()->syncWithoutDetaching([$playlist->id]);
 
         $video->load('playlists:id,name');
+        $this->invalidateCreatorCaches((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Video added to playlist successfully.',
@@ -363,6 +535,7 @@ class VideoController extends Controller
         });
 
         $videos->load('playlists:id,name');
+        $this->invalidateCreatorCaches((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Videos added to playlist successfully.',
@@ -383,6 +556,7 @@ class VideoController extends Controller
         $video->playlists()->detach($playlist->id);
 
         $video->load('playlists:id,name');
+        $this->invalidateCreatorCaches((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Video removed from playlist successfully.',
@@ -414,6 +588,8 @@ class VideoController extends Controller
             ],
             userId: (int) $request->user()->id,
         );
+
+        $this->invalidateCreatorCaches((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Video draft created successfully.',
@@ -465,6 +641,8 @@ class VideoController extends Controller
             ], 500);
         }
 
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
         return response()->json([
             'message' => 'Video uploaded successfully and is now in draft while processing starts.',
             'data' => new VideoResource($video),
@@ -511,6 +689,8 @@ class VideoController extends Controller
             ], 500);
         }
 
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
         return response()->json([
             'message' => 'Video updated successfully.',
             'data' => new VideoResource($video),
@@ -526,11 +706,20 @@ class VideoController extends Controller
             'You are not allowed to view this video.'
         );
 
-        $video->load('playlists:id,name');
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $video->user_id,
+            scope: 'videos:show',
+            context: ['video_id' => (int) $video->id],
+            resolver: function () use ($request, $video): array {
+                $video->load('playlists:id,name');
 
-        return response()->json([
-            'data' => new VideoResource($video),
-        ]);
+                return [
+                    'data' => (new VideoResource($video))->resolve($request),
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function progress(Request $request, Video $video)
@@ -541,13 +730,24 @@ class VideoController extends Controller
             'You are not allowed to view this video.'
         );
 
-        return response()->json([
-            'data' => [
-                'video_id' => $video->id,
-                'status' => $video->status,
-                'progress_percentage' => (int) ($video->progress_percentage ?? 0),
-            ],
-        ]);
+        $payload = $this->videoCacheService->rememberCreator(
+            creatorId: (int) $request->user()->id,
+            scope: 'videos:progress',
+            context: ['video_id' => (int) $video->id],
+            resolver: function () use ($video): array {
+                $video->refresh();
+
+                return [
+                    'data' => [
+                        'video_id' => $video->id,
+                        'status' => $video->status,
+                        'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     public function updateProgress(Request $request, Video $video)
@@ -567,6 +767,8 @@ class VideoController extends Controller
             progressPercentage: (int) $validated['progress_percentage'],
         );
 
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
         return response()->json([
             'message' => 'Video upload progress updated successfully.',
             'data' => [
@@ -580,6 +782,7 @@ class VideoController extends Controller
     public function view(Request $request, Video $video)
     {
         $updated = $this->videoService->recordView($video, (int) $request->user()->id);
+        $this->videoCacheService->invalidateViewer((int) $request->user()->id);
 
         return response()->json([
             'message' => 'Video view recorded successfully.',
@@ -592,47 +795,61 @@ class VideoController extends Controller
         $validated = $request->validate([
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
+        $page = max(1, (int) $request->query('page', 1));
+        $perPage = (int) ($validated['per_page'] ?? 20);
 
-        $watchedVideos = Video::query()
-            ->joinSub(
-                VideoView::query()
-                    ->selectRaw('video_id, MAX(viewed_at) as last_watched_at')
-                    ->where('user_id', $request->user()->id)
-                    ->groupBy('video_id'),
-                'watched_videos',
-                'watched_videos.video_id',
-                '=',
-                'videos.id'
-            )
-            ->select('videos.*', 'watched_videos.last_watched_at')
-            ->with('user:id,name,username,avatar,banner')
-            ->orderByDesc('watched_videos.last_watched_at')
-            ->paginate((int) ($validated['per_page'] ?? 20));
-
-        $videos = $watchedVideos->getCollection()->map(function (Video $video) {
-            return [
-                'id' => (string) $video->id,
-                'title' => (string) ($video->title ?: $video->caption ?: ''),
-                'views' => $this->formatCount($video->views_count ?? 0),
-                'duration' => $this->formatDuration((int) ($video->duration ?? 0)),
-                'img' => $video->thumbnail_url ?: $video->cdn_url ?: data_get($video->metadata ?? [], 'thumbnail'),
-                'watched_at' => $video->last_watched_at
-                    ? Carbon::parse($video->last_watched_at)->toIso8601String()
-                    : null,
-            ];
-        })->values();
-
-        return response()->json([
-            'data' => [
-                'videos' => $videos,
+        $payload = $this->videoCacheService->rememberViewer(
+            viewerId: (int) $request->user()->id,
+            scope: 'videos:watched',
+            context: [
+                'page' => $page,
+                'per_page' => $perPage,
             ],
-            'meta' => [
-                'current_page' => $watchedVideos->currentPage(),
-                'last_page' => $watchedVideos->lastPage(),
-                'per_page' => $watchedVideos->perPage(),
-                'total' => $watchedVideos->total(),
-            ],
-        ]);
+            resolver: function () use ($request, $page, $perPage): array {
+                $watchedVideos = Video::query()
+                    ->joinSub(
+                        VideoView::query()
+                            ->selectRaw('video_id, MAX(viewed_at) as last_watched_at')
+                            ->where('user_id', $request->user()->id)
+                            ->groupBy('video_id'),
+                        'watched_videos',
+                        'watched_videos.video_id',
+                        '=',
+                        'videos.id'
+                    )
+                    ->select('videos.*', 'watched_videos.last_watched_at')
+                    ->with('user:id,name,username,avatar,banner')
+                    ->orderByDesc('watched_videos.last_watched_at')
+                    ->paginate($perPage, ['*'], 'page', $page);
+
+                $videos = $watchedVideos->getCollection()->map(function (Video $video) {
+                    return [
+                        'id' => (string) $video->id,
+                        'title' => (string) ($video->title ?: $video->caption ?: ''),
+                        'views' => $this->formatCount($video->views_count ?? 0),
+                        'duration' => $this->formatDuration((int) ($video->duration ?? 0)),
+                        'img' => $video->thumbnail_url ?: $video->cdn_url ?: data_get($video->metadata ?? [], 'thumbnail'),
+                        'watched_at' => $video->last_watched_at
+                            ? Carbon::parse($video->last_watched_at)->toIso8601String()
+                            : null,
+                    ];
+                })->values();
+
+                return [
+                    'data' => [
+                        'videos' => $videos,
+                    ],
+                    'meta' => [
+                        'current_page' => $watchedVideos->currentPage(),
+                        'last_page' => $watchedVideos->lastPage(),
+                        'per_page' => $watchedVideos->perPage(),
+                        'total' => $watchedVideos->total(),
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     private function normalizeContentTypes(Request $request): void
@@ -742,6 +959,11 @@ class VideoController extends Controller
             'exception' => get_class($throwable),
             'message' => $throwable->getMessage(),
         ], static fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function invalidateCreatorCaches(int $creatorId): void
+    {
+        $this->videoCacheService->invalidateCreator($creatorId);
     }
 
     private function authorizePlaylist(Request $request, VideoPlaylist $playlist): void
