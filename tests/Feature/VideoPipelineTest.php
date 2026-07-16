@@ -11,6 +11,7 @@ use App\Models\VideoComment;
 use App\Models\VideoLike;
 use App\Models\Video;
 use App\Notifications\VideoMentionedNotification;
+use App\Services\CloudinaryService;
 use App\Services\VideoInspectionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -61,6 +62,7 @@ class VideoPipelineTest extends TestCase
                 'content_type' => ['dance', 'music'],
                 'visibility' => 'public',
                 'video' => UploadedFile::fake()->create('sample.mp4', 1024, 'video/mp4'),
+                'thumbnail' => UploadedFile::fake()->image('sample-thumbnail.jpg', 720, 1280),
             ]);
 
         $response->assertCreated()
@@ -75,6 +77,8 @@ class VideoPipelineTest extends TestCase
         $this->assertSame(['dance', 'music'], $video->content_types);
         $this->assertSame(100, $video->progress_percentage);
         $this->assertSame(0, $video->views_count);
+        $this->assertNotNull($video->thumbnail_url);
+        $this->assertStringStartsWith('http://localhost/storage/', $video->thumbnail_url);
 
         Queue::assertPushed(ProcessVideoJob::class);
     }
@@ -525,6 +529,7 @@ class VideoPipelineTest extends TestCase
                 'content_type' => ['dance', 'music'],
                 'visibility' => 'public',
                 'video' => UploadedFile::fake()->create('sample.mp4', 1024, 'video/mp4'),
+                'thumbnail' => UploadedFile::fake()->image('mentions-thumbnail.png', 720, 1280),
             ]);
 
         $response->assertCreated()
@@ -549,6 +554,51 @@ class VideoPipelineTest extends TestCase
                     && in_array('mentioned_user', $notification->mentions, true);
             }
         );
+    }
+
+    public function test_video_processing_keeps_a_creator_uploaded_thumbnail(): void
+    {
+        config()->set('logging.default', 'null');
+
+        $creator = User::factory()->create([
+            'username' => 'creator_thumbnail',
+        ]);
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Thumbnail test',
+            'caption' => 'Keeping my own cover image',
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/source.mp4',
+            'source_key' => 'videos/originals/1/thumbnail-test.mp4',
+            'thumbnail_url' => 'https://example.com/custom-thumbnail.jpg',
+            'duration' => 18,
+            'status' => 'processing',
+            'metadata' => [],
+        ]);
+
+        $this->mock(CloudinaryService::class, function ($mock): void {
+            $mock->shouldReceive('uploadVideoFromS3Key')
+                ->once()
+                ->andReturn([
+                    'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/demo-playback.m3u8',
+                    'stream_url' => 'https://res.cloudinary.com/demo/video/upload/demo-playback.m3u8',
+                    'cloudinary_public_id' => 'demo-playback',
+                    'thumbnail_url' => 'https://res.cloudinary.com/demo/video/upload/generated-thumbnail.jpg',
+                    'duration' => 18,
+                    'streaming_profile' => '2160p',
+                    'metadata' => [],
+                ]);
+        });
+
+        (new ProcessVideoJob($video))->handle(app(CloudinaryService::class));
+
+        $video->refresh();
+
+        $this->assertSame('https://example.com/custom-thumbnail.jpg', $video->thumbnail_url);
+        $this->assertSame('https://res.cloudinary.com/demo/video/upload/demo-playback.m3u8', $video->cdn_url);
+        $this->assertSame('demo-playback', $video->cloudinary_public_id);
+        $this->assertSame('ready', $video->status);
     }
 
     public function test_user_can_record_a_video_view_once_during_cooldown(): void

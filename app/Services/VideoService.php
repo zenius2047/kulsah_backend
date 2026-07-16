@@ -47,6 +47,7 @@ class VideoService
             'content_type' => $primaryContentType,
             'content_types' => $contentTypes,
             'visibility' => $data['visibility'] ?? 'public',
+            'thumbnail_url' => $data['thumbnail_url'] ?? null,
             'status' => 'draft',
             'progress_percentage' => 0,
             'metadata' => [
@@ -66,8 +67,11 @@ class VideoService
         return $video->fresh();
     }
 
-    public function uploadVideo(array $data, UploadedFile $file, int $userId): Video
+    public function uploadVideo(array $data, UploadedFile $file, int $userId, ?UploadedFile $thumbnailFile = null): Video
     {
+        $stored = null;
+        $thumbnail = null;
+
         Log::info('Video upload started.', [
             'stage' => 'inspect',
             'user_id' => $userId,
@@ -99,6 +103,7 @@ class VideoService
         ]);
 
         $stored = $this->videoStorageService->uploadOriginal($file, $userId);
+        $thumbnail = $this->uploadThumbnailIfProvided($thumbnailFile, $userId);
 
         Log::info('Video stored in primary storage.', [
             'stage' => 'storage',
@@ -111,24 +116,31 @@ class VideoService
         $mentionedUsers = $this->videoCaptionParserService->resolveMentionedUsers($captionData['mentions']);
 
         try {
-            $video = DB::transaction(function () use ($data, $stored, $userId, $duration, $captionData, $mentionedUsers) {
+            $video = DB::transaction(function () use ($data, $stored, $thumbnail, $thumbnailFile, $userId, $duration, $captionData, $mentionedUsers) {
                 $video = $this->createDraftVideo($data, $userId);
 
-                $video->update([
+                $video->update(array_filter([
                     'source_url' => $stored['source_url'],
                     'source_key' => $stored['source_key'],
+                    'thumbnail_url' => $thumbnail['source_url'] ?? ($data['thumbnail_url'] ?? null),
                     'progress_percentage' => 100,
-                    'metadata' => array_merge($video->metadata ?? [], [
+                    'metadata' => array_merge($video->metadata ?? [], array_filter([
                         'storage_disk' => $stored['disk'],
                         'original_name' => $data['original_name'] ?? null,
                         'mime_type' => $data['mime_type'] ?? null,
                         'size' => $data['size'] ?? null,
                         'duration_seconds' => $duration,
+                        'thumbnail_disk' => $thumbnail['disk'] ?? null,
+                        'thumbnail_source_key' => $thumbnail['source_key'] ?? null,
+                        'thumbnail_original_name' => $thumbnailFile?->getClientOriginalName(),
+                        'thumbnail_mime_type' => $thumbnailFile?->getMimeType(),
+                        'thumbnail_size' => $thumbnailFile?->getSize(),
+                        'thumbnail_source' => $thumbnail ? 'user' : null,
                         'caption_hashtags' => $captionData['hashtags'],
                         'caption_mentions' => $captionData['mentions'],
                         'mentioned_user_ids' => $mentionedUsers->pluck('id')->values()->all(),
-                    ]),
-                ]);
+                    ], static fn ($value) => $value !== null)),
+                ]));
 
                 return $video->fresh();
             });
@@ -141,7 +153,13 @@ class VideoService
                 'exception' => get_class($throwable),
             ]);
 
-            $this->videoStorageService->delete($stored['source_key'], $stored['disk']);
+            if ($stored) {
+                $this->videoStorageService->delete($stored['source_key'], $stored['disk']);
+            }
+
+            if ($thumbnail) {
+                $this->videoStorageService->delete($thumbnail['source_key'], $thumbnail['disk']);
+            }
             throw new RuntimeException('Failed to create the video record: '.$throwable->getMessage(), previous: $throwable);
         }
 
@@ -170,9 +188,10 @@ class VideoService
         return $video;
     }
 
-    public function attachUploadedVideo(Video $video, UploadedFile $file, int $userId): Video
+    public function attachUploadedVideo(Video $video, UploadedFile $file, int $userId, ?UploadedFile $thumbnailFile = null): Video
     {
         $video = $video->fresh();
+        $thumbnail = null;
 
         if (! $video) {
             throw ValidationException::withMessages([
@@ -220,6 +239,7 @@ class VideoService
         ]);
 
         $stored = $this->videoStorageService->uploadOriginal($file, $userId);
+        $thumbnail = $this->uploadThumbnailIfProvided($thumbnailFile, $userId);
 
         Log::info('Video stored in primary storage for re-upload.', [
             'stage' => 'storage',
@@ -233,18 +253,28 @@ class VideoService
             $video->update([
                 'source_url' => $stored['source_url'],
                 'source_key' => $stored['source_key'],
+                'thumbnail_url' => $thumbnail['source_url'] ?? $video->thumbnail_url,
                 'status' => 'draft',
                 'progress_percentage' => 100,
-                'metadata' => array_merge($video->metadata ?? [], [
+                'metadata' => array_merge($video->metadata ?? [], array_filter([
                     'storage_disk' => $stored['disk'],
                     'original_name' => $file->getClientOriginalName(),
                     'mime_type' => $file->getMimeType(),
                     'size' => $file->getSize(),
                     'duration_seconds' => $duration,
-                ]),
+                    'thumbnail_disk' => $thumbnail['disk'] ?? null,
+                    'thumbnail_source_key' => $thumbnail['source_key'] ?? null,
+                    'thumbnail_original_name' => $thumbnailFile?->getClientOriginalName(),
+                    'thumbnail_mime_type' => $thumbnailFile?->getMimeType(),
+                    'thumbnail_size' => $thumbnailFile?->getSize(),
+                    'thumbnail_source' => $thumbnail ? 'user' : null,
+                ], static fn ($value) => $value !== null)),
             ]);
         } catch (Throwable $throwable) {
             $this->videoStorageService->delete($stored['source_key'], $stored['disk']);
+            if ($thumbnail) {
+                $this->videoStorageService->delete($thumbnail['source_key'], $thumbnail['disk']);
+            }
                 throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
         }
 
@@ -260,7 +290,7 @@ class VideoService
         return $video->fresh();
     }
 
-    public function createDirectUploadSession(array $data, int $userId): array
+    public function createDirectUploadSession(array $data, int $userId, ?UploadedFile $thumbnailFile = null): array
     {
         $contentTypes = $this->normalizeContentTypes($data);
         $primaryContentType = $data['content_type'] ?? null;
@@ -270,33 +300,49 @@ class VideoService
         }
 
         $primaryContentType = $contentTypes[0] ?? $primaryContentType;
+        $thumbnail = $this->uploadThumbnailIfProvided($thumbnailFile, $userId);
 
-        $upload = $this->videoStorageService->createTemporaryUpload(
-            userId: $userId,
-            originalName: $data['original_name'] ?? null,
-            mimeType: $data['mime_type'] ?? null,
-        );
+        try {
+            $upload = $this->videoStorageService->createTemporaryUpload(
+                userId: $userId,
+                originalName: $data['original_name'] ?? null,
+                mimeType: $data['mime_type'] ?? null,
+            );
 
-        $video = Video::create([
-            'user_id' => $userId,
-            'title' => $data['title'] ?? null,
-            'caption' => $data['caption'] ?? null,
-            'content_type' => $primaryContentType,
-            'content_types' => $contentTypes,
-            'visibility' => $data['visibility'] ?? 'public',
-            'source_url' => $upload['source_url'],
-            'source_key' => $upload['source_key'],
-            'status' => 'draft',
-            'progress_percentage' => 0,
-            'metadata' => [
-                'upload_mode' => 'direct',
-                'upload_state' => 'awaiting_upload',
-                'storage_disk' => $upload['disk'],
-                'original_name' => $data['original_name'] ?? null,
-                'mime_type' => $data['mime_type'] ?? null,
-                'size' => $data['size'] ?? null,
-            ],
-        ]);
+            $video = Video::create([
+                'user_id' => $userId,
+                'title' => $data['title'] ?? null,
+                'caption' => $data['caption'] ?? null,
+                'content_type' => $primaryContentType,
+                'content_types' => $contentTypes,
+                'visibility' => $data['visibility'] ?? 'public',
+                'thumbnail_url' => $thumbnail['source_url'] ?? null,
+                'source_url' => $upload['source_url'],
+                'source_key' => $upload['source_key'],
+                'status' => 'draft',
+                'progress_percentage' => 0,
+                'metadata' => [
+                    'upload_mode' => 'direct',
+                    'upload_state' => 'awaiting_upload',
+                    'storage_disk' => $upload['disk'],
+                    'original_name' => $data['original_name'] ?? null,
+                    'mime_type' => $data['mime_type'] ?? null,
+                    'size' => $data['size'] ?? null,
+                    'thumbnail_disk' => $thumbnail['disk'] ?? null,
+                    'thumbnail_source_key' => $thumbnail['source_key'] ?? null,
+                    'thumbnail_original_name' => $thumbnailFile?->getClientOriginalName(),
+                    'thumbnail_mime_type' => $thumbnailFile?->getMimeType(),
+                    'thumbnail_size' => $thumbnailFile?->getSize(),
+                    'thumbnail_source' => $thumbnail ? 'user' : null,
+                ],
+            ]);
+        } catch (Throwable $throwable) {
+            if ($thumbnail) {
+                $this->videoStorageService->delete($thumbnail['source_key'], $thumbnail['disk']);
+            }
+
+            throw $throwable;
+        }
 
         return [
             'video' => $video->fresh(),
@@ -498,5 +544,14 @@ class VideoService
             fn ($value) => is_string($value) ? trim($value) : '',
             $contentTypes
         )));
+    }
+
+    private function uploadThumbnailIfProvided(?UploadedFile $thumbnailFile, int $userId): ?array
+    {
+        if (! $thumbnailFile) {
+            return null;
+        }
+
+        return $this->videoStorageService->uploadThumbnail($thumbnailFile, $userId);
     }
 }

@@ -3,8 +3,11 @@
 return [
     'storage_disk' => env('VIDEO_STORAGE_DISK', 's3'),
     'upload_directory' => env('VIDEO_UPLOAD_DIRECTORY', 'videos/originals'),
+    'thumbnail_directory' => env('VIDEO_THUMBNAIL_DIRECTORY', 'videos/thumbnails'),
     'allowed_mimetypes' => explode(',', env('VIDEO_ALLOWED_MIMETYPES', 'video/mp4,video/quicktime,video/webm,video/x-matroska')),
+    'thumbnail_allowed_mimetypes' => explode(',', env('VIDEO_THUMBNAIL_ALLOWED_MIMETYPES', 'image/jpeg,image/png,image/webp')),
     'max_upload_kb' => (int) env('VIDEO_MAX_UPLOAD_KB', 102400),
+    'thumbnail_max_upload_kb' => (int) env('VIDEO_THUMBNAIL_MAX_UPLOAD_KB', 5120),
     'max_duration_seconds' => (int) env('VIDEO_MAX_DURATION_SECONDS', 120),
     'transcode_enabled' => env('VIDEO_TRANSCODE_ENABLED', true),
     'transcode_preset' => env('VIDEO_TRANSCODE_PRESET', 'veryfast'),

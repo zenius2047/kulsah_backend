@@ -12,8 +12,10 @@ use App\Models\VideoPlaylist;
 use App\Models\VideoView;
 use App\Services\VideoService;
 use App\Services\VideoCacheService;
+use App\Services\VideoStorageService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -24,6 +26,7 @@ class VideoController extends Controller
     public function __construct(
         private readonly VideoService $videoService,
         private readonly VideoCacheService $videoCacheService,
+        private readonly VideoStorageService $videoStorageService,
     ) {
     }
 
@@ -196,6 +199,7 @@ class VideoController extends Controller
                 'mimetypes:'.implode(',', config('video.allowed_mimetypes', [])),
                 'max:'.config('video.max_upload_kb', 102400),
             ],
+            'thumbnail' => $this->thumbnailValidationRules(),
             'title' => ['nullable', 'string', 'max:255'],
             'caption' => ['nullable', 'string', 'max:5000'],
             'content_type' => ['sometimes', 'array', 'min:1'],
@@ -219,6 +223,7 @@ class VideoController extends Controller
                 ],
                 file: $request->file('video'),
                 userId: (int) $request->user()->id,
+                thumbnailFile: $request->file('thumbnail'),
             );
         } catch (Throwable $throwable) {
             report($throwable);
@@ -260,6 +265,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'thumbnail' => $this->thumbnailValidationRules(),
             'original_name' => ['nullable', 'string', 'max:255'],
             'mime_type' => ['nullable', 'string', 'max:120'],
             'size' => ['nullable', 'integer', 'min:0'],
@@ -280,6 +286,7 @@ class VideoController extends Controller
                     'size' => $request->input('size'),
                 ],
                 userId: (int) $request->user()->id,
+                thumbnailFile: $request->file('thumbnail'),
             );
         } catch (Throwable $throwable) {
             report($throwable);
@@ -574,20 +581,34 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'thumbnail' => $this->thumbnailValidationRules(),
         ]);
 
         $contentTypes = $this->resolveContentTypes($request);
 
-        $video = $this->videoService->createDraftVideo(
-            data: [
-                'title' => $request->input('title'),
-                'caption' => $request->input('caption'),
-                'content_type' => $contentTypes[0] ?? null,
-                'content_types' => $contentTypes,
-                'visibility' => $request->input('visibility', 'public'),
-            ],
-            userId: (int) $request->user()->id,
-        );
+        $thumbnail = null;
+
+        try {
+            $thumbnail = $this->storeThumbnailIfProvided($request->file('thumbnail'), (int) $request->user()->id);
+
+            $video = $this->videoService->createDraftVideo(
+                data: [
+                    'title' => $request->input('title'),
+                    'caption' => $request->input('caption'),
+                    'content_type' => $contentTypes[0] ?? null,
+                    'content_types' => $contentTypes,
+                    'visibility' => $request->input('visibility', 'public'),
+                    'thumbnail_url' => $thumbnail['source_url'] ?? null,
+                ],
+                userId: (int) $request->user()->id,
+            );
+        } catch (Throwable $throwable) {
+            if ($thumbnail) {
+                $this->videoStorageService->delete($thumbnail['source_key'], $thumbnail['disk']);
+            }
+
+            throw $throwable;
+        }
 
         $this->invalidateCreatorCaches((int) $request->user()->id);
 
@@ -612,6 +633,7 @@ class VideoController extends Controller
                 'mimetypes:'.implode(',', config('video.allowed_mimetypes', [])),
                 'max:'.config('video.max_upload_kb', 102400),
             ],
+            'thumbnail' => $this->thumbnailValidationRules(),
         ]);
 
         try {
@@ -619,6 +641,7 @@ class VideoController extends Controller
                 video: $video,
                 file: $request->file('video'),
                 userId: (int) $request->user()->id,
+                thumbnailFile: $request->file('thumbnail'),
             );
         } catch (Throwable $throwable) {
             report($throwable);
@@ -934,6 +957,27 @@ class VideoController extends Controller
             fn ($value) => is_string($value) ? trim($value) : '',
             $contentTypesInput
         )));
+    }
+
+    private function thumbnailValidationRules(): array
+    {
+        return [
+            'sometimes',
+            'nullable',
+            'file',
+            'image',
+            'mimes:jpg,jpeg,png,webp',
+            'max:'.(int) config('video.thumbnail_max_upload_kb', 5120),
+        ];
+    }
+
+    private function storeThumbnailIfProvided(?UploadedFile $thumbnailFile, int $userId): ?array
+    {
+        if (! $thumbnailFile) {
+            return null;
+        }
+
+        return $this->videoStorageService->uploadThumbnail($thumbnailFile, $userId);
     }
 
     private function debugPayload(Throwable $throwable, string $stage, int|string|null $videoId = null): array

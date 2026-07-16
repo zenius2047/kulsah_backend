@@ -11,7 +11,7 @@ class VideoStorageService
 {
     public function uploadOriginal(UploadedFile $file, int $userId): array
     {
-        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName());
+        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.upload_directory', 'videos/originals'));
 
         $storedPath = Storage::disk($disk)->putFileAs(
             dirname($path),
@@ -31,9 +31,31 @@ class VideoStorageService
         ];
     }
 
+    public function uploadThumbnail(UploadedFile $file, int $userId): array
+    {
+        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.thumbnail_directory', 'videos/thumbnails'));
+
+        $storedPath = Storage::disk($disk)->putFileAs(
+            dirname($path),
+            $file,
+            basename($path),
+            ['visibility' => 'public']
+        );
+
+        if (! $storedPath) {
+            throw new RuntimeException('Unable to store the uploaded thumbnail in primary storage.');
+        }
+
+        return [
+            'disk' => $disk,
+            'source_key' => $storedPath,
+            'source_url' => Storage::disk($disk)->url($storedPath),
+        ];
+    }
+
     public function createTemporaryUpload(int $userId, ?string $originalName = null, ?string $mimeType = null): array
     {
-        [$disk, $path] = $this->buildUploadTarget($userId, $originalName);
+        [$disk, $path] = $this->buildUploadTarget($userId, $originalName, config('video.upload_directory', 'videos/originals'));
         $ttlMinutes = max(1, (int) config('video.direct_upload_ttl_minutes', 15));
 
         $upload = Storage::disk($disk)->temporaryUploadUrl(
@@ -67,10 +89,10 @@ class VideoStorageService
     /**
      * @return array{0: string, 1: string}
      */
-    private function buildUploadTarget(int $userId, ?string $originalName = null): array
+    private function buildUploadTarget(int $userId, ?string $originalName = null, ?string $directory = null): array
     {
         $disk = config('video.storage_disk', 's3');
-        $directory = trim(config('video.upload_directory', 'videos/originals'), '/');
+        $directory = trim((string) ($directory ?: config('video.upload_directory', 'videos/originals')), '/');
 
         $extension = pathinfo((string) $originalName, PATHINFO_EXTENSION);
         $extension = $extension !== '' ? strtolower($extension) : 'mp4';

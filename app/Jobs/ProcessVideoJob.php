@@ -101,7 +101,7 @@ class ProcessVideoJob implements ShouldQueue
             $video->update([
                 'cdn_url' => $result['cdn_url'],
                 'cloudinary_public_id' => $result['cloudinary_public_id'],
-                'thumbnail_url' => $result['thumbnail_url'],
+                'thumbnail_url' => $video->thumbnail_url ?: $result['thumbnail_url'],
                 'duration' => $duration ?: null,
                 'metadata' => array_merge($video->metadata ?? [], $result['metadata'] ?? [], [
                     'stream_url' => $result['stream_url'] ?? $result['cdn_url'] ?? null,
