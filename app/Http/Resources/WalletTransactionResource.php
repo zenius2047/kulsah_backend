@@ -29,7 +29,7 @@ class WalletTransactionResource extends JsonResource
             'performed_by_user_id' => $this->performed_by_user_id,
             'wallet' => $this->whenLoaded('wallet', fn () => new WalletResource($this->wallet)),
             'counterparty_wallet' => $this->whenLoaded('counterpartyWallet', fn () => new WalletResource($this->counterpartyWallet)),
-            'entries' => WalletLedgerEntryResource::collection($this->whenLoaded('entries')),
+            'entries' => $this->whenLoaded('entries', fn () => WalletLedgerEntryResource::collection($this->entries), []),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

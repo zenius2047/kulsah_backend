@@ -33,7 +33,7 @@ class KulCoinTransactionResource extends JsonResource
             'counterparty_wallet' => $this->whenLoaded('counterpartyWallet', fn () => new KulCoinWalletResource($this->counterpartyWallet)),
             'package' => $this->whenLoaded('package', fn () => new KulCoinPackageResource($this->package)),
             'gift' => $this->whenLoaded('gift', fn () => new KulCoinGiftResource($this->gift)),
-            'entries' => KulCoinLedgerEntryResource::collection($this->whenLoaded('entries')),
+            'entries' => $this->whenLoaded('entries', fn () => KulCoinLedgerEntryResource::collection($this->entries), []),
         ];
     }
 }
