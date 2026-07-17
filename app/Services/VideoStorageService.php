@@ -53,6 +53,58 @@ class VideoStorageService
         ];
     }
 
+    public function uploadEditAsset(UploadedFile $file, int $userId): array
+    {
+        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.edit_asset_directory', 'videos/edit-assets'));
+
+        $storedPath = Storage::disk($disk)->putFileAs(
+            dirname($path),
+            $file,
+            basename($path),
+            ['visibility' => 'private']
+        );
+
+        if (! $storedPath) {
+            throw new RuntimeException('Unable to store the video edit asset in primary storage.');
+        }
+
+        return [
+            'disk' => $disk,
+            'source_key' => $storedPath,
+            'source_url' => Storage::disk($disk)->url($storedPath),
+        ];
+    }
+
+    public function uploadRenderedVideo(string $localPath, int $userId, string $originalName = 'edited.mp4'): array
+    {
+        if (! is_file($localPath)) {
+            throw new RuntimeException('Rendered video file is missing.');
+        }
+
+        [$disk, $path] = $this->buildUploadTarget($userId, $originalName, config('video.rendered_directory', 'videos/rendered'));
+        $stream = fopen($localPath, 'r+b');
+
+        if ($stream === false) {
+            throw new RuntimeException('Unable to open the rendered video for storage.');
+        }
+
+        try {
+            $stored = Storage::disk($disk)->put($path, $stream, ['visibility' => 'private']);
+        } finally {
+            fclose($stream);
+        }
+
+        if (! $stored) {
+            throw new RuntimeException('Unable to store the rendered video in primary storage.');
+        }
+
+        return [
+            'disk' => $disk,
+            'source_key' => $path,
+            'source_url' => Storage::disk($disk)->url($path),
+        ];
+    }
+
     public function createTemporaryUpload(int $userId, ?string $originalName = null, ?string $mimeType = null): array
     {
         [$disk, $path] = $this->buildUploadTarget($userId, $originalName, config('video.upload_directory', 'videos/originals'));

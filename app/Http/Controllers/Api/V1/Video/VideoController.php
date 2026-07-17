@@ -12,6 +12,7 @@ use App\Models\VideoPlaylist;
 use App\Models\VideoView;
 use App\Services\VideoService;
 use App\Services\VideoCacheService;
+use App\Services\VideoEditService;
 use App\Services\VideoStorageService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -27,6 +28,7 @@ class VideoController extends Controller
         private readonly VideoService $videoService,
         private readonly VideoCacheService $videoCacheService,
         private readonly VideoStorageService $videoStorageService,
+        private readonly VideoEditService $videoEditService,
     ) {
     }
 
@@ -802,6 +804,68 @@ class VideoController extends Controller
         ]);
     }
 
+    public function edit(Request $request, Video $video)
+    {
+        abort_unless(
+            (string) $video->user_id === (string) $request->user()->id,
+            403,
+            'You are not allowed to edit this video.'
+        );
+
+        $this->normalizeOverlays($request);
+
+        $validated = $request->validate([
+            'overlays' => ['required', 'array', 'min:1', 'max:30'],
+            'overlays.*' => ['required', 'array'],
+            'overlays.*.type' => ['required', 'string', 'in:text,drawing'],
+            'overlays.*.x' => ['sometimes', 'numeric', 'min:0'],
+            'overlays.*.y' => ['sometimes', 'numeric', 'min:0'],
+            'overlays.*.start' => ['sometimes', 'numeric', 'min:0'],
+            'overlays.*.end' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'overlays.*.text' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'overlays.*.font_size' => ['sometimes', 'integer', 'min:8', 'max:160'],
+            'overlays.*.color' => ['sometimes', 'string', 'max:40'],
+            'overlays.*.box_color' => ['sometimes', 'string', 'max:40'],
+            'overlays.*.box' => ['sometimes', 'boolean'],
+            'overlays.*.file_index' => ['sometimes', 'integer', 'min:0'],
+            'overlays.*.drawing_file_index' => ['sometimes', 'integer', 'min:0'],
+            'overlays.*.width' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:4096'],
+            'overlays.*.height' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:4096'],
+            'drawing_files' => ['sometimes', 'array', 'max:30'],
+            'drawing_files.*' => ['required', 'file', 'image', 'mimes:png,jpg,jpeg,webp', 'max:10240'],
+        ]);
+
+        try {
+            $video = $this->videoEditService->queueRender(
+                video: $video,
+                overlays: $validated['overlays'],
+                drawingFiles: $request->file('drawing_files', []),
+                userId: (int) $request->user()->id,
+            );
+        } catch (Throwable $throwable) {
+            report($throwable);
+
+            if ($throwable instanceof ValidationException) {
+                return response()->json([
+                    'message' => 'Unable to edit video.',
+                    'errors' => $throwable->errors(),
+                ], 422);
+            }
+
+            return response()->json([
+                'message' => 'Unable to edit video.',
+                'error' => $throwable->getMessage(),
+            ], 500);
+        }
+
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Video edit queued successfully.',
+            'data' => new VideoResource($video),
+        ], 202);
+    }
+
     public function view(Request $request, Video $video)
     {
         $updated = $this->videoService->recordView($video, (int) $request->user()->id);
@@ -893,6 +957,23 @@ class VideoController extends Controller
                 $contentTypes
             ))),
         ]);
+    }
+
+    private function normalizeOverlays(Request $request): void
+    {
+        $overlays = $request->input('overlays');
+
+        if (! is_string($overlays)) {
+            return;
+        }
+
+        $decoded = json_decode($overlays, true);
+
+        if (is_array($decoded)) {
+            $request->merge([
+                'overlays' => $decoded,
+            ]);
+        }
     }
 
     private function formatDuration(int $seconds): string

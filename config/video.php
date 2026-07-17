@@ -3,6 +3,8 @@
 return [
     'storage_disk' => env('VIDEO_STORAGE_DISK', 's3'),
     'upload_directory' => env('VIDEO_UPLOAD_DIRECTORY', 'videos/originals'),
+    'rendered_directory' => env('VIDEO_RENDERED_DIRECTORY', 'videos/rendered'),
+    'edit_asset_directory' => env('VIDEO_EDIT_ASSET_DIRECTORY', 'videos/edit-assets'),
     'thumbnail_directory' => env('VIDEO_THUMBNAIL_DIRECTORY', 'videos/thumbnails'),
     'allowed_mimetypes' => explode(',', env('VIDEO_ALLOWED_MIMETYPES', 'video/mp4,video/quicktime,video/webm,video/x-matroska')),
     'thumbnail_allowed_mimetypes' => explode(',', env('VIDEO_THUMBNAIL_ALLOWED_MIMETYPES', 'image/jpeg,image/png,image/webp')),
@@ -21,4 +23,6 @@ return [
     'feed_cache_ttl_seconds' => (int) env('FEED_CACHE_TTL_SECONDS', 600),
     'processing_queue' => env('VIDEO_PROCESSING_QUEUE', 'videos'),
     'cloudinary_upload_timeout_seconds' => (int) env('CLOUDINARY_UPLOAD_TIMEOUT_SECONDS', 120),
+    'edit_render_timeout_seconds' => (int) env('VIDEO_EDIT_RENDER_TIMEOUT_SECONDS', 300),
+    'ffmpeg_font_file' => env('VIDEO_FFMPEG_FONT_FILE'),
 ];
