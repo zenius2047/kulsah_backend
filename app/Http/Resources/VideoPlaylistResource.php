@@ -17,6 +17,7 @@ class VideoPlaylistResource extends JsonResource
             'id' => $playlist->id,
             'user_id' => $playlist->user_id,
             'name' => $playlist->name,
+            'background' => $playlist->background,
             'videos_count' => (int) ($playlist->videos_count ?? ($playlist->relationLoaded('videos') ? $playlist->videos->count() : 0)),
             'created_at' => optional($playlist->created_at)?->toIso8601String(),
             'updated_at' => optional($playlist->updated_at)?->toIso8601String(),

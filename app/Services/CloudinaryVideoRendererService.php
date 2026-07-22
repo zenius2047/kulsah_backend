@@ -33,7 +33,7 @@ class CloudinaryVideoRendererService
         $renderPlan = $this->transformationBuilder->buildRenderTransformations(array_merge($timeline, [
             'video_id' => $video->id,
         ]));
-        $notificationUrl = url('/api/cloudinary/webhook');
+        $notificationUrl = url('/api/v1/cloudinary/webhook');
 
         Log::info('Cloudinary render requested.', [
             'video_id' => $video->id,

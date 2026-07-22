@@ -107,6 +107,7 @@ class VideoPlaylistTest extends TestCase
         $videosResponse->assertOk()
             ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
             ->assertJsonPath('playlist_name', 'Workout Mix')
+            ->assertJsonPath('background', null)
             ->assertJsonPath('item', null)
             ->assertJsonCount(0, 'next_videos');
 
@@ -131,6 +132,7 @@ class VideoPlaylistTest extends TestCase
         $videosResponse->assertOk()
             ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
             ->assertJsonPath('playlist_name', 'Workout Mix')
+            ->assertJsonPath('background', 'https://example.com/playlist-video.jpg')
             ->assertJsonPath('item.id', (string) $video->id)
             ->assertJsonPath('item.video', 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/playlist-video.m3u8')
             ->assertJsonPath('item.views', '0')
@@ -156,6 +158,7 @@ class VideoPlaylistTest extends TestCase
         $videosResponse->assertOk()
             ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
             ->assertJsonPath('playlist_name', 'Workout Mix')
+            ->assertJsonPath('background', 'https://example.com/next-playlist-video.jpg')
             ->assertJsonPath('item.id', (string) $nextVideo->id)
             ->assertJsonPath('item.video', 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/next-playlist-video.m3u8')
             ->assertJsonPath('item.views', '7')

@@ -284,7 +284,7 @@ class CloudinaryTransformationBuilder
     {
         $type = (string) ($layer['type'] ?? '');
 
-        if (! in_array($type, ['text', 'drawing', 'sticker', 'watermark', 'audio'], true)) {
+        if (! in_array($type, ['text', 'drawing', 'image', 'sticker', 'watermark', 'audio'], true)) {
             throw new RuntimeException('Unsupported timeline layer type: '.$type);
         }
 
@@ -339,7 +339,9 @@ class CloudinaryTransformationBuilder
     {
         $quality = strtolower(trim($quality));
 
-        return $quality === '' ? 'auto' : preg_replace('/[^a-z0-9_:-]+/', '', $quality) ?: 'auto';
+        return $quality === ''
+            ? 'auto'
+            : (preg_replace('/[^a-z0-9_:-]+/', '', $quality) ?: 'auto');
     }
 
     private function normalizeCrop(string $crop): string

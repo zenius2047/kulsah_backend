@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Video;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Video\VideoRenderRequest;
 use App\Http\Resources\CreatorVideoResource;
 use App\Http\Resources\CreatorVideoDetailResource;
 use App\Http\Resources\VideoPlaylistResource;
@@ -460,6 +461,7 @@ class VideoController extends Controller
                 return [
                     'playlist_id' => (string) $playlist->id,
                     'playlist_name' => (string) $playlist->name,
+                    'background' => $playlist->background,
                     'item' => $currentVideo
                         ? (new CreatorVideoDetailResource($currentVideo))->resolve($request)
                         : null,
@@ -804,7 +806,7 @@ class VideoController extends Controller
         ]);
     }
 
-    public function edit(Request $request, Video $video)
+    public function edit(VideoRenderRequest $request, Video $video)
     {
         abort_unless(
             (string) $video->user_id === (string) $request->user()->id,
@@ -812,36 +814,36 @@ class VideoController extends Controller
             'You are not allowed to edit this video.'
         );
 
-        $this->normalizeOverlays($request);
-
-        $validated = $request->validate([
-            'overlays' => ['required', 'array', 'min:1', 'max:30'],
-            'overlays.*' => ['required', 'array'],
-            'overlays.*.type' => ['required', 'string', 'in:text,drawing'],
-            'overlays.*.x' => ['sometimes', 'numeric', 'min:0'],
-            'overlays.*.y' => ['sometimes', 'numeric', 'min:0'],
-            'overlays.*.start' => ['sometimes', 'numeric', 'min:0'],
-            'overlays.*.end' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'overlays.*.text' => ['sometimes', 'nullable', 'string', 'max:500'],
-            'overlays.*.font_size' => ['sometimes', 'integer', 'min:8', 'max:160'],
-            'overlays.*.color' => ['sometimes', 'string', 'max:40'],
-            'overlays.*.box_color' => ['sometimes', 'string', 'max:40'],
-            'overlays.*.box' => ['sometimes', 'boolean'],
-            'overlays.*.file_index' => ['sometimes', 'integer', 'min:0'],
-            'overlays.*.drawing_file_index' => ['sometimes', 'integer', 'min:0'],
-            'overlays.*.width' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:4096'],
-            'overlays.*.height' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:4096'],
-            'drawing_files' => ['sometimes', 'array', 'max:30'],
-            'drawing_files.*' => ['required', 'file', 'image', 'mimes:png,jpg,jpeg,webp', 'max:10240'],
-        ]);
+        $validated = $request->validated();
 
         try {
-            $video = $this->videoEditService->queueRender(
-                video: $video,
-                overlays: $validated['overlays'],
-                drawingFiles: $request->file('drawing_files', []),
-                userId: (int) $request->user()->id,
-            );
+            $hasTimelinePayload = array_key_exists('layers', $validated)
+                || array_key_exists('filters', $validated)
+                || array_key_exists('trim', $validated)
+                || array_key_exists('output', $validated)
+                || array_key_exists('audio', $validated);
+
+            if ($hasTimelinePayload) {
+                $video = $this->videoEditService->queueTimelineRender(
+                    video: $video,
+                    timeline: [
+                        'video_id' => (int) $video->id,
+                        'layers' => $validated['layers'] ?? $validated['overlays'] ?? [],
+                        'filters' => $validated['filters'] ?? [],
+                        'audio' => $validated['audio'] ?? [],
+                        'trim' => $validated['trim'] ?? [],
+                        'output' => $validated['output'] ?? [],
+                    ],
+                    userId: (int) $request->user()->id,
+                );
+            } else {
+                $video = $this->videoEditService->queueRender(
+                    video: $video,
+                    overlays: $validated['overlays'] ?? [],
+                    drawingFiles: $request->file('drawing_files', []),
+                    userId: (int) $request->user()->id,
+                );
+            }
         } catch (Throwable $throwable) {
             report($throwable);
 

@@ -24,4 +24,17 @@ class VideoPlaylist extends Model
         return $this->belongsToMany(Video::class, 'video_playlist_video')
             ->withTimestamps();
     }
+
+    public function getBackgroundAttribute(): ?string
+    {
+        $video = $this->relationLoaded('videos')
+            ? $this->videos->first()
+            : $this->videos()->orderByDesc('videos.id')->first();
+
+        if (! $video) {
+            return null;
+        }
+
+        return $video->poster_url ?: $video->thumbnail_url ?: data_get($video->metadata, 'background');
+    }
 }

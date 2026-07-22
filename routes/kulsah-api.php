@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
+use App\Http\Controllers\Api\V1\Cloudinary\CloudinaryWebhookController;
 use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
 use App\Http\Controllers\Api\V1\Feed\FeedController;
 use App\Http\Controllers\Api\V1\Feed\SocialController;
@@ -11,6 +12,8 @@ use App\Http\Controllers\Api\V1\Wallet\WalletController;
 
 Route::pattern('video', '[0-9]+');
 Route::pattern('playlist', '[0-9]+');
+
+Route::post('/cloudinary/webhook', [CloudinaryWebhookController::class, 'store']);
 
 // Fan and creator routes
 Route::prefix('fan')
