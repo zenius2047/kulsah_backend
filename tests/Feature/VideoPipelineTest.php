@@ -275,6 +275,8 @@ class VideoPipelineTest extends TestCase
             'visibility' => 'premium',
             'source_url' => 'https://example.com/source.mp4',
             'source_key' => 'videos/originals/1/dashboard.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/demo-playback.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/demo-playback.m3u8',
             'thumbnail_url' => 'https://example.com/dashboard.jpg',
             'duration' => 125,
             'status' => 'ready',
@@ -292,6 +294,8 @@ class VideoPipelineTest extends TestCase
             'visibility' => 'public',
             'source_url' => 'https://example.com/other-video.mp4',
             'source_key' => 'videos/originals/1/other-video.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/other-playback.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/other-playback.m3u8',
             'thumbnail_url' => 'https://example.com/other-video.jpg',
             'duration' => 45,
             'status' => 'ready',
@@ -323,7 +327,7 @@ class VideoPipelineTest extends TestCase
             ->assertJsonPath('item.avatar', null)
             ->assertJsonPath('item.caption', 'PRIVATE DROP: Working on Nebula vocal layers #BTS')
             ->assertJsonPath('item.background', 'https://example.com/dashboard.jpg')
-            ->assertJsonPath('item.video', 'https://example.com/source.mp4')
+            ->assertJsonPath('item.video', 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/demo-playback.m3u8')
             ->assertJsonPath('item.views', '2.1K')
             ->assertJsonPath('item.likes', '1')
             ->assertJsonPath('item.comments_count', '1')
@@ -336,7 +340,7 @@ class VideoPipelineTest extends TestCase
         $this->assertSame('@dashboard_creator', $response->json('item.otherVideos.0.handle'));
         $this->assertSame('Another clip', $response->json('item.otherVideos.0.caption'));
         $this->assertSame('https://example.com/other-video.jpg', $response->json('item.otherVideos.0.background'));
-        $this->assertSame('https://example.com/other-video.mp4', $response->json('item.otherVideos.0.video'));
+        $this->assertSame('https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/other-playback.m3u8', $response->json('item.otherVideos.0.video'));
         $this->assertSame('12', $response->json('item.otherVideos.0.views'));
         $this->assertSame('0', $response->json('item.otherVideos.0.likes'));
         $this->assertSame('0', $response->json('item.otherVideos.0.comments_count'));

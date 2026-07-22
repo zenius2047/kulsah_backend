@@ -31,7 +31,7 @@ class FeedCardResource extends JsonResource
             'hashtags' => data_get($metadata, 'caption_hashtags', []),
             'mentions' => data_get($metadata, 'caption_mentions', []),
             'background' => $video->thumbnail_url ?: data_get($metadata, 'background'),
-            'video' => $video->cdn_url,
+            'video' => $video->playback_url,
             'likes' => $this->formatCount($video->likes_count ?? data_get($metadata, 'likes', data_get($metadata, 'likes_count', 0))),
             'comments' => $this->formatCount($video->comments_count ?? data_get($metadata, 'comments', data_get($metadata, 'comments_count', 0))),
             'views' => $this->formatCount($video->views_count ?? data_get($metadata, 'views', data_get($metadata, 'views_count', 0))),

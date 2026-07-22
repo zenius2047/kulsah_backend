@@ -9,12 +9,60 @@ use Symfony\Component\Process\Process;
 
 class CloudinaryService
 {
+    public function getCloudName(): string
+    {
+        return (string) config('services.cloudinary.cloud_name', '');
+    }
+
+    public function getApiKey(): string
+    {
+        return (string) config('services.cloudinary.api_key', '');
+    }
+
+    public function getApiSecret(): string
+    {
+        return (string) config('services.cloudinary.api_secret', '');
+    }
+
+    public function signParameters(array $params): string
+    {
+        ksort($params);
+
+        $payload = [];
+        foreach ($params as $key => $value) {
+            $payload[] = $key.'='.(string) $value;
+        }
+
+        return sha1(implode('&', $payload).$this->getApiSecret());
+    }
+
+    public function verifyNotificationSignature(string $body, ?string $timestamp, ?string $signature): bool
+    {
+        if ($timestamp === null || $timestamp === '' || $signature === null || $signature === '') {
+            return false;
+        }
+
+        if (! ctype_digit($timestamp)) {
+            return false;
+        }
+
+        if ((int) $timestamp < strtotime('-2 hours')) {
+            return false;
+        }
+
+        $payload = $body.$timestamp.$this->getApiSecret();
+        $expectedSha1 = sha1($payload);
+        $expectedSha256 = hash('sha256', $payload);
+
+        return hash_equals($expectedSha1, $signature) || hash_equals($expectedSha256, $signature);
+    }
+
     public function uploadVideoFromS3Key(string $sourceKey): array
     {
         $disk = config('video.storage_disk', 's3');
-        $cloudName = config('services.cloudinary.cloud_name');
-        $apiKey = config('services.cloudinary.api_key');
-        $apiSecret = config('services.cloudinary.api_secret');
+        $cloudName = $this->getCloudName();
+        $apiKey = $this->getApiKey();
+        $apiSecret = $this->getApiSecret();
         $folder = trim((string) config('services.cloudinary.folder', 'kulsah/videos'), '/');
 
         if (! $cloudName || ! $apiKey || ! $apiSecret) {
@@ -70,7 +118,7 @@ class CloudinaryService
             $publicId = $this->buildPublicId($sourceKey);
             $timestamp = time();
             $params = $this->buildSignatureParams($folder, $publicId, $timestamp, $transcodeFailed);
-            $signature = $this->buildSignature($params, $apiSecret);
+            $signature = $this->signParameters($params);
             $uploadUrl = "https://api.cloudinary.com/v1_1/{$cloudName}/video/upload";
             $mimeType = $this->guessMimeType($uploadPath);
 
@@ -138,10 +186,13 @@ class CloudinaryService
         }
 
         return [
-            'cdn_url' => $this->generateAdaptiveStreamUrl($response['decoded']['public_id']),
-            'stream_url' => $this->generateAdaptiveStreamUrl($response['decoded']['public_id']),
+            'cdn_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
+            'stream_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
+            'streaming_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
             'cloudinary_public_id' => $response['decoded']['public_id'],
-            'thumbnail_url' => $this->generateThumbnailUrl($response['decoded']['public_id']),
+            'cloudinary_asset_id' => $response['decoded']['asset_id'] ?? null,
+            'thumbnail_url' => $this->generatePosterUrlFromPublicId($response['decoded']['public_id']),
+            'poster_url' => $this->generatePosterUrlFromPublicId($response['decoded']['public_id']),
             'duration' => isset($response['decoded']['duration']) ? (int) round((float) $response['decoded']['duration']) : null,
             'streaming_profile' => config('video.cloudinary_stream_max_resolution', '2160p'),
             'metadata' => array_merge($response['decoded'], [
@@ -153,7 +204,12 @@ class CloudinaryService
 
     public function generateAdaptiveStreamUrl(string $publicId): string
     {
-        $cloudName = config('services.cloudinary.cloud_name');
+        return $this->generateStreamingUrlFromPublicId($publicId);
+    }
+
+    public function generateStreamingUrlFromPublicId(string $publicId): string
+    {
+        $cloudName = $this->getCloudName();
         $manifestExtension = ltrim((string) config('video.cloudinary_stream_manifest_extension', 'm3u8'), '.');
         $maxResolution = (string) config('video.cloudinary_stream_max_resolution', '2160p');
         $deliveryProfile = 'sp_auto:maxres_'.$maxResolution;
@@ -163,12 +219,17 @@ class CloudinaryService
 
     public function generateDerivedVideoUrl(string $publicId): string
     {
-        return $this->generateAdaptiveStreamUrl($publicId);
+        return "https://res.cloudinary.com/".$this->getCloudName()."/video/upload/a_auto,f_auto,q_auto/{$publicId}";
     }
 
     public function generateThumbnailUrl(string $publicId): string
     {
-        $cloudName = config('services.cloudinary.cloud_name');
+        return $this->generatePosterUrlFromPublicId($publicId);
+    }
+
+    public function generatePosterUrlFromPublicId(string $publicId): string
+    {
+        $cloudName = $this->getCloudName();
 
         return "https://res.cloudinary.com/{$cloudName}/video/upload/so_0,w_720,h_1280,c_fill,f_jpg,q_auto/{$publicId}";
     }
@@ -179,18 +240,6 @@ class CloudinaryService
         $base = preg_replace('/[^A-Za-z0-9_\-\/]/', '-', (string) $base) ?: 'video';
 
         return trim($base, '/');
-    }
-
-    private function buildSignature(array $params, string $apiSecret): string
-    {
-        ksort($params);
-
-        $payload = [];
-        foreach ($params as $key => $value) {
-            $payload[] = $key.'='.(string) $value;
-        }
-
-        return sha1(implode('&', $payload).$apiSecret);
     }
 
     private function buildSignatureParams(string $folder, string $publicId, int $timestamp, bool $transcodeFailed): array

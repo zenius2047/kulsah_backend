@@ -3,7 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Video;
-use App\Services\VideoEditRenderingService;
+use App\Services\CloudinaryVideoRendererService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -27,11 +27,11 @@ class RenderVideoEditsJob implements ShouldQueue
      */
     public function __construct(
         public Video $video,
-        public array $overlays,
+        public array $timeline,
     ) {
     }
 
-    public function handle(VideoEditRenderingService $renderingService): void
+    public function handle(CloudinaryVideoRendererService $renderingService): void
     {
         $video = $this->video->fresh();
 
@@ -47,31 +47,34 @@ class RenderVideoEditsJob implements ShouldQueue
             $video->update([
                 'status' => 'processing',
                 'progress_percentage' => 25,
+                'render_status' => 'processing',
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => 'rendering',
                     'edit_started_at' => now()->toISOString(),
+                    'render_timeline' => $this->timeline,
                 ]),
             ]);
 
-            $rendered = $renderingService->render($video, $this->overlays);
+            $rendered = $renderingService->startRender($video, $this->timeline);
 
             $video->update([
-                'source_url' => $rendered['source_url'],
-                'source_key' => $rendered['source_key'],
                 'progress_percentage' => 75,
+                'render_status' => $rendered['render_status'] ?? 'processing',
+                'cloudinary_asset_id' => $rendered['cloudinary_asset_id'] ?? $video->cloudinary_asset_id,
+                'cloudinary_render_id' => $rendered['cloudinary_render_id'] ?? $video->cloudinary_render_id,
+                'rendered_url' => $rendered['rendered_url'] ?? $video->rendered_url,
+                'streaming_url' => $rendered['streaming_url'] ?? $video->streaming_url,
+                'poster_url' => $rendered['poster_url'] ?? $video->poster_url,
                 'metadata' => array_merge($video->metadata ?? [], [
-                    'storage_disk' => $rendered['disk'],
-                    'edit_status' => 'rendered',
-                    'edit_rendered_at' => now()->toISOString(),
-                    'edited_source_key' => $rendered['source_key'],
-                    'edited_source_url' => $rendered['source_url'],
+                    'edit_status' => 'rendering',
+                    'render_requested_at' => now()->toISOString(),
+                    'render_plan' => $rendered['metadata'] ?? [],
                 ]),
             ]);
-
-            ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
         } catch (Throwable $throwable) {
             $video->update([
                 'status' => 'failed',
+                'render_status' => 'failed',
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => 'failed',
                     'edit_error' => $throwable->getMessage(),

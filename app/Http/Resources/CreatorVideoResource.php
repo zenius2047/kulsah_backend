@@ -26,7 +26,7 @@ class CreatorVideoResource extends JsonResource
             'date' => optional($video->created_at)?->format('Y-m-d') ?? '',
             'duration' => $this->formatDuration($video->duration ?? data_get($metadata, 'duration_seconds')),
             'category' => (string) $category,
-            'img' => (string) ($video->thumbnail_url ?: data_get($metadata, 'background', data_get($metadata, 'thumbnail', ''))),
+            'img' => (string) ($video->poster_url ?: $video->thumbnail_url ?: data_get($metadata, 'background', data_get($metadata, 'thumbnail', ''))),
             'likes' => $this->formatCount($video->likes_count ?? data_get($metadata, 'likes', data_get($metadata, 'likes_count', 0))),
             'premium' => $video->visibility === 'premium',
             'draft' => $video->status !== 'ready',

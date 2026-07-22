@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\VideoPlaylist;
 use App\Models\Video;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 class VideoPlaylistTest extends TestCase
@@ -29,6 +30,8 @@ class VideoPlaylistTest extends TestCase
             'visibility' => 'public',
             'source_url' => 'https://example.com/source.mp4',
             'source_key' => 'videos/originals/1/playlist-video.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/playlist-video.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/playlist-video.m3u8',
             'thumbnail_url' => 'https://example.com/playlist-video.jpg',
             'duration' => 45,
             'status' => 'ready',
@@ -44,6 +47,8 @@ class VideoPlaylistTest extends TestCase
             'visibility' => 'public',
             'source_url' => 'https://example.com/next-source.mp4',
             'source_key' => 'videos/originals/1/next-playlist-video.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/next-playlist-video.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/next-playlist-video.m3u8',
             'thumbnail_url' => 'https://example.com/next-playlist-video.jpg',
             'duration' => 50,
             'status' => 'ready',
@@ -116,6 +121,8 @@ class VideoPlaylistTest extends TestCase
             ->assertJsonPath('data.playlist_ids.0', $firstPlaylistId)
             ->assertJsonPath('data.playlists_count', 1);
 
+        Cache::flush();
+
         $videosResponse = $this
             ->actingAs($creator, 'sanctum')
             ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
@@ -125,6 +132,7 @@ class VideoPlaylistTest extends TestCase
             ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
             ->assertJsonPath('playlist_name', 'Workout Mix')
             ->assertJsonPath('item.id', (string) $video->id)
+            ->assertJsonPath('item.video', 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/playlist-video.m3u8')
             ->assertJsonPath('item.views', '0')
             ->assertJsonCount(0, 'next_videos');
 
@@ -138,6 +146,8 @@ class VideoPlaylistTest extends TestCase
             ->assertJsonPath('data.playlist_ids.0', $firstPlaylistId)
             ->assertJsonPath('data.playlists_count', 1);
 
+        Cache::flush();
+
         $videosResponse = $this
             ->actingAs($creator, 'sanctum')
             ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
@@ -147,6 +157,7 @@ class VideoPlaylistTest extends TestCase
             ->assertJsonPath('playlist_id', (string) $firstPlaylistId)
             ->assertJsonPath('playlist_name', 'Workout Mix')
             ->assertJsonPath('item.id', (string) $nextVideo->id)
+            ->assertJsonPath('item.video', 'https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/next-playlist-video.m3u8')
             ->assertJsonPath('item.views', '7')
             ->assertJsonCount(1, 'next_videos')
             ->assertJsonPath('next_videos.0.id', (string) $video->id)

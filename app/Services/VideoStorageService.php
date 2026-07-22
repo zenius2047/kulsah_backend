@@ -138,6 +138,21 @@ class VideoStorageService
         return Storage::disk($disk ?: config('video.storage_disk', 's3'))->delete($sourceKey);
     }
 
+    public function resolveAccessibleUrl(string $disk, string $sourceKey): string
+    {
+        $storage = Storage::disk($disk);
+
+        try {
+            if (method_exists($storage, 'temporaryUrl')) {
+                return $storage->temporaryUrl($sourceKey, now()->addMinutes(15));
+            }
+        } catch (\Throwable) {
+            // Fall back to the regular URL when the disk does not support signed URLs.
+        }
+
+        return $storage->url($sourceKey);
+    }
+
     /**
      * @return array{0: string, 1: string}
      */
