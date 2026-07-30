@@ -392,6 +392,13 @@ class VideoController extends Controller
             resolver: function () use ($request, $page, $perPage): array {
                 $playlists = VideoPlaylist::query()
                     ->where('user_id', $request->user()->id)
+                    ->with([
+                        'videos' => function ($query): void {
+                            $query->orderBy('video_playlist_video.created_at')
+                                ->with(['user:id,name,username,avatar,banner'])
+                                ->withCount(['likes', 'comments']);
+                        },
+                    ])
                     ->withCount('videos')
                     ->latest('id')
                     ->paginate($perPage, ['*'], 'page', $page);

@@ -56,6 +56,7 @@ class RenderVideoEditsJob implements ShouldQueue
             ]);
 
             $rendered = $renderingService->startRender($video, $this->timeline);
+            $video = $video->fresh() ?? $video;
 
             $video->update([
                 'progress_percentage' => 75,

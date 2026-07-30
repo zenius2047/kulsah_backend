@@ -33,7 +33,7 @@ class CloudinaryVideoRendererService
         $renderPlan = $this->transformationBuilder->buildRenderTransformations(array_merge($timeline, [
             'video_id' => $video->id,
         ]));
-        $notificationUrl = url('/api/v1/cloudinary/webhook');
+        $notificationUrl = rtrim((string) config('services.cloudinary.webhook_url', url('/api/v1/cloudinary/webhook')), '/');
 
         Log::info('Cloudinary render requested.', [
             'video_id' => $video->id,
@@ -74,14 +74,24 @@ class CloudinaryVideoRendererService
         $renderPublicId = $this->buildRenderPublicId($video, $renderPlan['render_hash']);
         $timestamp = time();
 
+        $video->forceFill([
+            'render_status' => 'processing',
+            'metadata' => array_merge(is_array($video->metadata) ? $video->metadata : [], [
+                'cloudinary_render_public_id' => $renderPublicId,
+                'cloudinary_render_folder' => $renderFolder,
+                'cloudinary_render_hash' => $renderPlan['render_hash'],
+                'cloudinary_render_timeline' => $renderPlan['timeline'],
+            ]),
+        ])->save();
+
         $params = [
-            'api_key' => $apiKey,
             'timestamp' => $timestamp,
             'type' => 'upload',
             'resource_type' => 'video',
             'folder' => $renderFolder,
             'public_id' => $renderPublicId,
             'file' => $sourceUrl,
+            'context' => 'video_id='.(string) $video->id.'|render_hash='.$renderPlan['render_hash'],
             'eager' => $renderPlan['video_transformation'].'|'.$renderPlan['poster_transformation'],
             'eager_async' => 'true',
             'eager_notification_url' => $notificationUrl,
@@ -90,25 +100,11 @@ class CloudinaryVideoRendererService
             'use_filename' => 'false',
         ];
 
-        $signature = $this->cloudinaryService->signParameters(array_filter([
-            'folder' => $renderFolder,
-            'public_id' => $renderPublicId,
-            'timestamp' => $timestamp,
-            'type' => 'upload',
-            'resource_type' => 'video',
-            'eager' => $params['eager'],
-            'eager_async' => 'true',
-            'eager_notification_url' => $notificationUrl,
-            'overwrite' => 'true',
-            'unique_filename' => 'false',
-            'use_filename' => 'false',
-        ], static fn ($value) => $value !== null && $value !== ''));
-
         $response = $this->postMultipart(
             "https://api.cloudinary.com/v1_1/{$cloudName}/video/upload",
-            array_merge($params, [
-                'signature' => $signature,
-            ])
+            $params,
+            $apiKey,
+            $apiSecret
         );
 
         if (($response['status'] ?? 0) >= 400 || isset($response['decoded']['error'])) {
@@ -148,10 +144,10 @@ class CloudinaryVideoRendererService
         $sourceBase = pathinfo((string) $video->source_key, PATHINFO_FILENAME);
         $sourceBase = preg_replace('/[^A-Za-z0-9_\-\/]/', '-', $sourceBase) ?: 'video';
 
-        return trim("renders/{$video->user_id}/{$sourceBase}-{$renderHash}", '/');
+        return trim("{$video->user_id}/{$sourceBase}-{$renderHash}", '/');
     }
 
-    private function postMultipart(string $url, array $fields): array
+    private function postMultipart(string $url, array $fields, ?string $apiKey = null, ?string $apiSecret = null): array
     {
         $ch = curl_init($url);
 
@@ -166,6 +162,13 @@ class CloudinaryVideoRendererService
             CURLOPT_CONNECTTIMEOUT => min(15, (int) config('video.cloudinary_upload_timeout_seconds', 120)),
             CURLOPT_TIMEOUT => (int) config('video.cloudinary_upload_timeout_seconds', 120),
         ]);
+
+        if ($apiKey !== null && $apiKey !== '' && $apiSecret !== null && $apiSecret !== '') {
+            curl_setopt_array($ch, [
+                CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
+                CURLOPT_USERPWD => $apiKey.':'.$apiSecret,
+            ]);
+        }
 
         $body = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

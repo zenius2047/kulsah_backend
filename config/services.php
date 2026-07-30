@@ -51,6 +51,7 @@ return [
         'api_key' => env('CLOUDINARY_API_KEY'),
         'api_secret' => env('CLOUDINARY_API_SECRET'),
         'folder' => env('CLOUDINARY_FOLDER', 'kulsah/videos'),
+        'webhook_url' => env('CLOUDINARY_WEBHOOK_URL'),
     ],
 
     'fastapi' => [

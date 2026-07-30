@@ -27,14 +27,31 @@ class VideoPlaylist extends Model
 
     public function getBackgroundAttribute(): ?string
     {
-        $video = $this->relationLoaded('videos')
-            ? $this->videos->first()
-            : $this->videos()->orderByDesc('videos.id')->first();
+        $video = $this->resolveBackgroundVideo();
 
         if (! $video) {
             return null;
         }
 
         return $video->poster_url ?: $video->thumbnail_url ?: data_get($video->metadata, 'background');
+    }
+
+    private function resolveBackgroundVideo(): ?Video
+    {
+        if ($this->relationLoaded('videos')) {
+            return $this->videos
+                ->sortBy(function (Video $video): int {
+                    $pivotCreatedAt = data_get($video, 'pivot.created_at');
+
+                    return $pivotCreatedAt?->timestamp
+                        ?? (int) $video->id;
+                })
+                ->first();
+        }
+
+        return $this->videos()
+            ->orderBy('video_playlist_video.created_at')
+            ->orderBy('video_playlist_video.id')
+            ->first();
     }
 }

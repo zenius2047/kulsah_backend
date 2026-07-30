@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\CloudinaryWebhookEvent;
 use App\Models\Video;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 class CloudinaryWebhookService
@@ -21,6 +23,40 @@ class CloudinaryWebhookService
     {
         if (! $this->cloudinaryService->verifyNotificationSignature($body, $timestamp, $signature)) {
             throw new RuntimeException('Invalid Cloudinary webhook signature.');
+        }
+
+        if (config('app.debug')) {
+            $publicId = data_get($payload, 'public_id');
+            $normalizedPublicId = is_string($publicId) ? $this->normalizeCloudinaryPublicId($publicId) : null;
+
+            Log::info('Cloudinary webhook received.', [
+                'keys' => array_values(array_intersect([
+                    'notification_id',
+                    'event_id',
+                    'batch_id',
+                    'request_id',
+                    'asset_id',
+                    'public_id',
+                    'status',
+                    'notification_type',
+                    'event_type',
+                    'type',
+                    'video_id',
+                    'context',
+                    'asset',
+                    'eager',
+                    'error',
+                ], array_keys($payload))),
+                'video_id' => data_get($payload, 'video_id'),
+                'context_video_id' => $this->resolveContextValue(data_get($payload, 'context'), 'video_id'),
+                'asset_context_video_id' => $this->resolveContextValue(data_get($payload, 'asset.context'), 'video_id'),
+                'batch_id' => data_get($payload, 'batch_id'),
+                'request_id' => data_get($payload, 'request_id'),
+                'public_id' => data_get($payload, 'public_id'),
+                'normalized_public_id' => $normalizedPublicId,
+                'render_public_id' => is_string($normalizedPublicId) ? $this->extractRenderPublicIdFromWebhookPublicId($normalizedPublicId) : null,
+                'status' => data_get($payload, 'status'),
+            ]);
         }
 
         $eventId = $this->resolveEventId($payload, $body);
@@ -47,6 +83,19 @@ class CloudinaryWebhookService
         $video = $this->resolveVideo($payload);
 
         if (! $video) {
+            if (config('app.debug')) {
+                Log::warning('Cloudinary webhook could not resolve a video.', [
+                    'video_id' => data_get($payload, 'video_id'),
+                    'context_video_id' => $this->resolveContextValue(data_get($payload, 'context'), 'video_id'),
+                    'asset_context_video_id' => $this->resolveContextValue(data_get($payload, 'asset.context'), 'video_id'),
+                    'batch_id' => data_get($payload, 'batch_id'),
+                    'request_id' => data_get($payload, 'request_id'),
+                    'public_id' => data_get($payload, 'public_id'),
+                    'normalized_public_id' => is_string(data_get($payload, 'public_id')) ? $this->normalizeCloudinaryPublicId((string) data_get($payload, 'public_id')) : null,
+                    'status' => data_get($payload, 'status'),
+                ]);
+            }
+
             throw new RuntimeException('Unable to match Cloudinary webhook to a video record.');
         }
 
@@ -74,12 +123,12 @@ class CloudinaryWebhookService
     private function resolveEventId(array $payload, string $body): string
     {
         foreach ([
-            data_get($payload, 'notification_id'),
-            data_get($payload, 'event_id'),
             data_get($payload, 'batch_id'),
             data_get($payload, 'request_id'),
             data_get($payload, 'asset_id'),
             data_get($payload, 'public_id'),
+            data_get($payload, 'notification_id'),
+            data_get($payload, 'event_id'),
         ] as $candidate) {
             if (is_string($candidate) && $candidate !== '') {
                 return $candidate;
@@ -109,7 +158,8 @@ class CloudinaryWebhookService
     {
         foreach ([
             data_get($payload, 'video_id'),
-            data_get($payload, 'context.video_id'),
+            $this->resolveContextValue(data_get($payload, 'context'), 'video_id'),
+            $this->resolveContextValue(data_get($payload, 'asset.context'), 'video_id'),
         ] as $candidate) {
             if (is_numeric($candidate)) {
                 $video = Video::query()->find((int) $candidate);
@@ -139,16 +189,104 @@ class CloudinaryWebhookService
 
         $publicId = data_get($payload, 'public_id');
         if (is_string($publicId) && $publicId !== '') {
+            $normalizedPublicId = $this->normalizeCloudinaryPublicId($publicId);
+            $renderPublicId = $this->extractRenderPublicIdFromWebhookPublicId($normalizedPublicId);
+            $renderHash = $this->extractRenderHashFromPublicId($normalizedPublicId);
+
+            $metadataCandidates = array_values(array_unique(array_filter([
+                $publicId,
+                $normalizedPublicId,
+                $renderPublicId,
+            ], static fn ($value) => is_string($value) && $value !== '')));
+
             $video = Video::query()
-                ->where('cloudinary_public_id', $publicId)
-                ->orWhere('cloudinary_render_id', $publicId)
-                ->get()
-                ->first(function (Video $candidate) use ($publicId): bool {
-                    return data_get($candidate->metadata, 'cloudinary_render_public_id') === $publicId;
-                });
+                ->where(function ($query) use ($publicId, $metadataCandidates, $renderHash): void {
+                    $query->where('cloudinary_public_id', $publicId)
+                        ->orWhere('cloudinary_render_id', $publicId)
+                        ->orWhere(function ($metadataQuery) use ($metadataCandidates): void {
+                            foreach ($metadataCandidates as $candidate) {
+                                $metadataQuery->orWhere('metadata->cloudinary_render_public_id', $candidate);
+                            }
+                        });
+
+                    if (is_string($renderHash) && $renderHash !== '') {
+                        $query->orWhere('metadata->cloudinary_render_hash', $renderHash);
+                    }
+                })
+                ->first();
 
             if ($video) {
                 return $video;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeCloudinaryPublicId(string $publicId): string
+    {
+        $publicId = trim($publicId, '/');
+        $publicId = preg_replace('#^https?://[^/]+/video/upload/#', '', $publicId) ?: $publicId;
+        $publicId = preg_replace('#^v\d+/#', '', $publicId) ?: $publicId;
+
+        return trim($publicId, '/');
+    }
+
+    private function extractRenderHashFromPublicId(string $publicId): ?string
+    {
+        $publicId = trim($publicId, '/');
+
+        if ($publicId === '') {
+            return null;
+        }
+
+        $basename = basename($publicId);
+
+        if (preg_match('/([a-f0-9]{40})$/i', $basename, $matches) === 1) {
+            return strtolower($matches[1]);
+        }
+
+        return null;
+    }
+
+    private function extractRenderPublicIdFromWebhookPublicId(string $publicId): ?string
+    {
+        $publicId = trim($publicId, '/');
+
+        if ($publicId === '') {
+            return null;
+        }
+
+        $rendersPrefix = 'renders/';
+
+        if (Str::contains($publicId, '/renders/')) {
+            return Str::after($publicId, '/renders/');
+        }
+
+        if (Str::startsWith($publicId, $rendersPrefix)) {
+            return Str::after($publicId, $rendersPrefix);
+        }
+
+        return $publicId;
+    }
+
+    private function resolveContextValue(array|string|null $context, string $key): ?string
+    {
+        if (is_array($context)) {
+            $value = data_get($context, $key);
+
+            return is_scalar($value) ? (string) $value : null;
+        }
+
+        if (! is_string($context) || $context === '') {
+            return null;
+        }
+
+        foreach (explode('|', $context) as $pair) {
+            [$pairKey, $pairValue] = array_pad(explode('=', $pair, 2), 2, null);
+
+            if ($pairKey === $key && $pairValue !== null) {
+                return $pairValue;
             }
         }
 

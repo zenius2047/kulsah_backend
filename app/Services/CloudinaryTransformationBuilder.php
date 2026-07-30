@@ -119,57 +119,67 @@ class CloudinaryTransformationBuilder
             $text = $this->escapeLayerValue((string) ($layer['text'] ?? ''));
             $color = $this->normalizeColor((string) ($layer['color'] ?? '#FFFFFF'));
 
-            $parts = [
+            $overlayParts = [
                 'l_text:'.$font.'_'.$size.':'.$text,
                 'co_rgb:'.$color,
             ];
 
             if (($box = $layer['box'] ?? true) !== false) {
-                $parts[] = 'bo_'.($this->normalizeColor((string) ($layer['box_color'] ?? '000000'), true));
+                $overlayParts[] = 'bo_'.max(1, (int) ($layer['box_border_width'] ?? 20)).'px_solid_'.$this->normalizeBorderColor((string) ($layer['box_color'] ?? 'black@0.35'));
             }
 
-            $parts = array_merge($parts, $placement);
-            $parts[] = 'fl_layer_apply';
+            $applyParts = array_merge(
+                $this->buildTimingSegment($start, $end),
+                ['fl_layer_apply'],
+                $placement
+            );
 
-            if ($start !== '0') {
-                array_unshift($parts, 'so_'.$start);
-            }
+            $overlay = implode(',', array_values(array_filter($overlayParts, static fn ($value) => $value !== null && $value !== '')));
+            $apply = implode(',', array_values(array_filter($applyParts, static fn ($value) => $value !== null && $value !== '')));
 
-            if ($end !== null && $end !== '') {
-                $parts[] = 'eo_'.$this->formatNumber((float) $end);
-            }
-
-            return implode(',', array_values(array_filter($parts, static fn ($value) => $value !== null && $value !== '')));
+            return implode('/', array_values(array_filter([$overlay, $apply], static fn ($value) => $value !== null && $value !== '')));
         }
 
         $source = $this->buildLayerSource($layer);
-        $parts = [
-            $source,
-        ];
+        $overlayParts = [$source];
 
         if (($width = $layer['width'] ?? null) !== null) {
-            $parts[] = 'w_'.max(1, (int) $width);
+            $overlayParts[] = 'w_'.max(1, (int) $width);
         }
 
         if (($height = $layer['height'] ?? null) !== null) {
-            $parts[] = 'h_'.max(1, (int) $height);
+            $overlayParts[] = 'h_'.max(1, (int) $height);
         }
-
-        $parts = array_merge($parts, $placement);
 
         if ($type === 'audio') {
-            if ($start !== '0') {
-                $parts[] = 'so_'.$start;
-            }
-
-            if ($end !== null && $end !== '') {
-                $parts[] = 'eo_'.$this->formatNumber((float) $end);
-            }
+            $overlayParts = array_merge($overlayParts, $this->buildTimingSegment($start, $end));
         }
 
-        $parts[] = 'fl_layer_apply';
+        $applyParts = array_merge(
+            $type === 'audio' ? [] : $this->buildTimingSegment($start, $end),
+            ['fl_layer_apply'],
+            $placement
+        );
 
-        return implode(',', array_values(array_filter($parts, static fn ($value) => $value !== null && $value !== '')));
+        $overlay = implode(',', array_values(array_filter($overlayParts, static fn ($value) => $value !== null && $value !== '')));
+        $apply = implode(',', array_values(array_filter($applyParts, static fn ($value) => $value !== null && $value !== '')));
+
+        return implode('/', array_values(array_filter([$overlay, $apply], static fn ($value) => $value !== null && $value !== '')));
+    }
+
+    private function buildTimingSegment(string $start, mixed $end): array
+    {
+        $parts = [];
+
+        if ($start !== '0') {
+            $parts[] = 'so_'.$start;
+        }
+
+        if ($end !== null && $end !== '') {
+            $parts[] = 'eo_'.$this->formatNumber((float) $end);
+        }
+
+        return $parts;
     }
 
     private function buildLayerSource(array $layer): string
@@ -381,6 +391,29 @@ class CloudinaryTransformationBuilder
         $pattern = $allowAlpha ? '/^[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/' : '/^[0-9A-Fa-f]{6}$/';
 
         return preg_match($pattern, $color) === 1 ? strtoupper($color) : 'FFFFFF';
+    }
+
+    private function normalizeBorderColor(string $color): string
+    {
+        $color = trim($color);
+
+        if ($color === '') {
+            return 'black';
+        }
+
+        if (str_starts_with($color, '#')) {
+            return 'rgb:'.strtoupper(substr($color, 1));
+        }
+
+        if (preg_match('/^([A-Za-z]+)@([0-9.]+)$/', $color, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if (preg_match('/^[0-9A-Fa-f]{6}$/', $color) === 1) {
+            return 'rgb:'.strtoupper($color);
+        }
+
+        return preg_match('/^[A-Za-z]+$/', $color) === 1 ? $color : 'black';
     }
 
     private function encodeRemoteUrl(string $url): string
