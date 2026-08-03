@@ -419,9 +419,19 @@ class CloudinaryTransformationBuilder
     {
         $quality = strtolower(trim($quality));
 
-        return $quality === ''
-            ? 'auto'
-            : (preg_replace('/[^a-z0-9_:-]+/', '', $quality) ?: 'auto');
+        if ($quality === '') {
+            return 'auto';
+        }
+
+        $quality = preg_replace('/[^a-z0-9_:-]+/', '', $quality) ?: 'auto';
+
+        return match ($quality) {
+            'high' => 'best',
+            'medium' => 'good',
+            'low' => 'eco',
+            'best', 'good', 'eco', 'auto' => $quality,
+            default => 'auto',
+        };
     }
 
     private function normalizeCrop(string $crop): string

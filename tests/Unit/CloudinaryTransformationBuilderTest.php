@@ -86,4 +86,23 @@ class CloudinaryTransformationBuilderTest extends TestCase
             ],
         ]);
     }
+
+    public function test_it_maps_human_quality_labels_to_cloudinary_values(): void
+    {
+        $builder = new CloudinaryTransformationBuilder();
+
+        $result = $builder->buildRenderTransformations([
+            'layers' => [
+                [
+                    'type' => 'drawing',
+                    'asset_url' => 'https://example.com/drawing.png',
+                ],
+            ],
+            'output' => [
+                'quality' => 'high',
+            ],
+        ]);
+
+        $this->assertStringContainsString('q_best', $result['video_transformation']);
+    }
 }
