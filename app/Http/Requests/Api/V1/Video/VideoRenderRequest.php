@@ -158,7 +158,7 @@ class VideoRenderRequest extends FormRequest
             'layers.*.end' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'layers.*.public_id' => ['sometimes', 'nullable', 'string', 'max:255'],
             'layers.*.asset_public_id' => ['sometimes', 'nullable', 'string', 'max:255'],
-            'layers.*.asset_url' => ['sometimes', 'nullable', 'string', 'max:2048'],
+            'layers.*.asset_url' => ['sometimes', 'nullable', 'string', 'max:8192'],
             'layers.*.asset_disk' => ['sometimes', 'nullable', 'string', 'max:120'],
             'layers.*.asset_key' => ['sometimes', 'nullable', 'string', 'max:255'],
             'layers.*.width' => ['sometimes', 'nullable', 'numeric', 'min:1', 'max:4096'],

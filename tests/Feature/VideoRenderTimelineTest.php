@@ -97,6 +97,55 @@ class VideoRenderTimelineTest extends TestCase
         Queue::assertPushed(RenderVideoEditsJob::class);
     }
 
+    public function test_creator_can_queue_a_timeline_with_a_long_asset_url(): void
+    {
+        config()->set('logging.default', 'null');
+        Queue::fake();
+
+        $creator = User::factory()->create([
+            'username' => 'long_asset_url_creator',
+        ]);
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Long asset url video',
+            'caption' => 'Render timeline test',
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/source.mp4',
+            'source_key' => 'videos/originals/1/long-asset-url.mp4',
+            'status' => 'ready',
+            'metadata' => [],
+        ]);
+
+        $response = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
+                'layers' => [
+                    [
+                        'type' => 'drawing',
+                        'asset_url' => 'https://example.com/'.str_repeat('a', 8100).'.png',
+                        'x' => 200,
+                        'y' => 300,
+                        'width' => 400,
+                        'height' => 200,
+                        'start' => 2,
+                        'end' => 8,
+                    ],
+                ],
+                'output' => [
+                    'format' => 'mp4',
+                    'quality' => 'auto',
+                    'width' => 720,
+                    'height' => 1280,
+                ],
+            ]);
+
+        $response->assertAccepted();
+
+        Queue::assertPushed(RenderVideoEditsJob::class);
+    }
+
     public function test_creator_can_queue_a_rich_version_two_project_render(): void
     {
         config()->set('logging.default', 'null');
