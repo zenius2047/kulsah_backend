@@ -22,6 +22,7 @@ return [
     'direct_upload_ttl_minutes' => (int) env('VIDEO_DIRECT_UPLOAD_TTL_MINUTES', 60),
     'feed_cache_ttl_seconds' => (int) env('FEED_CACHE_TTL_SECONDS', 600),
     'processing_queue' => env('VIDEO_PROCESSING_QUEUE', 'videos'),
+    'edit_renderer' => env('VIDEO_EDIT_RENDERER', 'auto'),
     'cloudinary_upload_timeout_seconds' => (int) env('CLOUDINARY_UPLOAD_TIMEOUT_SECONDS', 120),
     'edit_render_timeout_seconds' => (int) env('VIDEO_EDIT_RENDER_TIMEOUT_SECONDS', 300),
     'ffmpeg_font_file' => env('VIDEO_FFMPEG_FONT_FILE'),

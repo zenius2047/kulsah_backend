@@ -822,31 +822,94 @@ class VideoController extends Controller
         );
 
         $validated = $request->validated();
+        $rawProject = $request->input('project');
+        $rawLayers = $request->input('layers');
+        $rawOverlays = $request->input('overlays');
+        $rawFilters = $request->input('filters', []);
+        $rawAudio = $request->input('audio', []);
+        $rawTrim = $request->input('trim', []);
+        $rawOutput = $request->input('output', []);
+        $rawCanvas = $request->input('canvas', []);
+        $rawTracks = $request->input('tracks', []);
+        $rawGlobalFilters = $request->input('global_filters', []);
+        $rawSchemaVersion = $request->input('schemaVersion');
+        $rawMetadata = $request->input('metadata');
+        $rawAssets = $request->input('assets');
+        $rawScenes = $request->input('scenes');
+        $rawGlobalAudioTracks = $request->input('globalAudioTracks');
+        $rawGlobalEffects = $request->input('globalEffects');
+        $rawGuides = $request->input('guides');
 
         try {
-            $hasTimelinePayload = array_key_exists('layers', $validated)
-                || array_key_exists('filters', $validated)
-                || array_key_exists('trim', $validated)
-                || array_key_exists('output', $validated)
-                || array_key_exists('audio', $validated);
+            $hasTimelinePayload = $rawProject !== null
+                || $rawLayers !== null
+                || $rawOverlays !== null
+                || $rawFilters !== []
+                || $rawTrim !== []
+                || $rawOutput !== []
+                || $rawAudio !== []
+                || $rawCanvas !== []
+                || $rawTracks !== []
+                || $rawGlobalFilters !== []
+                || $rawSchemaVersion !== null
+                || $rawMetadata !== null
+                || $rawAssets !== null
+                || $rawScenes !== null
+                || $rawGlobalAudioTracks !== null
+                || $rawGlobalEffects !== null
+                || $rawGuides !== null;
 
             if ($hasTimelinePayload) {
+                $projectPayload = is_array($rawProject) ? $rawProject : null;
+                $timelinePayload = [
+                    'video_id' => (int) $video->id,
+                    'layers' => is_array($rawLayers) ? $rawLayers : (is_array($rawOverlays) ? $rawOverlays : []),
+                    'filters' => is_array($rawFilters) ? $rawFilters : [],
+                    'audio' => is_array($rawAudio) ? $rawAudio : [],
+                    'trim' => is_array($rawTrim) ? $rawTrim : [],
+                    'output' => is_array($rawOutput) ? $rawOutput : [],
+                    'canvas' => is_array($rawCanvas) ? $rawCanvas : [],
+                    'tracks' => is_array($rawTracks) ? $rawTracks : [],
+                    'global_filters' => is_array($rawGlobalFilters) ? $rawGlobalFilters : [],
+                ];
+
+                if (is_string($rawSchemaVersion) && $rawSchemaVersion !== '') {
+                    $timelinePayload['schemaVersion'] = $rawSchemaVersion;
+                }
+
+                if (is_array($rawMetadata) && $rawMetadata !== []) {
+                    $timelinePayload['metadata'] = $rawMetadata;
+                }
+
+                if (is_array($rawAssets) && $rawAssets !== []) {
+                    $timelinePayload['assets'] = $rawAssets;
+                }
+
+                if (is_array($rawScenes) && $rawScenes !== []) {
+                    $timelinePayload['scenes'] = $rawScenes;
+                }
+
+                if (is_array($rawGlobalAudioTracks) && $rawGlobalAudioTracks !== []) {
+                    $timelinePayload['globalAudioTracks'] = $rawGlobalAudioTracks;
+                }
+
+                if (is_array($rawGlobalEffects) && $rawGlobalEffects !== []) {
+                    $timelinePayload['globalEffects'] = $rawGlobalEffects;
+                }
+
+                if (is_array($rawGuides) && $rawGuides !== []) {
+                    $timelinePayload['guides'] = $rawGuides;
+                }
+
                 $video = $this->videoEditService->queueTimelineRender(
                     video: $video,
-                    timeline: [
-                        'video_id' => (int) $video->id,
-                        'layers' => $validated['layers'] ?? $validated['overlays'] ?? [],
-                        'filters' => $validated['filters'] ?? [],
-                        'audio' => $validated['audio'] ?? [],
-                        'trim' => $validated['trim'] ?? [],
-                        'output' => $validated['output'] ?? [],
-                    ],
+                    timeline: is_array($projectPayload) ? $projectPayload : $timelinePayload,
                     userId: (int) $request->user()->id,
                 );
             } else {
                 $video = $this->videoEditService->queueRender(
                     video: $video,
-                    overlays: $validated['overlays'] ?? [],
+                    overlays: is_array($rawOverlays) ? $rawOverlays : [],
                     drawingFiles: $request->file('drawing_files', []),
                     userId: (int) $request->user()->id,
                 );

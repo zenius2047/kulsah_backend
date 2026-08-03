@@ -5,6 +5,7 @@ namespace App\Services;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 
 class CloudinaryService
@@ -187,6 +188,7 @@ class CloudinaryService
 
         return [
             'cdn_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
+            'rendered_url' => $response['decoded']['secure_url'] ?? null,
             'stream_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
             'streaming_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
             'cloudinary_public_id' => $response['decoded']['public_id'],
@@ -198,6 +200,85 @@ class CloudinaryService
             'metadata' => array_merge($response['decoded'], [
                 'upload_diagnostics' => $uploadDiagnostics,
                 'source_diagnostics' => $sourceDiagnostics,
+            ]),
+        ];
+    }
+
+    public function uploadVideoFromLocalPath(string $localPath, string $originalName = 'edited.mp4'): array
+    {
+        if (! is_file($localPath)) {
+            throw new RuntimeException('Unable to upload a missing rendered video file to Cloudinary.');
+        }
+
+        $cloudName = $this->getCloudName();
+        $apiKey = $this->getApiKey();
+        $apiSecret = $this->getApiSecret();
+        $folder = trim((string) config('services.cloudinary.folder', 'kulsah/videos'), '/').'/renders';
+
+        if (! $cloudName || ! $apiKey || ! $apiSecret) {
+            throw new RuntimeException('Cloudinary credentials are not configured.');
+        }
+
+        $publicId = $this->buildRenderedPublicId($originalName);
+        $timestamp = time();
+        $params = [
+            'folder' => $folder,
+            'public_id' => $publicId,
+            'overwrite' => 'true',
+            'unique_filename' => 'false',
+            'use_filename' => 'false',
+            'timestamp' => $timestamp,
+        ];
+
+        $signature = $this->signParameters($params);
+        $mimeType = $this->guessMimeType($localPath);
+
+        $response = $this->postMultipart(
+            "https://api.cloudinary.com/v1_1/{$cloudName}/video/upload",
+            [
+                'file' => new \CURLFile($localPath, $mimeType, basename($originalName)),
+                'api_key' => $apiKey,
+                'timestamp' => $timestamp,
+                'folder' => $folder,
+                'public_id' => $publicId,
+                'overwrite' => 'true',
+                'unique_filename' => 'false',
+                'use_filename' => 'false',
+                'signature' => $signature,
+                'resource_type' => 'video',
+            ],
+            $apiKey,
+            $apiSecret
+        );
+
+        if (($response['status'] ?? 0) >= 400 || isset($response['decoded']['error'])) {
+            $message = is_array($response['decoded']['error'] ?? null)
+                ? (string) ($response['decoded']['error']['message'] ?? 'Cloudinary upload failed.')
+                : (string) ($response['decoded']['error'] ?? 'Cloudinary upload failed.');
+
+            throw new RuntimeException($message.' Cloudinary response: '.($response['body'] ?? ''));
+        }
+
+        if (! isset($response['decoded']['secure_url'], $response['decoded']['public_id'])) {
+            throw new RuntimeException('Cloudinary did not return a valid rendered video response. Response body: '.($response['body'] ?? ''));
+        }
+
+        return [
+            'render_status' => 'ready',
+            'status' => 'ready',
+            'cdn_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
+            'rendered_url' => $response['decoded']['secure_url'],
+            'stream_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
+            'streaming_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
+            'cloudinary_public_id' => $response['decoded']['public_id'],
+            'cloudinary_asset_id' => $response['decoded']['asset_id'] ?? null,
+            'thumbnail_url' => $this->generatePosterUrlFromPublicId($response['decoded']['public_id']),
+            'poster_url' => $this->generatePosterUrlFromPublicId($response['decoded']['public_id']),
+            'duration' => isset($response['decoded']['duration']) ? (int) round((float) $response['decoded']['duration']) : null,
+            'streaming_profile' => config('video.cloudinary_stream_max_resolution', '2160p'),
+            'metadata' => array_merge($response['decoded'], [
+                'upload_source' => 'ffmpeg',
+                'upload_path' => $localPath,
             ]),
         ];
     }
@@ -227,6 +308,11 @@ class CloudinaryService
         return $this->generatePosterUrlFromPublicId($publicId);
     }
 
+    public function generateImageUrlFromPublicId(string $publicId): string
+    {
+        return "https://res.cloudinary.com/{$this->getCloudName()}/image/upload/{$publicId}";
+    }
+
     public function generatePosterUrlFromPublicId(string $publicId): string
     {
         $cloudName = $this->getCloudName();
@@ -240,6 +326,14 @@ class CloudinaryService
         $base = preg_replace('/[^A-Za-z0-9_\-\/]/', '-', (string) $base) ?: 'video';
 
         return trim($base, '/');
+    }
+
+    private function buildRenderedPublicId(string $originalName): string
+    {
+        $base = pathinfo($originalName, PATHINFO_FILENAME);
+        $base = preg_replace('/[^A-Za-z0-9_\-\/]/', '-', (string) $base) ?: 'edited-video';
+
+        return trim('renders/'.Str::uuid()->toString().'-'.$base, '/');
     }
 
     private function buildSignatureParams(string $folder, string $publicId, int $timestamp, bool $transcodeFailed): array

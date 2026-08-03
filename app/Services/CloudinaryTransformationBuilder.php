@@ -114,24 +114,39 @@ class CloudinaryTransformationBuilder
         $placement = $this->buildPlacementSegment($layer);
 
         if ($type === 'text') {
-            $font = $this->normalizeFont((string) ($layer['font'] ?? 'Arial'));
+            $font = $this->resolveTextFont($layer);
             $size = max(8, (int) ($layer['size'] ?? $layer['font_size'] ?? 42));
             $text = $this->escapeLayerValue((string) ($layer['text'] ?? ''));
             $color = $this->normalizeColor((string) ($layer['color'] ?? '#FFFFFF'));
+            $opacity = $this->normalizeOpacity($layer['opacity'] ?? null);
+            $rotation = isset($layer['rotation']) ? (float) $layer['rotation'] : 0.0;
+            $marginX = isset($layer['margin_x']) ? (int) $layer['margin_x'] : 0;
+            $marginY = isset($layer['margin_y']) ? (int) $layer['margin_y'] : 0;
+            $boxBorderWidth = (int) max(
+                1,
+                (int) ($layer['box_border_width'] ?? 0),
+                (int) ($layer['padding_x'] ?? 0),
+                (int) ($layer['padding_y'] ?? 0)
+            );
 
             $overlayParts = [
                 'l_text:'.$font.'_'.$size.':'.$text,
                 'co_rgb:'.$color,
             ];
 
+            if ($opacity !== null) {
+                $overlayParts[] = 'o_'.$opacity;
+            }
+
             if (($box = $layer['box'] ?? true) !== false) {
-                $overlayParts[] = 'bo_'.max(1, (int) ($layer['box_border_width'] ?? 20)).'px_solid_'.$this->normalizeBorderColor((string) ($layer['box_color'] ?? 'black@0.35'));
+                $overlayParts[] = 'bo_'.$boxBorderWidth.'px_solid_'.$this->normalizeBorderColor((string) ($layer['box_color'] ?? 'black@0.35'));
             }
 
             $applyParts = array_merge(
                 $this->buildTimingSegment($start, $end),
                 ['fl_layer_apply'],
-                $placement
+                $placement,
+                $rotation !== 0.0 ? ['a_'.$this->formatNumber($rotation)] : []
             );
 
             $overlay = implode(',', array_values(array_filter($overlayParts, static fn ($value) => $value !== null && $value !== '')));
@@ -153,6 +168,14 @@ class CloudinaryTransformationBuilder
 
         if ($type === 'audio') {
             $overlayParts = array_merge($overlayParts, $this->buildTimingSegment($start, $end));
+        }
+
+        if (isset($layer['opacity']) && $layer['opacity'] !== '') {
+            $overlayParts[] = 'o_'.$this->normalizeOpacity($layer['opacity']);
+        }
+
+        if (isset($layer['rotation']) && (float) $layer['rotation'] !== 0.0) {
+            $overlayParts[] = 'a_'.$this->formatNumber((float) $layer['rotation']);
         }
 
         $applyParts = array_merge(
@@ -224,11 +247,21 @@ class CloudinaryTransformationBuilder
         }
 
         if (array_key_exists('x', $layer)) {
-            $parts[] = 'x_'.(int) round((float) $layer['x']);
+            $x = (float) $layer['x'];
+            if (array_key_exists('margin_x', $layer)) {
+                $x += (float) $layer['margin_x'];
+            }
+
+            $parts[] = 'x_'.(int) round($x);
         }
 
         if (array_key_exists('y', $layer)) {
-            $parts[] = 'y_'.(int) round((float) $layer['y']);
+            $y = (float) $layer['y'];
+            if (array_key_exists('margin_y', $layer)) {
+                $y += (float) $layer['margin_y'];
+            }
+
+            $parts[] = 'y_'.(int) round($y);
         }
 
         return $parts;
@@ -336,6 +369,43 @@ class CloudinaryTransformationBuilder
         $font = $font === '' ? 'Arial' : $font;
 
         return str_replace(['/', ' '], ['_', '_'], $font);
+    }
+
+    /**
+     * @param  array<string, mixed>  $layer
+     */
+    private function resolveTextFont(array $layer): string
+    {
+        $font = (string) ($layer['font_key'] ?? $layer['font_family'] ?? $layer['font'] ?? 'Arial');
+        $font = trim($font);
+
+        $weight = isset($layer['font_weight']) ? (int) $layer['font_weight'] : null;
+        $style = strtolower(trim((string) ($layer['font_style'] ?? '')));
+
+        if ($font === '') {
+            $font = 'Arial';
+        }
+
+        if ($weight !== null && $weight >= 700 && ! Str::contains(strtolower($font), ['bold', 'black', 'heavy'])) {
+            $font .= '_Bold';
+        }
+
+        if ($style === 'italic' && ! Str::contains(strtolower($font), 'italic')) {
+            $font .= '_Italic';
+        }
+
+        return $this->normalizeFont($font);
+    }
+
+    private function normalizeOpacity(mixed $opacity): ?int
+    {
+        if ($opacity === null || $opacity === '') {
+            return null;
+        }
+
+        $value = max(0.0, min(1.0, (float) $opacity));
+
+        return (int) round($value * 100);
     }
 
     private function normalizeFormat(string $format): string

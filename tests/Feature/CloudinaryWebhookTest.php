@@ -67,6 +67,7 @@ class CloudinaryWebhookTest extends TestCase
 
         $this->assertSame('ready', $video->status);
         $this->assertSame('ready', $video->render_status);
+        $this->assertSame(100, $video->progress_percentage);
         $this->assertSame('https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/renders/1/webhook-render.m3u8', $video->streaming_url);
         $this->assertSame('https://res.cloudinary.com/demo/video/upload/sp_auto:maxres_2160p/renders/1/webhook-render.m3u8', $video->rendered_url);
         $this->assertNotNull($video->render_completed_at);
@@ -183,6 +184,7 @@ class CloudinaryWebhookTest extends TestCase
 
         $this->assertSame('ready', $video->status);
         $this->assertSame('ready', $video->render_status);
+        $this->assertSame(100, $video->progress_percentage);
         $this->assertSame('asset-render-public-id', $video->cloudinary_asset_id);
     }
 
@@ -231,6 +233,7 @@ class CloudinaryWebhookTest extends TestCase
 
         $this->assertSame('ready', $video->status);
         $this->assertSame('ready', $video->render_status);
+        $this->assertSame(100, $video->progress_percentage);
         $this->assertSame('asset-context', $video->cloudinary_asset_id);
     }
 }

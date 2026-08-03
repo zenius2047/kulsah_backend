@@ -313,6 +313,7 @@ class CloudinaryWebhookService
         return array_filter([
             'status' => 'ready',
             'render_status' => 'ready',
+            'progress_percentage' => 100,
             'rendered_url' => $renderedUrl,
             'streaming_url' => $streamingUrl,
             'cdn_url' => $renderedUrl ?: $streamingUrl ?: $video->cdn_url,
@@ -324,6 +325,7 @@ class CloudinaryWebhookService
                 'cloudinary_webhook_event' => $payload,
                 'cloudinary_webhook_event_type' => $this->resolveEventType($payload),
                 'render_status' => 'ready',
+                'progress_percentage' => 100,
                 'render_completed_at' => now()->toISOString(),
                 'cloudinary_render_public_id' => $publicId,
             ]),
