@@ -6,7 +6,10 @@ use App\Jobs\RenderVideoEditsJob;
 use App\Models\User;
 use App\Models\Video;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class VideoRenderTimelineTest extends TestCase
@@ -97,6 +100,82 @@ class VideoRenderTimelineTest extends TestCase
         Queue::assertPushed(RenderVideoEditsJob::class);
     }
 
+    public function test_creator_can_queue_a_timeline_with_an_uploaded_image_asset(): void
+    {
+        config()->set('logging.default', 'null');
+        $diskRoot = sys_get_temp_dir().DIRECTORY_SEPARATOR.'kulsah-video-edit-assets-tests';
+        File::ensureDirectoryExists($diskRoot);
+
+        config()->set('filesystems.disks.testlocal', [
+            'driver' => 'local',
+            'root' => $diskRoot,
+            'url' => 'http://localhost/storage',
+            'visibility' => 'private',
+            'throw' => false,
+        ]);
+        config()->set('video.storage_disk', 'testlocal');
+        Queue::fake();
+
+        $creator = User::factory()->create([
+            'username' => 'image_asset_creator',
+        ]);
+
+        Storage::disk('testlocal')->put('videos/originals/1/source.mp4', 'fake-video-bytes');
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'title' => 'Image asset video',
+            'caption' => 'Render timeline test',
+            'visibility' => 'public',
+            'source_url' => 'http://localhost/storage/videos/originals/1/source.mp4',
+            'source_key' => 'videos/originals/1/source.mp4',
+            'status' => 'ready',
+            'metadata' => [
+                'storage_disk' => 'testlocal',
+            ],
+        ]);
+
+        $response = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->post("/api/v1/creator/videos/{$video->id}/edits", [
+                'layers' => json_encode([
+                    [
+                        'type' => 'image',
+                        'asset_file_index' => 0,
+                        'x' => 200,
+                        'y' => 300,
+                        'width' => 400,
+                        'height' => 200,
+                        'start' => 2,
+                        'end' => 8,
+                    ],
+                ]),
+                'asset_files' => [
+                    UploadedFile::fake()->image('asset.png', 512, 512),
+                ],
+            ]);
+
+        $response->assertAccepted()
+            ->assertJsonPath('message', 'Video edit queued successfully.')
+            ->assertJsonPath('data.metadata.edit_status', 'queued')
+            ->assertJsonPath('data.metadata.render_timeline.layers.0.type', 'image')
+            ->assertJsonPath('data.metadata.render_timeline.layers.0.asset_disk', 'testlocal');
+
+        $video->refresh();
+
+        $this->assertSame('processing', $video->status);
+        $this->assertNotEmpty($video->metadata['edit_overlays'][0]['asset_key']);
+        $this->assertSame('testlocal', $video->metadata['edit_overlays'][0]['asset_disk']);
+        $this->assertStringStartsWith(
+            'http://localhost/storage/videos/edit-assets/1/',
+            $video->metadata['edit_overlays'][0]['asset_url']
+        );
+        $this->assertTrue(Storage::disk('testlocal')->exists($video->metadata['edit_overlays'][0]['asset_key']));
+
+        Queue::assertPushed(RenderVideoEditsJob::class);
+    }
+
     public function test_creator_can_queue_a_timeline_with_a_long_asset_url(): void
     {
         config()->set('logging.default', 'null');
@@ -142,195 +221,6 @@ class VideoRenderTimelineTest extends TestCase
             ]);
 
         $response->assertAccepted();
-
-        Queue::assertPushed(RenderVideoEditsJob::class);
-    }
-
-    public function test_creator_can_queue_a_rich_version_two_project_render(): void
-    {
-        config()->set('logging.default', 'null');
-        Queue::fake();
-
-        $creator = User::factory()->create([
-            'username' => 'rich_project_creator',
-        ]);
-
-        $video = Video::create([
-            'user_id' => $creator->id,
-            'title' => 'Rich project video',
-            'caption' => 'Render project test',
-            'visibility' => 'public',
-            'source_url' => 'https://example.com/source.mp4',
-            'source_key' => 'videos/originals/1/rich-project.mp4',
-            'status' => 'ready',
-            'metadata' => [],
-        ]);
-
-        $response = $this
-            ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
-            ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
-                'project' => [
-                    'version' => 2,
-                    'project_id' => 'project-123',
-                    'duration' => 12,
-                    'canvas' => [
-                        'width' => 1080,
-                        'height' => 1920,
-                        'fps' => 30,
-                        'background_color' => '#000000',
-                    ],
-                    'tracks' => [
-                        [
-                            'id' => 'text-1',
-                            'type' => 'text',
-                            'start' => 1,
-                            'end' => 6,
-                            'z_index' => 20,
-                            'preset' => 'subtitle',
-                            'content' => [
-                                'text' => 'Hello Kulsah',
-                                'font_family' => 'Poppins',
-                                'font_key' => 'Poppins',
-                                'font_size' => 64,
-                                'alignment' => 'center',
-                                'color' => '#FFFFFF',
-                                'preset' => 'subtitle',
-                            ],
-                            'background' => [
-                                'enabled' => true,
-                                'color' => '#000000',
-                            ],
-                            'stroke' => [
-                                'width' => 3,
-                                'color' => '#000000',
-                            ],
-                            'shadow' => [
-                                'x' => 4,
-                                'y' => 4,
-                                'color' => 'black@0.6',
-                            ],
-                            'transition' => [
-                                'enter' => 'fade_in',
-                                'exit' => 'fade_out',
-                                'duration' => 0.35,
-                            ],
-                            'animation' => [
-                                'preset' => 'slide_up',
-                                'duration' => 0.35,
-                            ],
-                            'keyframes' => [
-                                [
-                                    'time' => 1,
-                                    'x' => 540,
-                                    'y' => 440,
-                                    'opacity' => 0,
-                                ],
-                                [
-                                    'time' => 2,
-                                    'x' => 540,
-                                    'y' => 400,
-                                    'opacity' => 1,
-                                ],
-                            ],
-                            'transform' => [
-                                'x' => 540,
-                                'y' => 400,
-                            ],
-                        ],
-                    ],
-                    'output' => [
-                        'format' => 'mp4',
-                        'quality' => 'auto',
-                        'width' => 1080,
-                        'height' => 1920,
-                    ],
-                ],
-            ]);
-
-        $response->assertAccepted()
-            ->assertJsonPath('message', 'Video edit queued successfully.')
-            ->assertJsonPath('data.metadata.edit_renderer', 'ffmpeg')
-            ->assertJsonPath('data.metadata.schema_version', 2)
-            ->assertJsonPath('data.metadata.edit_project.version', 2)
-            ->assertJsonPath('data.metadata.edit_project.tracks.0.type', 'text')
-            ->assertJsonPath('data.metadata.edit_project.tracks.0.content.font_key', 'Poppins')
-            ->assertJsonPath('data.metadata.render_timeline.layers.0.text', 'Hello Kulsah')
-            ->assertJsonPath('data.metadata.render_timeline.layers.0.font', 'Poppins');
-
-        Queue::assertPushed(RenderVideoEditsJob::class);
-    }
-
-    public function test_creator_can_queue_a_rich_project_render_without_track_end_times(): void
-    {
-        config()->set('logging.default', 'null');
-        Queue::fake();
-
-        $creator = User::factory()->create([
-            'username' => 'open_ended_creator',
-        ]);
-
-        $video = Video::create([
-            'user_id' => $creator->id,
-            'title' => 'Open ended project video',
-            'caption' => 'Render project test',
-            'visibility' => 'public',
-            'source_url' => 'https://example.com/source.mp4',
-            'source_key' => 'videos/originals/1/open-ended.mp4',
-            'duration' => 65,
-            'status' => 'ready',
-            'metadata' => [],
-        ]);
-
-        $response = $this
-            ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
-            ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
-                'project' => [
-                    'version' => 2,
-                    'project_id' => 'open-ended-project',
-                    'canvas' => [
-                        'width' => 1080,
-                        'height' => 1920,
-                        'fps' => 30,
-                        'background_color' => '#000000',
-                    ],
-                    'tracks' => [
-                        [
-                            'id' => 'text-1',
-                            'type' => 'text',
-                            'start' => 0,
-                            'z_index' => 20,
-                            'content' => [
-                                'text' => 'Stays on screen until the video ends',
-                                'font_family' => 'Poppins',
-                                'font_key' => 'Poppins',
-                                'font_size' => 64,
-                                'alignment' => 'center',
-                                'color' => '#FFFFFF',
-                            ],
-                            'background' => [
-                                'enabled' => true,
-                                'color' => '#000000',
-                            ],
-                        ],
-                    ],
-                    'output' => [
-                        'format' => 'mp4',
-                        'quality' => 'auto',
-                        'width' => 1080,
-                        'height' => 1920,
-                    ],
-                ],
-            ]);
-
-        $response->assertAccepted()
-            ->assertJsonPath('message', 'Video edit queued successfully.')
-            ->assertJsonPath('data.status', 'processing')
-            ->assertJsonPath('data.render_status', 'queued')
-            ->assertJsonPath('data.metadata.edit_project.duration', 65)
-            ->assertJsonPath('data.metadata.edit_project.tracks.0.end', 65)
-            ->assertJsonPath('data.metadata.render_timeline.layers.0.end', 65);
 
         Queue::assertPushed(RenderVideoEditsJob::class);
     }
@@ -614,111 +504,4 @@ class VideoRenderTimelineTest extends TestCase
         Queue::assertPushed(RenderVideoEditsJob::class);
     }
 
-    public function test_creator_can_queue_rich_text_with_stroke_shadow_and_transition_metadata(): void
-    {
-        config()->set('logging.default', 'null');
-        Queue::fake();
-
-        $creator = User::factory()->create([
-            'username' => 'rich_project_unsupported_creator',
-        ]);
-
-        $video = Video::create([
-            'user_id' => $creator->id,
-            'title' => 'Unsupported rich project video',
-            'caption' => 'Render project test',
-            'visibility' => 'public',
-            'source_url' => 'https://example.com/source.mp4',
-            'source_key' => 'videos/originals/1/rich-project-unsupported.mp4',
-            'status' => 'ready',
-            'metadata' => [],
-        ]);
-
-        $response = $this
-            ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
-            ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
-                'project' => [
-                    'version' => 2,
-                    'project_id' => 'project-unsupported',
-                    'duration' => 12,
-                    'canvas' => [
-                        'width' => 1080,
-                        'height' => 1920,
-                        'fps' => 30,
-                        'background_color' => '#000000',
-                    ],
-                    'tracks' => [
-                        [
-                            'id' => 'text-1',
-                            'type' => 'text',
-                            'start' => 1,
-                            'end' => 6,
-                            'preset' => 'tiktok_caption',
-                            'content' => [
-                                'text' => 'Hello Kulsah',
-                                'font_family' => 'Poppins',
-                                'font_key' => 'Poppins',
-                                'font_size' => 64,
-                                'alignment' => 'center',
-                                'color' => '#FFFFFF',
-                                'preset' => 'tiktok_caption',
-                            ],
-                            'background' => [
-                                'enabled' => true,
-                                'color' => '#000000',
-                            ],
-                            'stroke' => [
-                                'width' => 4,
-                                'color' => '#000000',
-                            ],
-                            'shadow' => [
-                                'x' => 6,
-                                'y' => 6,
-                                'color' => 'black@0.55',
-                            ],
-                            'transition' => [
-                                'enter' => 'slide_up',
-                                'exit' => 'fade_out',
-                                'duration' => 0.35,
-                            ],
-                            'animation' => [
-                                'preset' => 'fade_in',
-                                'duration' => 0.35,
-                            ],
-                            'keyframes' => [
-                                [
-                                    'time' => 1,
-                                    'y' => 440,
-                                    'opacity' => 0,
-                                ],
-                                [
-                                    'time' => 2,
-                                    'y' => 400,
-                                    'opacity' => 1,
-                                ],
-                            ],
-                            'transform' => [
-                                'x' => 540,
-                                'y' => 400,
-                            ],
-                        ],
-                    ],
-                    'output' => [
-                        'format' => 'mp4',
-                        'quality' => 'auto',
-                        'width' => 1080,
-                        'height' => 1920,
-                    ],
-                ],
-            ]);
-
-        $response->assertAccepted()
-            ->assertJsonPath('message', 'Video edit queued successfully.')
-            ->assertJsonPath('data.metadata.edit_renderer', 'ffmpeg')
-            ->assertJsonPath('data.metadata.render_timeline.layers.0.metadata.transition.enter', 'slide_up')
-            ->assertJsonPath('data.metadata.render_timeline.layers.0.metadata.animation.preset', 'fade_in');
-
-        Queue::assertPushed(RenderVideoEditsJob::class);
-    }
 }

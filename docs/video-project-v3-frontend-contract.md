@@ -22,7 +22,7 @@ Send the v3 project as a JSON object with these top-level keys:
 - `globalEffects`
 - `guides`
 
-The backend also still accepts the older `project`, `layers`, `overlays`, `filters`, `trim`, `audio`, `output`, `canvas`, `tracks`, and `global_filters` shapes for backward compatibility.
+For edit requests that include new images, send the payload as `multipart/form-data` and attach the files in `asset_files[]`. Reference each uploaded file from the v3 `assets[]` array or scene track `source` using `asset_file_index` or `file_index`. The backend stores the file and replaces the reference with `asset_url`, `asset_disk`, and `asset_key`.
 
 Preferred v3 submission shape:
 
@@ -54,16 +54,11 @@ Preferred v3 submission shape:
 | `globalEffects` | array | no | Preserved in project metadata. |
 | `guides` | object | no | Preserved in project metadata. |
 
-The backend also accepts these optional legacy-compatible top-level fields:
+The backend also accepts these additional top-level render helpers:
 
 - `filters`
 - `trim`
 - `audio`
-- `global_filters`
-- `layers`
-- `overlays`
-- `tracks`
-- `project`
 
 ## `metadata`
 
@@ -139,7 +134,7 @@ The backend preserves `metadata` in the stored project and uses `metadata.durati
 | `fastStart` | boolean | no | Stored as `fast_start` in normalized output. |
 | `poster` | object | no | Poster size config. |
 
-Legacy aliases also accepted in backend normalization:
+Optional snake_case aliases accepted by backend normalization:
 
 - `video_bitrate`
 - `audio_bitrate`
@@ -171,6 +166,29 @@ Each asset entry is an object with these fields:
 | `checksum` | string | no | Optional checksum. |
 
 The normalizer also accepts snake_case aliases like `storage_provider`, `storage_key`, `mime_type`, `file_name`, `file_size`, and `has_audio`.
+
+### Uploading Asset Files
+
+When the frontend wants the backend to store an image asset, include an entry in `assets[]` and point it at the uploaded file:
+
+| Field | Type | Required | Notes |
+|---|---|---:|---|
+| `file_index` | integer | no | Index into `asset_files[]`. |
+| `asset_file_index` | integer | no | Alias for `file_index`. |
+
+Example multipart request shape:
+
+```text
+schemaVersion=3.0.0
+metadata={...}
+canvas={...}
+output={...}
+assets=[{"id":"asset-image-1","type":"image","file_index":0,"mimeType":"image/png"}]
+scenes=[...]
+asset_files[0]=<binary image file>
+```
+
+If a track references an asset by `source.assetId`, keep that `assetId` aligned with the matching entry in `assets[]`.
 
 ## `scenes`
 
@@ -345,6 +363,8 @@ The backend resolves the source through the asset registry first. It also accept
 - `asset_disk`
 - `asset_key`
 
+If the asset was uploaded in the same request, prefer using `assets[]` with `file_index` instead of embedding a base64 data URL.
+
 ### `audio`
 
 Accepted and preserved:
@@ -410,6 +430,7 @@ Recommended keyframe shape:
 - `schemaVersion` is stored as the literal string you send.
 - `project.version` is normalized to `3`.
 - Raw input is preserved in `project.raw_payload` and `timeline.raw_payload`.
+- Edit requests only support the v3 payload shape.
 
 ## What Is Rendered Today
 
@@ -418,6 +439,13 @@ Supported in the current FFmpeg render path:
 - text/caption layers
 - image/video/sticker/drawing overlays when a source can be resolved
 - basic position, size, opacity, stroke, shadow, and timing behavior
+
+For edit requests, prefer uploading images as files instead of embedding base64 strings:
+
+- send image files in `asset_files[]`
+- reference them from the matching v3 asset entry with `asset_file_index` or `file_index`
+- reference them from v3 assets with `file_index` or `asset_file_index`
+- the backend stores the file on the configured storage disk and replaces it with `asset_url`, `asset_disk`, and `asset_key`
 
 Accepted and preserved, but not fully rendered yet:
 
@@ -678,4 +706,3 @@ Accepted and preserved, but not fully rendered yet:
 - Keep `textStyle.fill.color` and `textBox.background.color` in hex strings.
 - Keep opacity values in the `0` to `1` range.
 - Use `timeline.duration` and `track.timeline.duration` to avoid accidental open-ended renders.
-

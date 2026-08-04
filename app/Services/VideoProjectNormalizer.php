@@ -8,8 +8,7 @@ use Illuminate\Validation\ValidationException;
 class VideoProjectNormalizer
 {
     /**
-     * Normalize either a legacy overlay payload or a richer versioned project
-     * into a project object plus a render-friendly timeline.
+     * Normalize the v3 editor payload into a project object plus a render-friendly timeline.
      *
      * @param  array<string, mixed>  $payload
      * @return array{
@@ -20,140 +19,13 @@ class VideoProjectNormalizer
      */
     public function normalize(array $payload, int $userId): array
     {
-        $project = $this->extractProjectPayload($payload);
-
-        if ($this->isV3ProjectPayload($project)) {
-            return $this->normalizeV3Project($project, $userId);
-        }
-
-        if ($this->isRichProjectPayload($project)) {
-            return $this->normalizeRichProject($project, $userId);
-        }
-
-        return $this->normalizeLegacyPayload($payload, $userId);
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
-     * @return array<string, mixed>
-     */
-    private function extractProjectPayload(array $payload): array
-    {
-        $project = $payload['project'] ?? null;
-
-        if (is_array($project)) {
-            return $project;
-        }
-
-        return $payload;
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
-     */
-    private function isRichProjectPayload(array $payload): bool
-    {
-        if ((int) ($payload['version'] ?? 0) >= 2 || (int) ($payload['schema_version'] ?? 0) >= 2) {
-            return true;
-        }
-
-        if (array_key_exists('project_id', $payload) || array_key_exists('project', $payload)) {
-            return true;
-        }
-
-        return (array_key_exists('tracks', $payload) && is_array($payload['tracks']) && $payload['tracks'] !== [])
-            || (array_key_exists('canvas', $payload) && is_array($payload['canvas']) && $payload['canvas'] !== []);
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
-     */
-    private function isV3ProjectPayload(array $payload): bool
-    {
-        if ($this->extractSchemaVersion($payload['schemaVersion'] ?? $payload['schema_version'] ?? $payload['version'] ?? null) >= 3) {
-            return true;
-        }
-
-        return array_key_exists('metadata', $payload)
-            || array_key_exists('assets', $payload)
-            || array_key_exists('scenes', $payload)
-            || array_key_exists('globalAudioTracks', $payload)
-            || array_key_exists('globalEffects', $payload)
-            || array_key_exists('guides', $payload);
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
-     * @return array{schema_version:int,project:array<string, mixed>,timeline:array<string, mixed>}
-     */
-    private function normalizeRichProject(array $payload, int $userId): array
-    {
-        $version = (int) ($payload['version'] ?? $payload['schema_version'] ?? 2);
-
-        if ($version < 2) {
+        if ($this->extractSchemaVersion($payload['schemaVersion'] ?? $payload['schema_version'] ?? $payload['version'] ?? null) < 3) {
             throw ValidationException::withMessages([
-                'project.version' => 'The project schema version must be 2 or higher.',
+                'schemaVersion' => 'Only the v3 editor payload is supported.',
             ]);
         }
 
-        $tracksInput = $payload['tracks'] ?? [];
-
-        if (! is_array($tracksInput) || $tracksInput === []) {
-            throw ValidationException::withMessages([
-                'project.tracks' => 'At least one track is required.',
-            ]);
-        }
-
-        $projectDuration = isset($payload['duration']) && is_numeric($payload['duration'])
-            ? max(0.0, (float) $payload['duration'])
-            : null;
-
-        $tracks = [];
-        $renderLayers = [];
-        foreach (array_values($tracksInput) as $index => $track) {
-            if (! is_array($track)) {
-                throw ValidationException::withMessages([
-                    "project.tracks.{$index}" => 'Each track must be an array.',
-                ]);
-            }
-
-            $this->validateRichTrackCapabilities($track, $index);
-            $normalizedTrack = $this->normalizeTrack($track, $index, $projectDuration);
-            $tracks[] = $normalizedTrack['track'];
-
-            if ($normalizedTrack['render_layer'] !== null) {
-                $renderLayers[] = $normalizedTrack['render_layer'];
-            }
-        }
-
-        $canvas = $this->normalizeCanvas($payload['canvas'] ?? []);
-        $output = $this->normalizeOutput($payload['output'] ?? []);
-
-        $project = [
-            'version' => 2,
-            'project_id' => isset($payload['project_id']) ? (string) $payload['project_id'] : null,
-            'duration' => $projectDuration,
-            'canvas' => $canvas,
-            'tracks' => $tracks,
-            'global_filters' => is_array($payload['global_filters'] ?? null) ? array_values($payload['global_filters']) : [],
-            'output' => $output,
-            'raw_payload' => $payload,
-        ];
-
-        return [
-            'schema_version' => 2,
-            'project' => $project,
-            'timeline' => [
-                'video_id' => isset($payload['video_id']) ? (int) $payload['video_id'] : null,
-                'canvas' => $canvas,
-                'layers' => $renderLayers,
-                'filters' => $this->normalizeFilters($payload['filters'] ?? $project['global_filters']),
-                'audio' => $this->normalizeAudio($payload['audio'] ?? []),
-                'trim' => $this->normalizeTrim($payload['trim'] ?? []),
-                'output' => $output,
-                'raw_payload' => $payload,
-            ],
-        ];
+        return $this->normalizeV3Project($payload, $userId);
     }
 
     /**
@@ -203,38 +75,6 @@ class VideoProjectNormalizer
                     $renderLayers[] = $normalizedTrack['render_layer'];
                 }
             }
-        }
-
-        $topLevelTracks = is_array($payload['tracks'] ?? null) ? $payload['tracks'] : [];
-
-        if ($scenes === [] && $topLevelTracks !== []) {
-            $fallback = $this->normalizeRichProject([
-                'version' => 2,
-                'project_id' => $payload['project_id'] ?? null,
-                'duration' => $projectDuration,
-                'canvas' => $canvas,
-                'tracks' => $topLevelTracks,
-                'filters' => $payload['filters'] ?? [],
-                'audio' => $payload['audio'] ?? [],
-                'trim' => $payload['trim'] ?? [],
-                'output' => $output,
-                'global_filters' => $payload['global_filters'] ?? [],
-            ], $userId);
-
-            $fallback['schema_version'] = 3;
-            $fallback['project']['version'] = 3;
-            $fallback['project']['schemaVersion'] = $schemaVersionLabel;
-            $fallback['project']['metadata'] = $metadata;
-            $fallback['project']['assets'] = $assets;
-            $fallback['project']['scenes'] = [];
-            $fallback['project']['globalAudioTracks'] = $this->normalizeV3GlobalAudioTracks(is_array($payload['globalAudioTracks'] ?? null) ? $payload['globalAudioTracks'] : []);
-            $fallback['project']['globalEffects'] = $this->normalizeV3GlobalEffects(is_array($payload['globalEffects'] ?? null) ? $payload['globalEffects'] : []);
-            $fallback['project']['guides'] = $this->normalizeV3Guides(is_array($payload['guides'] ?? null) ? $payload['guides'] : []);
-            $fallback['project']['raw_payload'] = $payload;
-            $fallback['timeline']['audio'] = $this->normalizeV3GlobalAudioTracks(is_array($payload['globalAudioTracks'] ?? null) ? $payload['globalAudioTracks'] : []);
-            $fallback['timeline']['raw_payload'] = $payload;
-
-            return $fallback;
         }
 
         $globalAudioTracks = $this->normalizeV3GlobalAudioTracks(is_array($payload['globalAudioTracks'] ?? null) ? $payload['globalAudioTracks'] : []);
@@ -1009,59 +849,6 @@ class VideoProjectNormalizer
     private function toFloat(mixed $value): float
     {
         return is_numeric($value) ? (float) $value : 0.0;
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
-     * @return array{schema_version:int,project:array<string, mixed>,timeline:array<string, mixed>}
-     */
-    private function normalizeLegacyPayload(array $payload, int $userId): array
-    {
-        $layersInput = $payload['layers'] ?? $payload['overlays'] ?? [];
-
-        if (! is_array($layersInput) || $layersInput === []) {
-            throw ValidationException::withMessages([
-                'layers' => 'At least one render layer is required.',
-            ]);
-        }
-
-        $layers = [];
-        $tracks = [];
-
-        foreach (array_values($layersInput) as $index => $layer) {
-            if (! is_array($layer)) {
-                throw ValidationException::withMessages([
-                    "layers.{$index}" => 'Each layer must be an array.',
-                ]);
-            }
-
-            $normalized = $this->normalizeLegacyLayer($layer, $index, $userId);
-            $layers[] = $normalized['render_layer'];
-            $tracks[] = $normalized['track'];
-        }
-
-        $output = $this->normalizeOutput($payload['output'] ?? []);
-
-        return [
-            'schema_version' => 2,
-            'project' => [
-                'version' => 2,
-                'project_id' => null,
-                'duration' => null,
-                'canvas' => $this->normalizeCanvas([]),
-                'tracks' => $tracks,
-                'global_filters' => [],
-                'output' => $output,
-            ],
-            'timeline' => [
-                'video_id' => isset($payload['video_id']) ? (int) $payload['video_id'] : null,
-                'layers' => $layers,
-                'filters' => $this->normalizeFilters($payload['filters'] ?? []),
-                'audio' => $this->normalizeAudio($payload['audio'] ?? []),
-                'trim' => $this->normalizeTrim($payload['trim'] ?? []),
-                'output' => $output,
-            ],
-        ];
     }
 
     /**

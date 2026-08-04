@@ -821,99 +821,48 @@ class VideoController extends Controller
             'You are not allowed to edit this video.'
         );
 
-        $validated = $request->validated();
-        $rawProject = $request->input('project');
-        $rawLayers = $request->input('layers');
-        $rawOverlays = $request->input('overlays');
+        $rawSchemaVersion = $request->input('schemaVersion');
+        $rawMetadata = $request->input('metadata');
+        $rawCanvas = $request->input('canvas', []);
+        $rawOutput = $request->input('output', []);
+        $rawAssets = $request->input('assets', []);
+        $rawScenes = $request->input('scenes', []);
         $rawFilters = $request->input('filters', []);
         $rawAudio = $request->input('audio', []);
         $rawTrim = $request->input('trim', []);
-        $rawOutput = $request->input('output', []);
-        $rawCanvas = $request->input('canvas', []);
-        $rawTracks = $request->input('tracks', []);
-        $rawGlobalFilters = $request->input('global_filters', []);
-        $rawSchemaVersion = $request->input('schemaVersion');
-        $rawMetadata = $request->input('metadata');
-        $rawAssets = $request->input('assets');
-        $rawScenes = $request->input('scenes');
         $rawGlobalAudioTracks = $request->input('globalAudioTracks');
         $rawGlobalEffects = $request->input('globalEffects');
         $rawGuides = $request->input('guides');
+        $editAssetUploads = $this->storeEditAssetUploads($request->file('asset_files', []), (int) $request->user()->id);
+
+        if (is_array($rawAssets) && $rawAssets !== []) {
+            $rawAssets = $this->applyEditAssetUploadsToAssets($rawAssets, $editAssetUploads, (int) $request->user()->id);
+        }
 
         try {
-            $hasTimelinePayload = $rawProject !== null
-                || $rawLayers !== null
-                || $rawOverlays !== null
-                || $rawFilters !== []
-                || $rawTrim !== []
-                || $rawOutput !== []
-                || $rawAudio !== []
-                || $rawCanvas !== []
-                || $rawTracks !== []
-                || $rawGlobalFilters !== []
-                || $rawSchemaVersion !== null
-                || $rawMetadata !== null
-                || $rawAssets !== null
-                || $rawScenes !== null
-                || $rawGlobalAudioTracks !== null
-                || $rawGlobalEffects !== null
-                || $rawGuides !== null;
+            $timelinePayload = [
+                'video_id' => (int) $video->id,
+                'schemaVersion' => is_string($rawSchemaVersion) && $rawSchemaVersion !== ''
+                    ? $rawSchemaVersion
+                    : '3.0.0',
+                'metadata' => is_array($rawMetadata) ? $rawMetadata : [],
+                'canvas' => is_array($rawCanvas) ? $rawCanvas : [],
+                'output' => is_array($rawOutput) ? $rawOutput : [],
+                'assets' => is_array($rawAssets) ? $rawAssets : [],
+                'scenes' => is_array($rawScenes) ? $rawScenes : [],
+                'globalAudioTracks' => is_array($rawGlobalAudioTracks) ? $rawGlobalAudioTracks : [],
+                'globalEffects' => is_array($rawGlobalEffects) ? $rawGlobalEffects : [],
+                'guides' => is_array($rawGuides) ? $rawGuides : [],
+                'filters' => is_array($rawFilters) ? $rawFilters : [],
+                'audio' => is_array($rawAudio) ? $rawAudio : [],
+                'trim' => is_array($rawTrim) ? $rawTrim : [],
+            ];
 
-            if ($hasTimelinePayload) {
-                $projectPayload = is_array($rawProject) ? $rawProject : null;
-                $timelinePayload = [
-                    'video_id' => (int) $video->id,
-                    'layers' => is_array($rawLayers) ? $rawLayers : (is_array($rawOverlays) ? $rawOverlays : []),
-                    'filters' => is_array($rawFilters) ? $rawFilters : [],
-                    'audio' => is_array($rawAudio) ? $rawAudio : [],
-                    'trim' => is_array($rawTrim) ? $rawTrim : [],
-                    'output' => is_array($rawOutput) ? $rawOutput : [],
-                    'canvas' => is_array($rawCanvas) ? $rawCanvas : [],
-                    'tracks' => is_array($rawTracks) ? $rawTracks : [],
-                    'global_filters' => is_array($rawGlobalFilters) ? $rawGlobalFilters : [],
-                ];
-
-                if (is_string($rawSchemaVersion) && $rawSchemaVersion !== '') {
-                    $timelinePayload['schemaVersion'] = $rawSchemaVersion;
-                }
-
-                if (is_array($rawMetadata) && $rawMetadata !== []) {
-                    $timelinePayload['metadata'] = $rawMetadata;
-                }
-
-                if (is_array($rawAssets) && $rawAssets !== []) {
-                    $timelinePayload['assets'] = $rawAssets;
-                }
-
-                if (is_array($rawScenes) && $rawScenes !== []) {
-                    $timelinePayload['scenes'] = $rawScenes;
-                }
-
-                if (is_array($rawGlobalAudioTracks) && $rawGlobalAudioTracks !== []) {
-                    $timelinePayload['globalAudioTracks'] = $rawGlobalAudioTracks;
-                }
-
-                if (is_array($rawGlobalEffects) && $rawGlobalEffects !== []) {
-                    $timelinePayload['globalEffects'] = $rawGlobalEffects;
-                }
-
-                if (is_array($rawGuides) && $rawGuides !== []) {
-                    $timelinePayload['guides'] = $rawGuides;
-                }
-
-                $video = $this->videoEditService->queueTimelineRender(
-                    video: $video,
-                    timeline: is_array($projectPayload) ? $projectPayload : $timelinePayload,
-                    userId: (int) $request->user()->id,
-                );
-            } else {
-                $video = $this->videoEditService->queueRender(
-                    video: $video,
-                    overlays: is_array($rawOverlays) ? $rawOverlays : [],
-                    drawingFiles: $request->file('drawing_files', []),
-                    userId: (int) $request->user()->id,
-                );
-            }
+            $video = $this->videoEditService->queueTimelineRender(
+                video: $video,
+                timeline: $timelinePayload,
+                userId: (int) $request->user()->id,
+            );
         } catch (Throwable $throwable) {
             report($throwable);
 
@@ -1122,6 +1071,207 @@ class VideoController extends Controller
             'mimes:jpg,jpeg,png,webp',
             'max:'.(int) config('video.thumbnail_max_upload_kb', 5120),
         ];
+    }
+
+    /**
+     * @param  array<int, UploadedFile>|UploadedFile|mixed  $files
+     * @return array<int, array{disk:string,source_key:string,source_url:string}>
+     */
+    private function storeEditAssetUploads(mixed $files, int $userId): array
+    {
+        $normalizedFiles = is_array($files)
+            ? array_values($files)
+            : ($files instanceof UploadedFile ? [$files] : []);
+
+        $uploads = [];
+
+        foreach ($normalizedFiles as $index => $file) {
+            if (! $file instanceof UploadedFile) {
+                continue;
+            }
+
+            $uploads[(int) $index] = $this->videoStorageService->uploadEditAsset($file, $userId);
+        }
+
+        return $uploads;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $assets
+     * @param  array<int, array{disk:string,source_key:string,source_url:string}>  $uploads
+     * @return array<int, array<string, mixed>>
+     */
+    private function applyEditAssetUploadsToAssets(array $assets, array $uploads, int $userId): array
+    {
+        return array_map(function ($asset, $index) use ($uploads, $userId) {
+            if (! is_array($asset)) {
+                return $asset;
+            }
+
+            $fileIndex = $this->resolveEditAssetFileIndex($asset, $index);
+
+            if ($fileIndex !== null && isset($uploads[$fileIndex])) {
+                $upload = $uploads[$fileIndex];
+                $asset = array_merge($asset, [
+                    'storageProvider' => $upload['disk'],
+                    'storageKey' => $upload['source_key'],
+                    'url' => $upload['source_url'],
+                    'asset_url' => $upload['source_url'],
+                    'asset_disk' => $upload['disk'],
+                    'asset_key' => $upload['source_key'],
+                ]);
+            }
+
+            foreach (['url', 'asset_url', 'fallbackUrl', 'fallback_url'] as $field) {
+                if (! isset($asset[$field]) || ! is_string($asset[$field])) {
+                    continue;
+                }
+
+                $inlineUpload = $this->storeInlineImageIfNeeded($asset[$field], $userId);
+
+                if ($inlineUpload === null) {
+                    continue;
+                }
+
+                $asset = array_merge($asset, [
+                    'storageProvider' => $inlineUpload['disk'],
+                    'storageKey' => $inlineUpload['source_key'],
+                    'url' => $inlineUpload['source_url'],
+                    'asset_url' => $inlineUpload['source_url'],
+                    'asset_disk' => $inlineUpload['disk'],
+                    'asset_key' => $inlineUpload['source_key'],
+                ]);
+
+                break;
+            }
+
+            return $asset;
+        }, $assets, array_keys($assets));
+    }
+
+    /**
+     * @param  array<string, mixed>  $project
+     * @param  array<int, array{disk:string,source_key:string,source_url:string}>  $uploads
+     * @return array<string, mixed>
+     */
+    private function applyEditAssetUploadsToProject(array $project, array $uploads, int $userId): array
+    {
+        if (isset($project['assets']) && is_array($project['assets'])) {
+            $project['assets'] = $this->applyEditAssetUploadsToAssets($project['assets'], $uploads, $userId);
+        }
+
+        return $project;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $layers
+     * @param  array<int, array{disk:string,source_key:string,source_url:string}>  $uploads
+     * @return array<int, array<string, mixed>>
+     */
+    private function applyEditAssetUploadsToMediaLayers(array $layers, array $uploads, int $userId): array
+    {
+        return array_map(function ($layer, $index) use ($uploads, $userId) {
+            if (! is_array($layer)) {
+                return $layer;
+            }
+
+            $fileIndex = $this->resolveEditAssetFileIndex($layer, $index);
+
+            if ($fileIndex !== null && isset($uploads[$fileIndex])) {
+                $upload = $uploads[$fileIndex];
+                $layer = array_merge($layer, [
+                    'asset_url' => $upload['source_url'],
+                    'asset_disk' => $upload['disk'],
+                    'asset_key' => $upload['source_key'],
+                ]);
+            }
+
+            foreach (['asset_url', 'url'] as $field) {
+                if (! isset($layer[$field]) || ! is_string($layer[$field])) {
+                    continue;
+                }
+
+                $inlineUpload = $this->storeInlineImageIfNeeded($layer[$field], $userId);
+
+                if ($inlineUpload === null) {
+                    continue;
+                }
+
+                $layer = array_merge($layer, [
+                    'asset_url' => $inlineUpload['source_url'],
+                    'asset_disk' => $inlineUpload['disk'],
+                    'asset_key' => $inlineUpload['source_key'],
+                ]);
+                break;
+            }
+
+            return $layer;
+        }, $layers, array_keys($layers));
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function resolveEditAssetFileIndex(array $item, mixed $fallbackIndex): ?int
+    {
+        foreach (['asset_file_index', 'file_index'] as $field) {
+            if (! array_key_exists($field, $item) || ! is_numeric($item[$field])) {
+                continue;
+            }
+
+            return (int) $item[$field];
+        }
+
+        return is_numeric($fallbackIndex) ? (int) $fallbackIndex : null;
+    }
+
+    private function storeInlineImageIfNeeded(string $value, int $userId): ?array
+    {
+        if (! str_starts_with($value, 'data:image/')) {
+            return null;
+        }
+
+        if (! preg_match('/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s', $value, $matches)) {
+            throw ValidationException::withMessages([
+                'asset_url' => 'Inline image data must use a valid base64 data URL.',
+            ]);
+        }
+
+        $binary = base64_decode($matches[2], true);
+
+        if ($binary === false) {
+            throw ValidationException::withMessages([
+                'asset_url' => 'Inline image data could not be decoded.',
+            ]);
+        }
+
+        $mimeType = $matches[1];
+        $extension = match ($mimeType) {
+            'image/jpeg', 'image/jpg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            'image/gif' => 'gif',
+            default => 'png',
+        };
+
+        $tempPath = tempnam(sys_get_temp_dir(), 'kulsah-edit-asset-');
+
+        if ($tempPath === false) {
+            throw ValidationException::withMessages([
+                'asset_url' => 'Unable to prepare inline image upload.',
+            ]);
+        }
+
+        $tempFile = $tempPath.'.'.$extension;
+        @unlink($tempPath);
+        file_put_contents($tempFile, $binary);
+        $uploadFile = new UploadedFile($tempFile, 'inline-image.'.$extension, $mimeType, null, true);
+
+        try {
+            return $this->videoStorageService->uploadEditAsset($uploadFile, $userId);
+        } finally {
+            @unlink($tempFile);
+        }
     }
 
     private function storeThumbnailIfProvided(?UploadedFile $thumbnailFile, int $userId): ?array
