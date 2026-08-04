@@ -128,11 +128,11 @@ class VideoEditService
 
             $type = (string) ($layer['type'] ?? '');
 
-            if (in_array($type, ['captions', 'shape', 'transition'], true)) {
+            if (in_array($type, ['text', 'captions', 'shape', 'transition', 'image', 'sticker', 'drawing'], true)) {
                 return 'ffmpeg';
             }
 
-            if (in_array($type, ['text', 'drawing', 'image', 'sticker', 'audio'], true)) {
+            if (in_array($type, ['audio'], true)) {
                 $hasRichEffects = ! empty($layer['stroke'] ?? [])
                     || ! empty($layer['shadow'] ?? [])
                     || ! empty($layer['keyframes'] ?? [])

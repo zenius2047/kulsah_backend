@@ -49,7 +49,10 @@ class VideoEditRenderingService
                     continue;
                 }
 
-                $overlayInputs[] = $this->resolveOverlaySource($overlay);
+                $overlayInputs[] = [
+                    'source' => $this->resolveOverlaySource($overlay),
+                    'loop' => $this->shouldLoopOverlayInput($overlay),
+                ];
                 $overlay['input_index'] = count($overlayInputs);
                 $preparedOverlays[] = $overlay;
             }
@@ -80,7 +83,7 @@ class VideoEditRenderingService
     }
 
     /**
-     * @param  array<int, string>  $overlayInputs
+     * @param  array<int, array{source:string,loop:bool}>  $overlayInputs
      * @param  array<int, array<string, mixed>>  $overlays
      * @return array<int, string>
      */
@@ -89,7 +92,11 @@ class VideoEditRenderingService
         $command = ['ffmpeg', '-y', '-i', $sourcePath];
 
         foreach ($overlayInputs as $overlayInput) {
-            array_push($command, '-i', $overlayInput);
+            if (($overlayInput['loop'] ?? false) === true) {
+                array_push($command, '-loop', '1');
+            }
+
+            array_push($command, '-i', (string) $overlayInput['source']);
         }
 
         $filter = $this->buildFilterGraph($overlays);
@@ -128,6 +135,17 @@ class VideoEditRenderingService
     private function requiresOverlayInput(array $overlay): bool
     {
         return ! in_array((string) ($overlay['type'] ?? ''), ['text', 'captions', 'shape'], true);
+    }
+
+    /**
+     * Still-image overlays need to be looped so they are present for the
+     * entire output video duration instead of acting like one-frame inputs.
+     *
+     * @param  array<string, mixed>  $overlay
+     */
+    private function shouldLoopOverlayInput(array $overlay): bool
+    {
+        return in_array((string) ($overlay['type'] ?? ''), ['image', 'sticker', 'drawing'], true);
     }
 
     /**
