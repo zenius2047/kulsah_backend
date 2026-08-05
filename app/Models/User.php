@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Notifications\Notifiable;
 
@@ -16,6 +17,12 @@ class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
+
+    protected $appends = [
+        'total_followers',
+        'total_subscribers',
+        'total_likes',
+    ];
 
     // fillable attributes
     protected $fillable = [
@@ -26,6 +33,7 @@ class User extends Authenticatable
         'provider',
         'provider_id',
         'avatar',
+        'banner',
         'bio',
         'location',
         'activation_otp',
@@ -93,17 +101,127 @@ class User extends Authenticatable
         return $this->hasMany(PasswordResetToken::class);
     }
 
-    //GET avatar attribute
+    public function wallet()
+    {
+        return $this->hasOne(Wallet::class);
+    }
+
+    public function kulCoinWallet()
+    {
+        return $this->hasOne(KulCoinWallet::class);
+    }
+
+    public function kulCoinTransactions()
+    {
+        return $this->hasMany(KulCoinTransaction::class);
+    }
+
+    public function videos()
+    {
+        return $this->hasMany(Video::class);
+    }
+
+    public function videoPlaylists()
+    {
+        return $this->hasMany(VideoPlaylist::class);
+    }
+
+    public function videoLikes()
+    {
+        return $this->hasMany(VideoLike::class);
+    }
+
+    // likes received on this user's videos
+    public function likesReceived()
+    {
+        return $this->hasManyThrough(
+            VideoLike::class,
+            Video::class,
+            'user_id',   // videos.user_id
+            'video_id',  // video_likes.video_id
+            'id',
+            'id'
+        );
+    }
+
+    public function videoBookmarks()
+    {
+        return $this->hasMany(VideoBookmark::class);
+    }
+
+    public function follows()
+    {
+        return $this->hasMany(UserFollow::class, 'follower_id');
+    }
+
+    public function followers()
+    {
+        return $this->hasMany(UserFollow::class, 'followed_id');
+    }
+
+    public function receivesBroadcastNotificationsOn(): string
+    {
+        return 'users.'.$this->id;
+    }
+
+    // Get avatar attribute
     public function getAvatarAttribute($value)
     {
-    if (!$value) {
-        return null;
+        return $this->resolveS3MediaUrl($value);
     }
-    // If already a full URL, return as is
-    if (filter_var($value, FILTER_VALIDATE_URL)) {
-        return $value;
+
+    // Get banner attribute
+    public function getBannerAttribute($value)
+    {
+        return $this->resolveS3MediaUrl($value);
     }
-     return Storage::disk('s3')->url($value);
+
+    private function resolveS3MediaUrl($value)
+    {
+        if (! $value) {
+            return null;
+        }
+
+        // If already a full URL, return as is.
+        if (filter_var($value, FILTER_VALIDATE_URL)) {
+            return $value;
+        }
+
+        return Storage::disk('s3')->url($value);
+    }
+
+    public function getTotalFollowersAttribute(): int
+    {
+        if (array_key_exists('followers_count', $this->attributes)) {
+            return (int) $this->attributes['followers_count'];
+        }
+
+        return (int) $this->followers()->count();
+    }
+
+    public function getTotalSubscribersAttribute(): int
+    {
+        if (array_key_exists('subscribers_count', $this->attributes)) {
+            return (int) $this->attributes['subscribers_count'];
+        }
+
+        return (int) $this->subscribers()->count();
+    }
+
+    public function getTotalLikesAttribute(): int
+    {
+        if (array_key_exists('likes_received_count', $this->attributes)) {
+            return (int) $this->attributes['likes_received_count'];
+        }
+
+        if ($this->relationLoaded('videos')) {
+            return (int) $this->videos->sum(fn ($video) => (int) ($video->likes_count ?? $video->likes()->count()));
+        }
+
+        return (int) DB::table('video_likes')
+            ->join('videos', 'videos.id', '=', 'video_likes.video_id')
+            ->where('videos.user_id', $this->id)
+            ->count();
     }
 
 

@@ -46,4 +46,21 @@ return [
     'credentials' => env('FIREBASE_CREDENTIALS'),
 ],
 
+    'cloudinary' => [
+        'cloud_name' => env('CLOUDINARY_CLOUD_NAME'),
+        'api_key' => env('CLOUDINARY_API_KEY'),
+        'api_secret' => env('CLOUDINARY_API_SECRET'),
+        'folder' => env('CLOUDINARY_FOLDER', 'kulsah/videos'),
+        'webhook_url' => env('CLOUDINARY_WEBHOOK_URL'),
+    ],
+
+    'fastapi' => [
+        'url' => env('FASTAPI_URL', 'http://127.0.0.1:8001'),
+        'enabled' => env('FASTAPI_ENABLED', true),
+        'timeout' => env('FASTAPI_TIMEOUT_SECONDS', 5),
+        'retries' => env('FASTAPI_RETRIES', 1),
+        'shared_secret' => env('FASTAPI_SHARED_SECRET'),
+        'signature_ttl' => env('FASTAPI_SIGNATURE_TTL_SECONDS', 300),
+    ],
+
 ];

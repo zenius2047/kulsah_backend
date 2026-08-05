@@ -11,8 +11,9 @@ use App\Http\Controllers\Api\V1\Auth\AuthController;
 
 // Public Routes
 Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login'])->name('login');
+Route::post('/login', [AuthController::class, 'login'])->name('api.login');
 Route::post('/forgotton-password', [AuthController::class, 'forgottonPassword']);
+Route::post('/verify-reset-otp', [AuthController::class, 'verifyResetOtp']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 
 // Temporary compatibility route
@@ -27,6 +28,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('/activate', [AuthController::class, 'activateAccount']);
     Route::post('/resend', [AuthController::class, 'resendOtp']);
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/switch-role', [AuthController::class, 'switchRole']);
     Route::post('/update-vibe', [AuthController::class, 'updateVibe']);
 
     // Backward compatibility for clients that accidentally append a trailing

@@ -14,38 +14,43 @@ class ProfileController extends Controller
 {
     //
 
-    public function uploadAvatar (Request $request){
+    public function uploadAvatar(Request $request)
+    {
+        return $this->uploadProfileMedia($request, 'avatar');
+    }
 
-   $user = $request->user();
+    public function uploadBanner(Request $request)
+    {
+        return $this->uploadProfileMedia($request, 'banner');
+    }
 
-    $request->validate([
-        'avatar' => 'sometimes|nullable|image|mimes:jpg,jpeg,png|max:2048', // validate image
-    ]);
-        // Handle avatar upload
-    if ($request->hasFile('avatar')) {
-        // Delete old avatar from S3 if exists
-        if ($user->avatar) {
-            Storage::disk('s3')->delete($user->avatar);
+    private function uploadProfileMedia(Request $request, string $field)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            $field => 'sometimes|nullable|image|mimes:jpg,jpeg,png|max:2048',
+        ]);
+
+        if ($request->hasFile($field)) {
+            if ($user->{$field}) {
+                Storage::disk('s3')->delete($user->{$field});
+            }
+
+            $path = $request->file($field)->store('kulsah', 's3');
+            $user->{$field} = $path;
         }
 
-        // Store new avatar
-        $path = $request->file('avatar')->store('kulsah', 's3');
-        $user->avatar = $path;
-    }
- 
-      $user->save();
+        $user->save();
 
         return response()->json([
-        'message' => 'Profile updated successfully',
-        'user' => [
-            'id'=>$user->id,
-            'avatar'=>$user->avatar
-        ]
-    ]);
-
-  
-
-}
+            'message' => 'Profile updated successfully',
+            'user' => [
+                'id' => $user->id,
+                $field => $user->{$field},
+            ],
+        ]);
+    }
 
     //update user profile
 

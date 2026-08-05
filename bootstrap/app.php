@@ -27,6 +27,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->group(base_path('routes/developer-api.php'));
         }
     )
+    ->withBroadcasting(__DIR__.'/../routes/channels.php', [
+        'middleware' => ['auth:sanctum'],
+    ])
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->statefulApi();
 

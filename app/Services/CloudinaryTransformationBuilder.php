@@ -1,0 +1,515 @@
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
+use RuntimeException;
+
+class CloudinaryTransformationBuilder
+{
+    public function buildRenderTransformations(array $timeline): array
+    {
+        $timeline = $this->normalizeTimeline($timeline);
+        $layers = $timeline['layers'];
+
+        $videoTransformation = $this->buildVideoTransformation($timeline, $layers);
+        $posterTransformation = $this->buildPosterTransformation($timeline, $layers);
+
+        return [
+            'timeline' => $timeline,
+            'layers' => $layers,
+            'video_transformation' => $videoTransformation,
+            'poster_transformation' => $posterTransformation,
+            'render_hash' => sha1(json_encode($timeline, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: ''),
+        ];
+    }
+
+    private function buildVideoTransformation(array $timeline, array $layers): string
+    {
+        $segments = [];
+
+        if (($trim = $timeline['trim']) !== []) {
+            if (isset($trim['start'])) {
+                $segments[] = 'so_'.$this->formatNumber((float) $trim['start']);
+            }
+
+            if (isset($trim['end'])) {
+                $segments[] = 'eo_'.$this->formatNumber((float) $trim['end']);
+            }
+        }
+
+        $filterSegment = $this->buildFilterSegment($timeline['filters']);
+        if ($filterSegment !== null) {
+            $segments[] = $filterSegment;
+        }
+
+        foreach ($layers as $layer) {
+            $segments[] = $this->buildLayerSegment($layer);
+        }
+
+        $segments[] = $this->buildOutputSegment($timeline['output']);
+
+        return implode('/', array_values(array_filter($segments, static fn ($segment) => $segment !== null && $segment !== '')));
+    }
+
+    private function buildPosterTransformation(array $timeline, array $layers): string
+    {
+        $segments = ['so_0'];
+
+        $filterSegment = $this->buildFilterSegment($timeline['filters']);
+        if ($filterSegment !== null) {
+            $segments[] = $filterSegment;
+        }
+
+        if ($layers !== []) {
+            $segments[] = $this->buildLayerSegment($layers[0]);
+        }
+
+        $poster = $timeline['output']['poster'] ?? [];
+        $width = (int) ($poster['width'] ?? $timeline['output']['width'] ?? 720);
+        $height = (int) ($poster['height'] ?? $timeline['output']['height'] ?? 1280);
+
+        $segments[] = 'c_fill';
+        $segments[] = 'w_'.$width;
+        $segments[] = 'h_'.$height;
+        $segments[] = 'f_jpg';
+        $segments[] = 'q_auto';
+
+        return implode('/', array_values(array_filter($segments, static fn ($segment) => $segment !== null && $segment !== '')));
+    }
+
+    private function buildFilterSegment(array $filters): ?string
+    {
+        $parts = [];
+
+        foreach ([
+            'brightness' => 'e_brightness',
+            'contrast' => 'e_contrast',
+            'saturation' => 'e_saturation',
+            'hue' => 'e_hue',
+            'gamma' => 'e_gamma',
+        ] as $key => $prefix) {
+            if (array_key_exists($key, $filters) && $filters[$key] !== null && $filters[$key] !== '') {
+                $parts[] = $prefix.':'.(int) $filters[$key];
+            }
+        }
+
+        if (($filters['grayscale'] ?? false) === true) {
+            $parts[] = 'e_grayscale';
+        }
+
+        if (($filters['sepia'] ?? false) === true) {
+            $parts[] = 'e_sepia';
+        }
+
+        return $parts === [] ? null : implode(',', $parts);
+    }
+
+    private function buildLayerSegment(array $layer): string
+    {
+        $type = (string) ($layer['type'] ?? '');
+        $start = $this->formatNumber((float) ($layer['start'] ?? 0));
+        $end = Arr::get($layer, 'end');
+        $placement = $this->buildPlacementSegment($layer);
+
+        if ($type === 'text') {
+            $font = $this->resolveTextFont($layer);
+            $size = max(8, (int) ($layer['size'] ?? $layer['font_size'] ?? 42));
+            $text = $this->escapeLayerValue((string) ($layer['text'] ?? ''));
+            $color = $this->normalizeColor((string) ($layer['color'] ?? '#FFFFFF'));
+            $opacity = $this->normalizeOpacity($layer['opacity'] ?? null);
+            $rotation = isset($layer['rotation']) ? (float) $layer['rotation'] : 0.0;
+            $marginX = isset($layer['margin_x']) ? (int) $layer['margin_x'] : 0;
+            $marginY = isset($layer['margin_y']) ? (int) $layer['margin_y'] : 0;
+            $boxBorderWidth = (int) max(
+                1,
+                (int) ($layer['box_border_width'] ?? 0),
+                (int) ($layer['padding_x'] ?? 0),
+                (int) ($layer['padding_y'] ?? 0)
+            );
+
+            $overlayParts = [
+                'l_text:'.$font.'_'.$size.':'.$text,
+                'co_rgb:'.$color,
+            ];
+
+            if ($opacity !== null) {
+                $overlayParts[] = 'o_'.$opacity;
+            }
+
+            if (($box = $layer['box'] ?? true) !== false) {
+                $overlayParts[] = 'bo_'.$boxBorderWidth.'px_solid_'.$this->normalizeBorderColor((string) ($layer['box_color'] ?? 'black@0.35'));
+            }
+
+            $applyParts = array_merge(
+                $this->buildTimingSegment($start, $end),
+                ['fl_layer_apply'],
+                $placement,
+                $rotation !== 0.0 ? ['a_'.$this->formatNumber($rotation)] : []
+            );
+
+            $overlay = implode(',', array_values(array_filter($overlayParts, static fn ($value) => $value !== null && $value !== '')));
+            $apply = implode(',', array_values(array_filter($applyParts, static fn ($value) => $value !== null && $value !== '')));
+
+            return implode('/', array_values(array_filter([$overlay, $apply], static fn ($value) => $value !== null && $value !== '')));
+        }
+
+        $source = $this->buildLayerSource($layer);
+        $overlayParts = [$source];
+
+        if (($width = $layer['width'] ?? null) !== null) {
+            $overlayParts[] = 'w_'.max(1, (int) $width);
+        }
+
+        if (($height = $layer['height'] ?? null) !== null) {
+            $overlayParts[] = 'h_'.max(1, (int) $height);
+        }
+
+        if ($type === 'audio') {
+            $overlayParts = array_merge($overlayParts, $this->buildTimingSegment($start, $end));
+        }
+
+        if (isset($layer['opacity']) && $layer['opacity'] !== '') {
+            $overlayParts[] = 'o_'.$this->normalizeOpacity($layer['opacity']);
+        }
+
+        if (isset($layer['rotation']) && (float) $layer['rotation'] !== 0.0) {
+            $overlayParts[] = 'a_'.$this->formatNumber((float) $layer['rotation']);
+        }
+
+        $applyParts = array_merge(
+            $type === 'audio' ? [] : $this->buildTimingSegment($start, $end),
+            ['fl_layer_apply'],
+            $placement
+        );
+
+        $overlay = implode(',', array_values(array_filter($overlayParts, static fn ($value) => $value !== null && $value !== '')));
+        $apply = implode(',', array_values(array_filter($applyParts, static fn ($value) => $value !== null && $value !== '')));
+
+        return implode('/', array_values(array_filter([$overlay, $apply], static fn ($value) => $value !== null && $value !== '')));
+    }
+
+    private function buildTimingSegment(string $start, mixed $end): array
+    {
+        $parts = [];
+
+        if ($start !== '0') {
+            $parts[] = 'so_'.$start;
+        }
+
+        if ($end !== null && $end !== '') {
+            $parts[] = 'eo_'.$this->formatNumber((float) $end);
+        }
+
+        return $parts;
+    }
+
+    private function buildLayerSource(array $layer): string
+    {
+        $type = (string) ($layer['type'] ?? '');
+        $publicId = trim((string) ($layer['public_id'] ?? $layer['asset_public_id'] ?? ''), '/');
+
+        if ($publicId !== '') {
+            return match ($type) {
+                'audio' => 'l_audio:'.$this->normalizePublicId($publicId),
+                default => 'l_'.$this->normalizePublicId($publicId),
+            };
+        }
+
+        $assetUrl = (string) ($layer['asset_url'] ?? $layer['source_url'] ?? '');
+
+        if ($assetUrl === '') {
+            $disk = (string) ($layer['asset_disk'] ?? '');
+            $assetKey = (string) ($layer['asset_key'] ?? '');
+
+            if ($disk !== '' && $assetKey !== '') {
+                throw new RuntimeException('Timeline layer is missing a renderable URL.');
+            }
+
+            throw new RuntimeException('Timeline layer is missing a public_id or source URL.');
+        }
+
+        if ($type === 'audio') {
+            return 'l_audio:'.$this->normalizePublicId((string) ($layer['public_id'] ?? $layer['asset_public_id'] ?? $assetUrl));
+        }
+
+        return 'l_fetch:'.$this->encodeRemoteUrl($assetUrl);
+    }
+
+    private function buildPlacementSegment(array $layer): array
+    {
+        $parts = [];
+        $gravity = (string) ($layer['gravity'] ?? 'north_west');
+
+        if ($gravity !== '') {
+            $parts[] = 'g_'.$this->normalizeGravity($gravity);
+        }
+
+        if (array_key_exists('x', $layer)) {
+            $x = (float) $layer['x'];
+            if (array_key_exists('margin_x', $layer)) {
+                $x += (float) $layer['margin_x'];
+            }
+
+            $parts[] = 'x_'.(int) round($x);
+        }
+
+        if (array_key_exists('y', $layer)) {
+            $y = (float) $layer['y'];
+            if (array_key_exists('margin_y', $layer)) {
+                $y += (float) $layer['margin_y'];
+            }
+
+            $parts[] = 'y_'.(int) round($y);
+        }
+
+        return $parts;
+    }
+
+    private function buildOutputSegment(array $output): string
+    {
+        $parts = [];
+
+        if (($format = $output['format'] ?? null) !== null && $format !== '') {
+            $parts[] = 'f_'.$this->normalizeFormat((string) $format);
+        }
+
+        if (($quality = $output['quality'] ?? null) !== null && $quality !== '') {
+            $parts[] = 'q_'.$this->normalizeQuality((string) $quality);
+        }
+
+        if (($width = $output['width'] ?? null) !== null) {
+            $parts[] = 'w_'.max(1, (int) $width);
+        }
+
+        if (($height = $output['height'] ?? null) !== null) {
+            $parts[] = 'h_'.max(1, (int) $height);
+        }
+
+        if (($crop = $output['crop'] ?? null) !== null && $crop !== '') {
+            $parts[] = 'c_'.$this->normalizeCrop((string) $crop);
+        }
+
+        if (($fps = $output['fps'] ?? null) !== null && $fps !== '') {
+            $parts[] = 'fps_'.$this->formatNumber((float) $fps);
+        }
+
+        if (($bitRate = $output['bit_rate'] ?? null) !== null && $bitRate !== '') {
+            $parts[] = 'br_'.$this->normalizeBitRate((string) $bitRate);
+        }
+
+        if (($audio = $output['audio'] ?? null) !== null && $audio !== '') {
+            $parts[] = 'ac_'.$this->normalizeAudio((string) $audio);
+        }
+
+        return implode(',', array_values(array_filter($parts, static fn ($value) => $value !== null && $value !== '')));
+    }
+
+    private function normalizeTimeline(array $timeline): array
+    {
+        $layers = array_values(array_map(
+            fn (array $layer): array => $this->normalizeLayer($layer),
+            array_values((array) ($timeline['layers'] ?? []))
+        ));
+
+        return [
+            'video_id' => isset($timeline['video_id']) ? (int) $timeline['video_id'] : null,
+            'layers' => $layers,
+            'filters' => (array) ($timeline['filters'] ?? []),
+            'audio' => (array) ($timeline['audio'] ?? []),
+            'trim' => (array) ($timeline['trim'] ?? []),
+            'output' => (array) ($timeline['output'] ?? []),
+        ];
+    }
+
+    private function normalizeLayer(array $layer): array
+    {
+        $type = (string) ($layer['type'] ?? '');
+
+        if (! in_array($type, ['text', 'drawing', 'image', 'sticker', 'watermark', 'audio'], true)) {
+            throw new RuntimeException('Unsupported timeline layer type: '.$type);
+        }
+
+        $normalized = [
+            'type' => $type,
+            'x' => max(0, (int) round((float) ($layer['x'] ?? 0))),
+            'y' => max(0, (int) round((float) ($layer['y'] ?? 0))),
+            'start' => max(0, (float) ($layer['start'] ?? 0)),
+            'end' => array_key_exists('end', $layer) && $layer['end'] !== null ? max(0, (float) $layer['end']) : null,
+            'gravity' => (string) ($layer['gravity'] ?? 'north_west'),
+            'public_id' => isset($layer['public_id']) ? trim((string) $layer['public_id'], '/') : null,
+            'asset_public_id' => isset($layer['asset_public_id']) ? trim((string) $layer['asset_public_id'], '/') : null,
+            'asset_url' => isset($layer['asset_url']) ? (string) $layer['asset_url'] : null,
+            'asset_disk' => isset($layer['asset_disk']) ? (string) $layer['asset_disk'] : null,
+            'asset_key' => isset($layer['asset_key']) ? (string) $layer['asset_key'] : null,
+            'width' => isset($layer['width']) ? max(1, (int) $layer['width']) : null,
+            'height' => isset($layer['height']) ? max(1, (int) $layer['height']) : null,
+        ];
+
+        if ($type === 'text') {
+            $normalized['font'] = (string) ($layer['font'] ?? 'Arial');
+            $normalized['size'] = max(8, (int) ($layer['size'] ?? $layer['font_size'] ?? 42));
+            $normalized['color'] = (string) ($layer['color'] ?? '#FFFFFF');
+            $normalized['box'] = filter_var($layer['box'] ?? true, FILTER_VALIDATE_BOOLEAN);
+            $normalized['box_color'] = (string) ($layer['box_color'] ?? '000000');
+            $normalized['text'] = trim((string) ($layer['text'] ?? ''));
+
+            if ($normalized['text'] === '') {
+                throw new RuntimeException('Text layers require text.');
+            }
+        }
+
+        return array_filter($normalized, static fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function normalizeFont(string $font): string
+    {
+        $font = trim($font);
+        $font = $font === '' ? 'Arial' : $font;
+
+        return str_replace(['/', ' '], ['_', '_'], $font);
+    }
+
+    /**
+     * @param  array<string, mixed>  $layer
+     */
+    private function resolveTextFont(array $layer): string
+    {
+        $font = (string) ($layer['font_key'] ?? $layer['font_family'] ?? $layer['font'] ?? 'Arial');
+        $font = trim($font);
+
+        $weight = isset($layer['font_weight']) ? (int) $layer['font_weight'] : null;
+        $style = strtolower(trim((string) ($layer['font_style'] ?? '')));
+
+        if ($font === '') {
+            $font = 'Arial';
+        }
+
+        if ($weight !== null && $weight >= 700 && ! Str::contains(strtolower($font), ['bold', 'black', 'heavy'])) {
+            $font .= '_Bold';
+        }
+
+        if ($style === 'italic' && ! Str::contains(strtolower($font), 'italic')) {
+            $font .= '_Italic';
+        }
+
+        return $this->normalizeFont($font);
+    }
+
+    private function normalizeOpacity(mixed $opacity): ?int
+    {
+        if ($opacity === null || $opacity === '') {
+            return null;
+        }
+
+        $value = max(0.0, min(1.0, (float) $opacity));
+
+        return (int) round($value * 100);
+    }
+
+    private function normalizeFormat(string $format): string
+    {
+        $format = strtolower(trim($format));
+
+        return preg_replace('/[^a-z0-9]+/', '', $format) ?: 'mp4';
+    }
+
+    private function normalizeQuality(string $quality): string
+    {
+        $quality = strtolower(trim($quality));
+
+        if ($quality === '') {
+            return 'auto';
+        }
+
+        $quality = preg_replace('/[^a-z0-9_:-]+/', '', $quality) ?: 'auto';
+
+        return match ($quality) {
+            'high' => 'best',
+            'medium' => 'good',
+            'low' => 'eco',
+            'best', 'good', 'eco', 'auto' => $quality,
+            default => 'auto',
+        };
+    }
+
+    private function normalizeCrop(string $crop): string
+    {
+        return preg_replace('/[^a-z_]+/', '', strtolower(trim($crop))) ?: 'fill';
+    }
+
+    private function normalizeAudio(string $audio): string
+    {
+        return preg_replace('/[^a-z0-9_:-]+/', '', strtolower(trim($audio))) ?: 'auto';
+    }
+
+    private function normalizeGravity(string $gravity): string
+    {
+        return preg_replace('/[^a-z_]+/', '', strtolower(trim($gravity))) ?: 'north_west';
+    }
+
+    private function normalizePublicId(string $publicId): string
+    {
+        $publicId = trim($publicId);
+
+        return str_replace('/', ':', $publicId);
+    }
+
+    private function escapeLayerValue(string $value): string
+    {
+        return rawurlencode($value);
+    }
+
+    private function normalizeColor(string $color, bool $allowAlpha = false): string
+    {
+        $color = trim($color);
+        if (str_starts_with($color, '#')) {
+            $color = substr($color, 1);
+        }
+
+        $pattern = $allowAlpha ? '/^[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/' : '/^[0-9A-Fa-f]{6}$/';
+
+        return preg_match($pattern, $color) === 1 ? strtoupper($color) : 'FFFFFF';
+    }
+
+    private function normalizeBorderColor(string $color): string
+    {
+        $color = trim($color);
+
+        if ($color === '') {
+            return 'black';
+        }
+
+        if (str_starts_with($color, '#')) {
+            return 'rgb:'.strtoupper(substr($color, 1));
+        }
+
+        if (preg_match('/^([A-Za-z]+)@([0-9.]+)$/', $color, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if (preg_match('/^[0-9A-Fa-f]{6}$/', $color) === 1) {
+            return 'rgb:'.strtoupper($color);
+        }
+
+        return preg_match('/^[A-Za-z]+$/', $color) === 1 ? $color : 'black';
+    }
+
+    private function encodeRemoteUrl(string $url): string
+    {
+        return rtrim(strtr(base64_encode($url), '+/', '-_'), '=');
+    }
+
+    private function formatNumber(float $value): string
+    {
+        $formatted = rtrim(rtrim(number_format($value, 3, '.', ''), '0'), '.');
+
+        return $formatted === '' ? '0' : $formatted;
+    }
+
+    private function buildLayerSourceForUpload(array $layer): ?string
+    {
+        return null;
+    }
+}

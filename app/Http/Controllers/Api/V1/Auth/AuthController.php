@@ -1,12 +1,13 @@
 <?php
 
 namespace App\Http\Controllers\Api\V1\Auth;
-
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use App\Models\User;
+use App\Models\Role;
 use App\Models\Onboarding;
 use App\Services\FirebaseAuthService;
 use App\Models\PasswordResetOtp;
@@ -23,6 +24,7 @@ use Carbon\Carbon;
 use App\Traits\HashApiToken;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 use Jenssegers\Agent\Agent;
 
 
@@ -56,14 +58,18 @@ class AuthController extends Controller
 
 public function me()
 {
-    $user = auth()->user();
+    $user = auth()->user()->loadCount([
+        'followers',
+        'subscribers',
+        'likesReceived as likes_received_count',
+    ]);
 
     return response()->json([
         'data' => new UserResource($user),
     ]);
 }
 
-    public function updateVibe(Request $request)
+public function updateVibe(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'onboarding' => 'required|array',
@@ -88,23 +94,67 @@ public function me()
         ]);
     }
 
+    public function switchRole(Request $request)
+    {
+        $validated = $request->validate([
+            'role' => ['required', 'string', Rule::in(['fan', 'creator'])],
+        ]);
+
+        $role = Role::query()
+            ->where('name', $validated['role'])
+            ->first();
+
+        if (! $role) {
+            return response()->json([
+                'message' => 'Role not found.',
+            ], 404);
+        }
+
+        $user = $request->user();
+        $user->roles()->sync([$role->id]);
+        $user->load(['roles', 'wallet', 'onboarding']);
+
+        return response()->json([
+            'message' => 'Role switched successfully.',
+            'data' => new UserResource($user),
+        ]);
+    }
+
     // get location from user sessions payload
  private function getLocationFromIp($ip)
 {
-    $response = Http::timeout(5)
-        ->get("https://ipinfo.io/{$ip}/json");
-
-    if (!$response->successful()) {
+    if (! filter_var($ip, FILTER_VALIDATE_IP)) {
         return null;
     }
 
-    $data = $response->json();
+    // Docker and local dev environments often block outbound DNS/network access.
+    // If IP lookup is disabled or fails, we fall back to null and keep auth flowing.
+    if (! (bool) env('IPINFO_LOOKUP_ENABLED', false)) {
+        return null;
+    }
 
-    return collect([
-        $data['city'] ?? null,
-        $data['region'] ?? null,
-        $data['country'] ?? null,
-    ])->filter()->implode(', ');
+    try {
+        $response = Http::timeout(5)->retry(2, 250)->get("https://ipinfo.io/{$ip}/json");
+
+        if (! $response->successful()) {
+            return null;
+        }
+
+        $data = $response->json();
+
+        return collect([
+            $data['city'] ?? null,
+            $data['region'] ?? null,
+            $data['country'] ?? null,
+        ])->filter()->implode(', ');
+    } catch (Throwable $throwable) {
+        Log::warning('IP location lookup failed.', [
+            'ip' => $ip,
+            'message' => $throwable->getMessage(),
+        ]);
+
+        return null;
+    }
 }
 
     //fetch user details
@@ -133,7 +183,6 @@ public function me()
             'country_code' => 'nullable|string|max:255',
             'onboarding' => 'nullable|array',
             'onboarding.vibe' => 'nullable|array',
-            
         ]);
 
         if ($validator->fails()) {
@@ -156,13 +205,13 @@ public function me()
 
             $user = User::create([
                 'name' => $request->name,
-                'username' => $request->username,
+                'username' =>'@'. $request->username,
                 'email' => $request->email,
                 'dob' => $request->dob,
                 'gender' => $request->gender,
                 'phone' => $request->phone,
                 'password' => Hash::make($request->password),
-                'location' => $location,
+                'location' =>$location,
             ]);
 
             // assign default role to user
@@ -231,117 +280,138 @@ public function me()
 
     // manage user authentication
     // login with email and password
-    public function login(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'email' => 'required_without:phone|email|exists:users,email',
-            'phone' => 'required_without:email|string|exists:users,phone',
-            'password' => 'required|string|min:8',
-        ]);
+public function login(Request $request)
+{
+    // =====================
+    // VALIDATION
+    // =====================
+    $validator = Validator::make($request->all(), [
+        'email' => 'required_without:phone|email',
+        'phone' => 'required_without:email|string',
+        'password' => 'required|string|min:8',
+    ]);
 
-        
+    if ($validator->fails()) {
+        return response()->json($validator->errors(), 422);
+    }
 
-        if ($validator->fails()) {
-            return response()->json($validator->errors(), 422);
-        }
+    // =====================
+    // FIND USER
+    // =====================
+    $user = $request->filled('email')
+        ? DB::table('users')->where('email', $request->email)->first()
+        : DB::table('users')->where('phone', $request->phone)->first();
 
-        // i need to be activated before i can log in, so I check only the field the user supplied.
-        if ($request->filled('email')) {
-            $user = User::where('email', $request->email)->first();
-        } else {
-            $user = User::where('phone', $request->phone)->first();
-        }
+    if (!$user || !Hash::check($request->password, $user->password)) {
+        return response()->json([
+            'message' => 'Invalid credentials',
+        ], 401);
+    }
 
-        if (!$user || !$user->activated) {
-            return response()->json([
-                'message' => 'Your account is not activated. Please check your email or phone for the OTP to activate your account.'
-            ], 403);
-        }
+    // Convert stdClass to model (needed for Sanctum)
+    $user =User::find($user->id);
 
-        // determine if user is logging in with email or phone number
-        if ($request->filled('email')) {
-            $credentials = [
-                'email' => $request->email,
-                'password' => $request->password,
-            ];
-        } else {
-            $credentials = [
-                'phone' => $request->phone,
-                'password' => $request->password,
-            ];
-        }
+    // =====================
+    // OTP ACTIVATION CHECK
+    // =====================
+    if (!$user->activated) {
 
-            if (!Auth::attempt($credentials)) {
-                return response()->json([
-                    'message' => 'Invalid credentials'
-                ], 401);
-            }
-
-        $user = Auth::user();
-      
-        // send OTP to email or phone number for verification
         $otp = $this->generateOtp();
-        // save OTP to database
+
         DB::table('activation_otp')->updateOrInsert(
             ['user_id' => $user->id],
-            ['otp' => $otp, 'expires_at' => now()->addMinutes(10)]
+            [
+                'otp' => $otp,
+                'expires_at' => now()->addMinutes(10),
+                'created_at' => now(),
+            ]
         );
 
-        // send OTP to phone number
-        if($user->phone) {
-            $this->sendOtpSms($user->phone, $otp);  
-        }
-
-        // always prioritize email for location, if email is not available, use phone number to get location, if both are not available, set location to null
+        // Send OTP
         if ($user->email) {
-            $location = $this->getLocationFromIp($request->ip());
-        } elseif ($user->phone) {
-            $location = $this->getLocationFromCountryCode($user->country_code);
-        } else {
-            $location = null;
+            $this->sendOtpEmail($user->email, $otp, $user->name);
         }
 
-          // send location, device and who has logged in with the a device to users email
-        
-          // =====================
-        // BUILD DEVICE + LOGIN PAYLOAD (MISSING PIECE)
-        // =====================
-          $agent = new Agent();
-
-            $payload = [
-                'ip_address' => $request->ip(),
-                'location' => $location,
-                'login_time' => now()->toDateTimeString(),
-                'device' => [
-                    'browser' => $agent->browser(),
-                    'platform' => $agent->platform(),
-                    'device' => $agent->device() ?? 'Unknown Device',
-                    'is_mobile' => $agent->isMobile(),
-                ],
-            ];
-
-        // =====================
-        // SEND LOGIN EMAIL ALERT
-        // =====================
-        if ($user->email) {
-            $this->sendEmailForLogin(
-                $user->email,
-                $user->name,
-                $payload
-            );
+        if ($user->phone) {
+            $this->sendOtpSms($user->phone, $otp);
         }
-        // update user location
-        DB::table('users')->where('id', $user->id)->update(['location' => $location]);
-
-        // generate access token
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
-            'message' => 'User logged in successfully',
-            'access_token' => $token,
-            'user' => new UserResource($user),
-        ]);
+            'message' => 'Account not activated. OTP has been sent to your email or phone.',
+            'token'=> $token,
+            'requires_activation' => true,
+        ], 403);
     }
+
+    // =====================
+    // LOGIN USER (SANCTUM TOKEN)
+    // =====================
+    Auth::login($user);
+
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    // =====================
+    // DEVICE INFO
+    // =====================
+    $agent = new Agent();
+  
+
+    // =====================
+    // LOCATION DETECTION
+    // =====================
+    if ($user->email) {
+        $location = $this->getLocationFromIp($request->ip());
+    } elseif ($user->phone) {
+        $location = $this->getLocationFromCountryCode($user->country_code);
+    } else {
+        $location = null;
+    }
+
+    // =====================
+    // LOGIN PAYLOAD
+    // =====================
+    $payload = [
+        'ip_address' => $request->ip(),
+        'location' => $location,
+        'login_time' => now()->toDateTimeString(),
+        'device' => [
+            'browser' => $agent->browser(),
+            'platform' => $agent->platform(),
+            'device' => $agent->device() ?? 'Unknown Device',
+            'is_mobile' => $agent->isMobile(),
+        ],
+    ];
+
+    // =====================
+    // SEND LOGIN ALERT EMAIL
+    // =====================
+    if ($user->email) {
+        $this->sendEmailForLogin(
+            $user->email,
+            $user->name,
+            $payload
+        );
+    }
+
+    // =====================
+    // UPDATE LOCATION
+    // =====================
+    DB::table('users')
+        ->where('id', $user->id)
+        ->update([
+            'location' => $location
+        ]);
+
+    // =====================
+    // RESPONSE
+    // =====================
+    return response()->json([
+        'message' => 'User logged in successfully',
+        'access_token' => $token,
+        'user' => new UserResource($user),
+    ]);
+}
 
 
 
@@ -476,7 +546,7 @@ public function me()
     }
 
 
-    
+    // forgot password
     public function forgottonPassword(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -530,67 +600,126 @@ public function me()
         ]);
     }
 
-    // reset password
-    public function resetPassword(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'email' => 'nullable|email',
-            'phone' => 'nullable|string',
-            'otp' => 'required|string',
-            'password' => 'required|min:8|confirmed',
-        ]);
+    // verify reset otp
+    public function verifyResetOtp(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'email' => 'required_without:phone|nullable|email',
+        'phone' => 'required_without:email|nullable|string',
+        'otp' => 'required|string',
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'message' => $validator->errors()->first()
-            ], 422);
-        }
-
-        $user = User::when($request->email, function ($query) use ($request) {
-                        return $query->where('email', $request->email);
-                    })
-                    ->when($request->phone, function ($query) use ($request) {
-                        return $query->where('phone', $request->phone);
-                    })
-                    ->first();
-
-        if (!$user) {
-            return response()->json([
-                'status' => false,
-                'message' => 'User not found.'
-            ], 404);
-        }
-
-        $otpRecord = PasswordResetOtp::where('user_id', $user->id)
-            ->where('otp', $request->otp)
-            ->first();
-
-        if (!$otpRecord) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid OTP.'
-            ], 400);
-        }
-
-        if ($otpRecord->expires_at->isPast()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'OTP has expired.'
-            ], 400);
-        }
-
-        $user->update([
-            'password' => Hash::make($request->password)
-        ]);
-
-        $otpRecord->delete();
-
+    if ($validator->fails()) {
         return response()->json([
-            'status' => true,
-            'message' => 'Password reset successfully.'
-        ]);
+            'status' => false,
+            'message' => $validator->errors()->first()
+        ], 422);
     }
+
+    $user = User::when($request->email, function ($query) use ($request) {
+                    return $query->where('email', $request->email);
+                })
+                ->when($request->phone, function ($query) use ($request) {
+                    return $query->where('phone', $request->phone);
+                })
+                ->first();
+
+    if (!$user) {
+        return response()->json([
+            'status' => false,
+            'message' => 'User not found.'
+        ], 404);
+    }
+
+    $otpRecord = PasswordResetOtp::where('user_id', $user->id)
+        ->where('otp', $request->otp)
+        ->first();
+
+    if (!$otpRecord) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Invalid OTP.'
+        ], 400);
+    }
+
+    if ($otpRecord->expires_at->isPast()) {
+        return response()->json([
+            'status' => false,
+            'message' => 'OTP has expired.'
+        ], 400);
+    }
+
+    $otpRecord->update([
+        'is_verified' => true
+    ]);
+
+    return response()->json([
+        'status' => true,
+        'message' => 'OTP verified successfully.'
+    ]);
+}
+
+
+    // reset password
+  public function resetPassword(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'email' => 'required_without:phone|nullable|email',
+        'phone' => 'required_without:email|nullable|string',
+        'password' => 'required|min:8',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'message' => $validator->errors()->first()
+        ], 422);
+    }
+
+    $user = User::when($request->email, function ($query) use ($request) {
+                    return $query->where('email', $request->email);
+                })
+                ->when($request->phone, function ($query) use ($request) {
+                    return $query->where('phone', $request->phone);
+                })
+                ->first();
+
+    if (!$user) {
+        return response()->json([
+            'status' => false,
+            'message' => 'User not found.'
+        ], 404);
+    }
+
+    $otpRecord = PasswordResetOtp::where('user_id', $user->id)
+        ->where('is_verified', true)
+        ->first();
+
+    if (!$otpRecord) {
+        return response()->json([
+            'status' => false,
+            'message' => 'OTP has not been verified.'
+        ], 400);
+    }
+
+    if ($otpRecord->expires_at->isPast()) {
+        return response()->json([
+            'status' => false,
+            'message' => 'OTP has expired.'
+        ], 400);
+    }
+
+    $user->update([
+        'password' => Hash::make($request->password),
+    ]);
+
+    $otpRecord->delete();
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Password reset successfully.'
+    ]);
+}
 
 
     // logout user

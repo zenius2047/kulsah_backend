@@ -1,0 +1,281 @@
+<?php
+
+namespace App\Services;
+
+use App\Http\Resources\VideoResource;
+use App\Models\Video;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+
+class FeedService
+{
+    private const ROOT_TAG = 'feed';
+    private const CACHE_VERSION_KEY = 'feed:version';
+    private const FEED_RULES_VERSION = 2;
+
+    public function __construct(
+        private readonly FastApiRecommendationService $fastApiRecommendationService,
+    ) {
+    }
+
+    public function getFeed(int $userId, int $limit = 20, int $page = 1, array $context = []): array
+    {
+        $cache = $this->taggedCache($this->feedTags($userId));
+        $version = $this->feedCacheVersion();
+        $cacheKey = $this->cacheKey($userId, $limit, $page, $version, $context);
+
+        if ($cache->has($cacheKey)) {
+            return [
+                'data' => $cache->get($cacheKey),
+                'cache_hit' => true,
+                'cache_key' => $cacheKey,
+                'pagination' => $cache->get($cacheKey.':pagination', []),
+            ];
+        }
+
+        $query = Video::query()
+            ->ready()
+            ->where('user_id', '!=', $userId)
+            ->with(['user:id,name,username,avatar,banner'])
+            ->withCount(['likes', 'comments', 'bookmarks'])
+            ->latest()
+            ->take(max($limit * $page, $limit));
+
+        $videos = $this->filterInitialVibeVideos($query->get(), $context);
+        $rankedVideos = $this->rankVideosForUser($videos, $userId, $context);
+        $total = $rankedVideos->count();
+        $pagedVideos = $rankedVideos->forPage($page, $limit)->values();
+
+        $payload = VideoResource::collection($pagedVideos)->resolve();
+        $pagination = [
+            'current_page' => $page,
+            'per_page' => $limit,
+            'total' => $total,
+            'last_page' => max(1, (int) ceil($total / $limit)),
+            'has_more_pages' => $page * $limit < $total,
+        ];
+
+        $ttl = now()->addSeconds((int) config('video.feed_cache_ttl_seconds', 600));
+        $cache->put($cacheKey, $payload, $ttl);
+        $cache->put($cacheKey.':pagination', $pagination, $ttl);
+
+        return [
+            'data' => $payload,
+            'cache_hit' => false,
+            'cache_key' => $cacheKey,
+            'pagination' => $pagination,
+        ];
+    }
+
+    public function invalidateFeedCaches(): int
+    {
+        $cache = $this->taggedCache(['feed']);
+        $version = (int) $cache->get(self::CACHE_VERSION_KEY, 1);
+        $version++;
+        $cache->forever(self::CACHE_VERSION_KEY, $version);
+
+        return $version;
+    }
+
+    public function flushFeedCaches(): void
+    {
+        $this->taggedCache(['feed'])->flush();
+    }
+
+    public function currentFeedCacheVersion(): int
+    {
+        return $this->feedCacheVersion();
+    }
+
+    /**
+     * Rank a feed collection using a reusable hook for future personalization.
+     */
+    public function rankVideosForUser(EloquentCollection|Collection $videos, int $userId, array $context = []): Collection
+    {
+        $aiRankedVideos = $this->fastApiRecommendationService->recommend(
+            videos: collect($videos),
+            userId: $userId,
+            limit: count($videos),
+            context: $context
+        );
+
+        if ($aiRankedVideos instanceof Collection && $aiRankedVideos->isNotEmpty()) {
+            Log::debug('Feed ranked by FastAPI recommendation service.', [
+                'user_id' => $userId,
+                'candidate_count' => $videos->count(),
+                'returned_count' => $aiRankedVideos->count(),
+            ]);
+
+            return $aiRankedVideos;
+        }
+
+        return $videos
+            ->map(function (Video $video) use ($userId, $context): array {
+                return [
+                    'video' => $video,
+                    'score' => $this->scoreVideoForUser($video, $userId, $context),
+                ];
+            })
+            ->sortByDesc('score')
+            ->values()
+            ->pluck('video');
+    }
+
+    private function filterInitialVibeVideos(EloquentCollection|Collection $videos, array $context = []): Collection
+    {
+        $isInitialFeed = (bool) ($context['initial_feed'] ?? false);
+        $vibeTerms = array_values(array_filter(array_map(
+            static fn ($term) => is_string($term) ? strtolower(trim($term)) : '',
+            $context['vibe_terms'] ?? []
+        )));
+
+        if (! $isInitialFeed || $vibeTerms === []) {
+            return collect($videos);
+        }
+
+        $matchedVideos = collect($videos)
+            ->filter(function (Video $video) use ($vibeTerms): bool {
+                return $this->videoMatchesAnyTerm($video, $vibeTerms);
+            })
+            ->values();
+
+        if ($matchedVideos->isNotEmpty()) {
+            Log::debug('Initial feed filtered by onboarding vibes.', [
+                'candidate_count' => $videos->count(),
+                'matched_count' => $matchedVideos->count(),
+                'vibes' => $vibeTerms,
+            ]);
+
+            return $matchedVideos;
+        }
+
+        Log::warning('No vibe-matching videos found for initial feed; falling back to the full candidate set.', [
+            'user_id' => $context['user_id'] ?? null,
+            'vibes' => $vibeTerms,
+            'candidate_count' => $videos->count(),
+        ]);
+
+        return collect($videos);
+    }
+
+    private function videoMatchesAnyTerm(Video $video, array $terms): bool
+    {
+        $metadata = is_array($video->metadata) ? $video->metadata : [];
+        $haystack = strtolower(implode(' ', array_filter([
+            $video->title,
+            $video->caption,
+            $video->content_type,
+            is_array($video->content_types ?? null) ? implode(' ', $video->content_types) : null,
+            data_get($metadata, 'topic'),
+            data_get($metadata, 'category'),
+        ])));
+
+        if ($haystack === '') {
+            return false;
+        }
+
+        foreach ($terms as $term) {
+            if ($term !== '' && str_contains($haystack, $term)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function scoreVideoForUser(Video $video, int $userId, array $context = []): float
+    {
+        $recencyScore = $this->recencyScore($video);
+        $personalizationScore = 0.0;
+
+        $followedCreatorIds = array_map('intval', $context['followed_creator_ids'] ?? []);
+        if ($video->user_id && in_array((int) $video->user_id, $followedCreatorIds, true)) {
+            $personalizationScore += 0.25;
+        }
+
+        $interestTerms = array_filter(array_map('strtolower', $context['interest_terms'] ?? []));
+        $text = strtolower(trim(implode(' ', array_filter([
+            $video->title,
+            $video->caption,
+            $video->content_type,
+            is_array($video->content_types ?? null) ? implode(' ', $video->content_types) : null,
+            data_get($video->metadata, 'topic'),
+            data_get($video->metadata, 'category'),
+        ]))));
+
+        if ($interestTerms && $text !== '') {
+            foreach ($interestTerms as $term) {
+                if ($term !== '' && str_contains($text, $term)) {
+                    $personalizationScore += 0.1;
+                }
+            }
+        }
+
+        $searchQuery = strtolower((string) ($context['search_query'] ?? ''));
+        if ($searchQuery !== '' && str_contains($text, $searchQuery)) {
+            $personalizationScore += 0.15;
+        }
+
+        return round(min(1.0, ($recencyScore * 0.7) + $personalizationScore), 4);
+    }
+
+    private function recencyScore(Video $video): float
+    {
+        if (! $video->created_at) {
+            return 0.5;
+        }
+
+        $ageHours = max(0, now()->diffInHours($video->created_at));
+
+        return round(exp(-($ageHours / 48)), 4);
+    }
+
+    private function cacheStore(): CacheRepository
+    {
+        return Cache::store(config('cache.default'));
+    }
+
+    /**
+     * @param  array<int, string>  $tags
+     */
+    private function taggedCache(array $tags): CacheRepository
+    {
+        $cache = $this->cacheStore();
+
+        if (method_exists($cache, 'tags')) {
+            return $cache->tags(array_values(array_unique(array_merge([self::ROOT_TAG], $tags))));
+        }
+
+        return $cache;
+    }
+
+    private function feedCacheVersion(): int
+    {
+        return (int) $this->cacheStore()->get(self::CACHE_VERSION_KEY, 1);
+    }
+
+    private function cacheKey(int $userId, int $limit, int $page, int $version, array $context = []): string
+    {
+        $hash = substr(sha1(json_encode([
+            'feed_rules_version' => self::FEED_RULES_VERSION,
+            'followed_creator_ids' => array_values(array_map('intval', $context['followed_creator_ids'] ?? [])),
+            'interest_terms' => array_values(array_map('strtolower', $context['interest_terms'] ?? [])),
+            'search_query' => strtolower((string) ($context['search_query'] ?? '')),
+            'initial_feed' => (bool) ($context['initial_feed'] ?? false),
+            'vibe_terms' => array_values(array_map('strtolower', $context['vibe_terms'] ?? [])),
+        ])), 0, 12);
+
+        return "feed:user:{$userId}:limit:{$limit}:page:{$page}:v{$version}:{$hash}";
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function feedTags(int $userId): array
+    {
+        return ['feed:user', "feed:user:{$userId}"];
+    }
+}
