@@ -19,7 +19,7 @@ class RenderVideoEditsJob implements ShouldQueue
 
     public int $tries = 2;
 
-    public int $timeout = 360;
+    public int $timeout = 1200;
 
     public array $backoff = [30, 120];
 

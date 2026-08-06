@@ -3,6 +3,7 @@
 return [
     'storage_disk' => env('VIDEO_STORAGE_DISK', 's3'),
     'upload_directory' => env('VIDEO_UPLOAD_DIRECTORY', 'videos/originals'),
+    'community_media_directory' => env('VIDEO_COMMUNITY_MEDIA_DIRECTORY', 'community/media'),
     'rendered_directory' => env('VIDEO_RENDERED_DIRECTORY', 'videos/rendered'),
     'edit_asset_directory' => env('VIDEO_EDIT_ASSET_DIRECTORY', 'videos/edit-assets'),
     'thumbnail_directory' => env('VIDEO_THUMBNAIL_DIRECTORY', 'videos/thumbnails'),
@@ -24,6 +25,7 @@ return [
     'processing_queue' => env('VIDEO_PROCESSING_QUEUE', 'videos'),
     'edit_renderer' => env('VIDEO_EDIT_RENDERER', 'auto'),
     'cloudinary_upload_timeout_seconds' => (int) env('CLOUDINARY_UPLOAD_TIMEOUT_SECONDS', 120),
-    'edit_render_timeout_seconds' => (int) env('VIDEO_EDIT_RENDER_TIMEOUT_SECONDS', 300),
+    'edit_render_timeout_seconds' => (int) env('VIDEO_EDIT_RENDER_TIMEOUT_SECONDS', 900),
+    'edit_overlay_fetch_timeout_seconds' => (int) env('VIDEO_EDIT_OVERLAY_FETCH_TIMEOUT_SECONDS', 45),
     'ffmpeg_font_file' => env('VIDEO_FFMPEG_FONT_FILE'),
 ];

@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
+use App\Http\Controllers\Api\V1\Community\CommunityPostController;
 use App\Http\Controllers\Api\V1\Cloudinary\CloudinaryWebhookController;
 use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
 use App\Http\Controllers\Api\V1\Feed\FeedController;
@@ -47,6 +48,8 @@ Route::prefix('creator')
         Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
         Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
+        Route::get('/community/posts', [CommunityPostController::class, 'index']);
+        Route::post('/community/posts', [CommunityPostController::class, 'store']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
         Route::patch('/subscription-plans/{subscriptionPlan}', [SubscriptionController::class, 'update']);
@@ -66,6 +69,13 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
+        Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show']);
+        Route::get('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comments']);
+        Route::post('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comment']);
+        Route::post('/community/posts/{communityPost}/like', [CommunityPostController::class, 'like']);
+        Route::delete('/community/posts/{communityPost}/like', [CommunityPostController::class, 'unlike']);
+        Route::post('/community/posts/{communityPost}/share', [CommunityPostController::class, 'share']);
+        Route::post('/community/posts/{communityPost}/gift', [CommunityPostController::class, 'gift']);
         Route::get('/videos/watched', [VideoController::class, 'watched']);
         Route::post('/videos/{video}/view', [VideoController::class, 'view']);
         Route::get('/videos/{video}', [VideoController::class, 'show']);

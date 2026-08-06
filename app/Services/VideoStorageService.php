@@ -75,6 +75,30 @@ class VideoStorageService
         ];
     }
 
+    public function uploadCommunityMedia(UploadedFile $file, int $userId): array
+    {
+        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.community_media_directory', 'community/media'));
+
+        $visibility = str_starts_with((string) $file->getMimeType(), 'image/') ? 'public' : 'private';
+
+        $storedPath = Storage::disk($disk)->putFileAs(
+            dirname($path),
+            $file,
+            basename($path),
+            ['visibility' => $visibility]
+        );
+
+        if (! $storedPath) {
+            throw new RuntimeException('Unable to store the community media in primary storage.');
+        }
+
+        return [
+            'disk' => $disk,
+            'source_key' => $storedPath,
+            'source_url' => Storage::disk($disk)->url($storedPath),
+        ];
+    }
+
     public function uploadRenderedVideo(string $localPath, int $userId, string $originalName = 'edited.mp4'): array
     {
         if (! is_file($localPath)) {

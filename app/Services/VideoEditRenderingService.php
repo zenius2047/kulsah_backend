@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Video;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
@@ -37,6 +38,7 @@ class VideoEditRenderingService
         $outputPath = $this->makeTempPath('kulsah-edit-render-', '.mp4');
         $overlayInputs = [];
         $preparedOverlays = [];
+        $overlayTempFiles = [];
 
         try {
             foreach ($overlays as $overlay) {
@@ -49,8 +51,10 @@ class VideoEditRenderingService
                     continue;
                 }
 
+                $materializedOverlay = $this->materializeOverlayInput($overlay);
+                $overlayTempFiles[] = $materializedOverlay['cleanup'];
                 $overlayInputs[] = [
-                    'source' => $this->resolveOverlaySource($overlay),
+                    'source' => $materializedOverlay['source'],
                     'loop' => $this->shouldLoopOverlayInput($overlay),
                 ];
                 $overlay['input_index'] = count($overlayInputs);
@@ -59,7 +63,7 @@ class VideoEditRenderingService
 
             $command = $this->buildCommand($sourcePath, $overlayInputs, $preparedOverlays, $outputPath);
             $process = new Process($command);
-            $process->setTimeout((int) config('video.edit_render_timeout_seconds', 300));
+            $process->setTimeout($this->resolveProcessTimeoutSeconds($video, $preparedOverlays));
             $process->run();
 
             if (! $process->isSuccessful()) {
@@ -79,6 +83,11 @@ class VideoEditRenderingService
         } finally {
             @unlink($sourcePath);
             @unlink($outputPath);
+            foreach ($overlayTempFiles as $overlayTempFile) {
+                if (is_string($overlayTempFile) && $overlayTempFile !== '') {
+                    @unlink($overlayTempFile);
+                }
+            }
         }
     }
 
@@ -151,7 +160,29 @@ class VideoEditRenderingService
     /**
      * @param  array<string, mixed>  $overlay
      */
-    private function resolveOverlaySource(array $overlay): string
+    private function materializeOverlayInput(array $overlay): array
+    {
+        $sourcePath = $this->resolveOverlaySourcePath($overlay);
+
+        if ($this->looksLikeLocalFilePath($sourcePath) && is_file($sourcePath)) {
+            return [
+                'source' => $sourcePath,
+                'cleanup' => $sourcePath,
+            ];
+        }
+
+        $tempPath = $this->copySourceToTemp($sourcePath, (string) ($overlay['type'] ?? 'overlay'));
+
+        return [
+            'source' => $tempPath,
+            'cleanup' => $tempPath,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $overlay
+     */
+    private function resolveOverlaySourcePath(array $overlay): string
     {
         $assetUrl = (string) data_get($overlay, 'asset_url', '');
 
@@ -163,7 +194,28 @@ class VideoEditRenderingService
         $assetKey = (string) data_get($overlay, 'asset_key', '');
 
         if ($assetDisk !== '' && $assetKey !== '') {
-            return $this->videoStorageService->resolveAccessibleUrl($assetDisk, $assetKey);
+            $stream = Storage::disk($assetDisk)->readStream($assetKey);
+
+            if (! is_resource($stream)) {
+                throw new RuntimeException('Unable to read the overlay asset from storage.');
+            }
+
+            $tempPath = $this->makeTempPath('kulsah-edit-overlay-', '.bin');
+            $target = fopen($tempPath, 'w+b');
+
+            if ($target === false) {
+                fclose($stream);
+                throw new RuntimeException('Unable to open a temporary file for the overlay asset.');
+            }
+
+            try {
+                stream_copy_to_stream($stream, $target);
+            } finally {
+                fclose($stream);
+                fclose($target);
+            }
+
+            return $tempPath;
         }
 
         $publicId = (string) (data_get($overlay, 'public_id') ?? data_get($overlay, 'asset_public_id') ?? '');
@@ -172,13 +224,39 @@ class VideoEditRenderingService
             $type = (string) ($overlay['type'] ?? '');
 
             if ($type === 'video') {
-                return $this->cloudinaryService->generateStreamingUrlFromPublicId($publicId);
+                return $this->cloudinaryService->generateDerivedVideoUrl($publicId);
             }
 
             return $this->cloudinaryService->generateImageUrlFromPublicId($publicId);
         }
 
         throw new RuntimeException('Timeline overlay is missing a renderable source.');
+    }
+
+    private function copySourceToTemp(string $source, string $overlayType): string
+    {
+        $tempPath = $this->makeTempPath('kulsah-edit-overlay-', $this->guessOverlayExtension($source, $overlayType));
+
+        if ($this->looksLikeLocalFilePath($source) && is_file($source)) {
+            if (! copy($source, $tempPath)) {
+                @unlink($tempPath);
+                throw new RuntimeException('Unable to copy the overlay asset to a temporary file.');
+            }
+
+            return $tempPath;
+        }
+
+        $response = Http::timeout((int) config('video.edit_overlay_fetch_timeout_seconds', 45))
+            ->retry(2, 250)
+            ->sink($tempPath)
+            ->get($source);
+
+        if (! $response->successful()) {
+            @unlink($tempPath);
+            throw new RuntimeException('Unable to download the overlay asset for rendering.');
+        }
+
+        return $tempPath;
     }
 
     /**
@@ -505,6 +583,60 @@ class VideoEditRenderingService
         fclose($target);
 
         return $path;
+    }
+
+    private function looksLikeLocalFilePath(string $source): bool
+    {
+        return str_starts_with($source, DIRECTORY_SEPARATOR)
+            || preg_match('/^[A-Za-z]:\\\\/', $source) === 1;
+    }
+
+    private function guessOverlayExtension(string $source, string $overlayType): string
+    {
+        $path = parse_url($source, PHP_URL_PATH);
+        $extension = is_string($path) ? pathinfo($path, PATHINFO_EXTENSION) : '';
+
+        if ($extension !== '') {
+            return '.'.strtolower($extension);
+        }
+
+        return match ($overlayType) {
+            'video' => '.mp4',
+            'image', 'sticker', 'drawing' => '.png',
+            default => '.bin',
+        };
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $overlays
+     */
+    private function resolveProcessTimeoutSeconds(Video $video, array $overlays): int
+    {
+        $configuredTimeout = max(1, (int) config('video.edit_render_timeout_seconds', 300));
+        $durationSeconds = $this->resolveVideoDurationSeconds($video);
+        $overlayCount = count($overlays);
+        $estimatedTimeout = 300;
+
+        if ($durationSeconds > 0) {
+            $estimatedTimeout = (int) ceil($durationSeconds * 15) + ($overlayCount * 5);
+        }
+
+        return max($configuredTimeout, min(1800, max(300, $estimatedTimeout)));
+    }
+
+    private function resolveVideoDurationSeconds(Video $video): float
+    {
+        $duration = $video->duration;
+
+        if (! is_numeric($duration) || (float) $duration <= 0) {
+            $duration = data_get($video->metadata, 'duration_seconds');
+        }
+
+        if (! is_numeric($duration) || (float) $duration <= 0) {
+            $duration = data_get($video->metadata, 'duration');
+        }
+
+        return is_numeric($duration) ? max(0.0, (float) $duration) : 0.0;
     }
 
     private function makeTempPath(string $prefix, string $extension): string

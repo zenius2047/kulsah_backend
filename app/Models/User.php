@@ -121,6 +121,11 @@ class User extends Authenticatable
         return $this->hasMany(Video::class);
     }
 
+    public function communityPosts()
+    {
+        return $this->hasMany(CommunityPost::class);
+    }
+
     public function videoPlaylists()
     {
         return $this->hasMany(VideoPlaylist::class);
