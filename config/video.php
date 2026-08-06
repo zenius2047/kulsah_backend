@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'storage_disk' => env('VIDEO_STORAGE_DISK', 's3'),
+    'storage_disk' => env('VIDEO_STORAGE_DISK', env('FILESYSTEM_DISK', 'local')),
     'upload_directory' => env('VIDEO_UPLOAD_DIRECTORY', 'videos/originals'),
     'community_media_directory' => env('VIDEO_COMMUNITY_MEDIA_DIRECTORY', 'community/media'),
     'rendered_directory' => env('VIDEO_RENDERED_DIRECTORY', 'videos/rendered'),

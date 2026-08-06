@@ -48,7 +48,6 @@ Route::prefix('creator')
         Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
         Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
-        Route::get('/community/posts', [CommunityPostController::class, 'index']);
         Route::post('/community/posts', [CommunityPostController::class, 'store']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
@@ -69,6 +68,7 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
+        Route::get('/community/posts', [CommunityPostController::class, 'index']);
         Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show']);
         Route::get('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comments']);
         Route::post('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comment']);
