@@ -15,12 +15,12 @@ class CommunityPostCommentResource extends JsonResource
         $author = $comment->relationLoaded('user') ? $comment->user : null;
 
         return [
-            'id' => $this->formatCommentId($comment->id),
-            'post_id' => $this->formatPostId($comment->community_post_id),
-            'parent_id' => $comment->parent_id ? $this->formatCommentId($comment->parent_id) : null,
+            'id' => $comment->id,
+            'post_id' => $comment->community_post_id,
+            'parent_id' => $comment->parent_id,
             'content' => (string) $comment->body,
             'author' => [
-                'id' => $this->formatUserId($comment->user_id),
+                'id' => $comment->user_id,
                 'name' => $author?->name,
                 'handle' => ltrim((string) ($author?->username ?: $author?->name ?: 'unknown'), '@'),
                 'avatar_url' => $author?->avatar,
@@ -43,18 +43,4 @@ class CommunityPostCommentResource extends JsonResource
         ];
     }
 
-    private function formatPostId(int|string|null $id): string
-    {
-        return 'post_'.(string) ($id ?? '');
-    }
-
-    private function formatCommentId(int|string|null $id): string
-    {
-        return 'comment_'.(string) ($id ?? '');
-    }
-
-    private function formatUserId(int|string|null $id): string
-    {
-        return 'user_'.(string) ($id ?? '');
-    }
 }

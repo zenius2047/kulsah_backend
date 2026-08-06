@@ -84,8 +84,6 @@ class VideoStorageService
         [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.community_media_directory', 'community/media'));
         $directory = dirname($path);
 
-        Storage::disk($disk)->makeDirectory($directory);
-
         // S3 buckets may reject ACL-based visibility settings, so we rely on the disk's default permissions.
         $storedPath = Storage::disk($disk)->putFileAs($directory, $file, basename($path));
 

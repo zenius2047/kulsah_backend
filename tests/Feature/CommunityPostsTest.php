@@ -201,7 +201,7 @@ class CommunityPostsTest extends TestCase
             ->withoutMiddleware()
             ->getJson("/api/v1/general/community/posts/{$privatePost->id}")
             ->assertOk()
-            ->assertJsonPath('data.id', 'post_'.$privatePost->id)
+            ->assertJsonPath('data.id', $privatePost->id)
             ->assertJsonPath('data.status', 'published');
     }
 

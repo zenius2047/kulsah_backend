@@ -5,7 +5,6 @@ namespace App\Http\Resources;
 use App\Models\CommunityPost;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Str;
 
 class CommunityPostResource extends JsonResource
 {
@@ -20,13 +19,13 @@ class CommunityPostResource extends JsonResource
             : [];
 
         return [
-            'id' => $this->formatPostId($post->id),
+            'id' => $post->id,
             'type' => $post->type,
             'content' => $post->content,
             'audience' => $post->audience,
             'status' => $post->status ?? 'published',
             'author' => [
-                'id' => $this->formatUserId($post->user_id),
+                'id' => $post->user_id,
                 'name' => $author?->name,
                 'handle' => ltrim((string) ($author?->username ?: $author?->name ?: 'unknown'), '@'),
                 'avatar_url' => $author?->avatar,
@@ -58,16 +57,6 @@ class CommunityPostResource extends JsonResource
         ];
     }
 
-    private function formatPostId(int|string|null $id): string
-    {
-        return 'post_'.(string) ($id ?? '');
-    }
-
-    private function formatUserId(int|string|null $id): string
-    {
-        return 'user_'.(string) ($id ?? '');
-    }
-
     private function resolveRole($author): string
     {
         $role = null;
@@ -89,7 +78,7 @@ class CommunityPostResource extends JsonResource
                     : ($media->cloudinary_url ?: $media->source_url);
 
                 return [
-                    'id' => 'media_'.(string) $media->id,
+                    'id' => $media->id,
                     'type' => $mediaType !== '' ? $mediaType : null,
                     'url' => $primaryUrl,
                     'source_url' => $media->source_url,
@@ -109,13 +98,12 @@ class CommunityPostResource extends JsonResource
         }
 
         return array_values(array_map(
-            static fn ($mediaId, $index) => [
-                'id' => 'media_'.($index + 1),
+            static fn ($mediaId) => [
+                'id' => is_numeric($mediaId) ? (int) $mediaId : $mediaId,
                 'type' => null,
                 'url' => is_string($mediaId) ? $mediaId : null,
             ],
             $mediaIds,
-            array_keys($mediaIds)
         ));
     }
 
