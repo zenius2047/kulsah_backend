@@ -44,6 +44,11 @@ class CommunityPost extends Model
         return $this->hasMany(CommunityPostMedia::class, 'community_post_id')->orderBy('sort_order');
     }
 
+    public function pollVotes()
+    {
+        return $this->hasMany(CommunityPostPollVote::class, 'community_post_id');
+    }
+
     public function likes()
     {
         return $this->hasMany(CommunityPostLike::class, 'community_post_id');
