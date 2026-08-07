@@ -277,48 +277,265 @@ class EventController extends Controller
         ]);
     }
 
+    // public function purchaseTicket(Request $request, PlatformEvent $event)
+    // {
+    //     abort_unless($event->status === 'published', 403, 'This event is not available for ticket purchases.');
+
+    //     $validated = $request->validate([
+    //         'ticket_type_code' => ['nullable', 'string', 'max:80'],
+    //         'ticket_type_name' => ['nullable', 'string', 'max:120'],
+    //         'quantity' => ['required', 'integer', 'min:1', 'max:100'],
+    //         'idempotency_key' => ['nullable', 'string', 'max:255'],
+    //         'metadata' => ['nullable', 'array'],
+    //     ]);
+
+    //     if (($validated['ticket_type_code'] ?? null) === null && ($validated['ticket_type_name'] ?? null) === null) {
+    //         throw ValidationException::withMessages([
+    //             'ticket_type_code' => 'A ticket type code or name is required.',
+    //         ]);
+    //     }
+
+    //     try {
+    //         $purchase = DB::transaction(function () use ($request, $event, $validated): EventTicketPurchase {
+    //             $lockedEvent = PlatformEvent::query()->lockForUpdate()->findOrFail($event->id);
+
+    //             abort_unless($lockedEvent->status === 'published', 403, 'This event is not available for ticket purchases.');
+    //             abort_unless($lockedEvent->starts_at === null || $lockedEvent->starts_at->isFuture(), 422, 'Ticket sales for this event have already closed.');
+    //             abort_unless((int) $lockedEvent->tickets_sold < (int) $lockedEvent->capacity, 422, 'This event is sold out.');
+
+    //             if (($validated['idempotency_key'] ?? null) !== null) {
+    //                 $existing = EventTicketPurchase::query()
+    //                     ->where('buyer_id', $request->user()->id)
+    //                     ->where('event_id', $lockedEvent->id)
+    //                     ->where('idempotency_key', $validated['idempotency_key'])
+    //                     ->first();
+
+    //                 if ($existing) {
+    //                     return $existing->load(['event.creator.roles:id,name', 'buyer.roles:id,name', 'tickets']);
+    //                 }
+    //             }
+
+    //             $ticketTypes = $this->normalizeTicketTypes($lockedEvent->ticket_types ?? []);
+    //             $ticketType = $this->resolveTicketType($ticketTypes, $validated['ticket_type_code'] ?? null, $validated['ticket_type_name'] ?? null);
+    //             $quantity = (int) $validated['quantity'];
+    //             $availableQuantity = (int) ($ticketType['quantity'] ?? 0) - (int) ($ticketType['sold_quantity'] ?? 0);
+
+    //             if ($availableQuantity < $quantity) {
+    //                 throw ValidationException::withMessages([
+    //                     'quantity' => 'Not enough tickets are available for the selected ticket type.',
+    //                 ]);
+    //             }
+
+    //             $ticketType['sold_quantity'] = (int) ($ticketType['sold_quantity'] ?? 0) + $quantity;
+    //             $lockedEvent->ticket_types = $ticketTypes->map(function (array $type) use ($ticketType): array {
+    //                 return ($type['code'] ?? null) === $ticketType['code'] ? $ticketType : $type;
+    //             })->values()->all();
+    //             $lockedEvent->tickets_sold = (int) $lockedEvent->tickets_sold + $quantity;
+    //             $lockedEvent->save();
+
+    //             $purchase = EventTicketPurchase::query()->create([
+    //                 'event_id' => $lockedEvent->id,
+    //                 'buyer_id' => $request->user()->id,
+    //                 'ticket_type_code' => $ticketType['code'],
+    //                 'ticket_type_name' => $ticketType['name'],
+    //                 'ticket_type_snapshot' => $ticketType,
+    //                 'quantity' => $quantity,
+    //                 'unit_price' => $ticketType['price'],
+    //                 'total_amount' => $ticketType['price'] * $quantity,
+    //                 'currency' => $lockedEvent->currency,
+    //                 'status' => 'completed',
+    //                 'reference' => (string) Str::uuid(),
+    //                 'idempotency_key' => $validated['idempotency_key'] ?? null,
+    //                 'metadata' => $validated['metadata'] ?? [],
+    //                 'purchased_at' => now(),
+    //             ]);
+
+    //             $this->eventTicketService->issueTickets($purchase, $lockedEvent, $quantity);
+
+    //             return $purchase->load([
+    //                 'event.creator.roles:id,name',
+    //                 'buyer.roles:id,name',
+    //                 'tickets.event.creator.roles:id,name',
+    //                 'tickets.buyer.roles:id,name',
+    //             ]);
+    //         });
+    //     } catch (Throwable $throwable) {
+    //         report($throwable);
+
+    //         if ($throwable instanceof ValidationException) {
+    //             return response()->json([
+    //                 'message' => 'Unable to purchase event tickets.',
+    //                 'errors' => $throwable->errors(),
+    //             ], 422);
+    //         }
+
+    //         return response()->json([
+    //             'message' => 'Unable to purchase event tickets.',
+    //             'error' => $throwable->getMessage(),
+    //         ], 500);
+    //     }
+
+    //     $event->refresh()->load(['creator.roles:id,name', 'purchases.buyer.roles:id,name']);
+    //     $event->loadCount('purchases');
+
+    //     return response()->json([
+    //         'message' => 'Event ticket purchased successfully.',
+    //         'data' => [
+    //             'event' => new EventResource($event),
+    //             'purchase' => new EventTicketPurchaseResource($purchase),
+    //         ],
+    //     ], 201);
+    // }
+
     public function purchaseTicket(Request $request, PlatformEvent $event)
-    {
-        abort_unless($event->status === 'published', 403, 'This event is not available for ticket purchases.');
+{
+    abort_unless(
+        $event->status === 'published',
+        403,
+        'This event is not available for ticket purchases.'
+    );
 
-        $validated = $request->validate([
-            'ticket_type_code' => ['nullable', 'string', 'max:80'],
-            'ticket_type_name' => ['nullable', 'string', 'max:120'],
-            'quantity' => ['required', 'integer', 'min:1', 'max:100'],
-            'idempotency_key' => ['nullable', 'string', 'max:255'],
-            'metadata' => ['nullable', 'array'],
+    $validated = $request->validate([
+        'ticket_type_code' => ['nullable', 'string', 'max:80'],
+        'ticket_type_name' => ['nullable', 'string', 'max:120'],
+        'quantity' => ['required', 'integer', 'min:1', 'max:100'],
+        'idempotency_key' => ['nullable', 'string', 'max:255'],
+        'metadata' => ['nullable', 'array'],
+    ]);
+
+    if (
+        ($validated['ticket_type_code'] ?? null) === null &&
+        ($validated['ticket_type_name'] ?? null) === null
+    ) {
+        throw ValidationException::withMessages([
+            'ticket_type_code' => 'A ticket type code or name is required.',
         ]);
+    }
 
-        if (($validated['ticket_type_code'] ?? null) === null && ($validated['ticket_type_name'] ?? null) === null) {
-            throw ValidationException::withMessages([
-                'ticket_type_code' => 'A ticket type code or name is required.',
-            ]);
-        }
+    try {
+        $purchase = DB::transaction(
+            function () use ($request, $event, $validated): EventTicketPurchase {
+                /*
+                |--------------------------------------------------------------------------
+                | Lock Event
+                |--------------------------------------------------------------------------
+                |
+                | Lock the event row to prevent two users from purchasing
+                | the same remaining tickets at the same time.
+                |
+                */
 
-        try {
-            $purchase = DB::transaction(function () use ($request, $event, $validated): EventTicketPurchase {
-                $lockedEvent = PlatformEvent::query()->lockForUpdate()->findOrFail($event->id);
+                $lockedEvent = PlatformEvent::query()
+                    ->lockForUpdate()
+                    ->findOrFail($event->id);
 
-                abort_unless($lockedEvent->status === 'published', 403, 'This event is not available for ticket purchases.');
-                abort_unless($lockedEvent->starts_at === null || $lockedEvent->starts_at->isFuture(), 422, 'Ticket sales for this event have already closed.');
-                abort_unless((int) $lockedEvent->tickets_sold < (int) $lockedEvent->capacity, 422, 'This event is sold out.');
+                abort_unless(
+                    $lockedEvent->status === 'published',
+                    403,
+                    'This event is not available for ticket purchases.'
+                );
+
+                abort_unless(
+                    $lockedEvent->starts_at === null ||
+                    $lockedEvent->starts_at->isFuture(),
+                    422,
+                    'Ticket sales for this event have already closed.'
+                );
+
+                abort_unless(
+                    (int) $lockedEvent->tickets_sold < (int) $lockedEvent->capacity,
+                    422,
+                    'This event is sold out.'
+                );
+
+                /*
+                |--------------------------------------------------------------------------
+                | Idempotency Check
+                |--------------------------------------------------------------------------
+                */
 
                 if (($validated['idempotency_key'] ?? null) !== null) {
                     $existing = EventTicketPurchase::query()
                         ->where('buyer_id', $request->user()->id)
                         ->where('event_id', $lockedEvent->id)
-                        ->where('idempotency_key', $validated['idempotency_key'])
+                        ->where(
+                            'idempotency_key',
+                            $validated['idempotency_key']
+                        )
                         ->first();
 
                     if ($existing) {
-                        return $existing->load(['event.creator.roles:id,name', 'buyer.roles:id,name', 'tickets']);
+                        return $existing->load([
+                            'event.creator.roles:id,name',
+                            'buyer.roles:id,name',
+                            'tickets',
+                        ]);
                     }
                 }
 
-                $ticketTypes = $this->normalizeTicketTypes($lockedEvent->ticket_types ?? []);
-                $ticketType = $this->resolveTicketType($ticketTypes, $validated['ticket_type_code'] ?? null, $validated['ticket_type_name'] ?? null);
+                /*
+                |--------------------------------------------------------------------------
+                | Normalize Ticket Types
+                |--------------------------------------------------------------------------
+                |
+                | normalizeTicketTypes() returns a normal PHP array.
+                |
+                */
+
+                $ticketTypes = $this->normalizeTicketTypes(
+                    $lockedEvent->ticket_types ?? []
+                );
+
+                /*
+                |--------------------------------------------------------------------------
+                | Resolve Selected Ticket Type
+                |--------------------------------------------------------------------------
+                */
+
+                $ticketType = $this->resolveTicketType(
+                    $ticketTypes,
+                    $validated['ticket_type_code'] ?? null,
+                    $validated['ticket_type_name'] ?? null
+                );
+
+                if (! is_array($ticketType)) {
+                    throw ValidationException::withMessages([
+                        'ticket_type_code' => 'The selected ticket type is invalid.',
+                    ]);
+                }
+
                 $quantity = (int) $validated['quantity'];
-                $availableQuantity = (int) ($ticketType['quantity'] ?? 0) - (int) ($ticketType['sold_quantity'] ?? 0);
+
+                /*
+                |--------------------------------------------------------------------------
+                | Check Event Capacity
+                |--------------------------------------------------------------------------
+                */
+
+                $remainingEventCapacity =
+                    (int) $lockedEvent->capacity -
+                    (int) $lockedEvent->tickets_sold;
+
+                if ($remainingEventCapacity < $quantity) {
+                    throw ValidationException::withMessages([
+                        'quantity' => 'Not enough tickets are available for this event.',
+                    ]);
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | Check Ticket Type Availability
+                |--------------------------------------------------------------------------
+                */
+
+                $ticketTypeQuantity =
+                    (int) ($ticketType['quantity'] ?? 0);
+
+                $ticketTypeSoldQuantity =
+                    (int) ($ticketType['sold_quantity'] ?? 0);
+
+                $availableQuantity =
+                    $ticketTypeQuantity - $ticketTypeSoldQuantity;
 
                 if ($availableQuantity < $quantity) {
                     throw ValidationException::withMessages([
@@ -326,31 +543,136 @@ class EventController extends Controller
                     ]);
                 }
 
-                $ticketType['sold_quantity'] = (int) ($ticketType['sold_quantity'] ?? 0) + $quantity;
-                $lockedEvent->ticket_types = $ticketTypes->map(function (array $type) use ($ticketType): array {
-                    return ($type['code'] ?? null) === $ticketType['code'] ? $ticketType : $type;
-                })->values()->all();
-                $lockedEvent->tickets_sold = (int) $lockedEvent->tickets_sold + $quantity;
+                /*
+                |--------------------------------------------------------------------------
+                | Update Ticket Type Sold Quantity
+                |--------------------------------------------------------------------------
+                */
+
+                $ticketType['sold_quantity'] =
+                    $ticketTypeSoldQuantity + $quantity;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Update Ticket Types
+                |--------------------------------------------------------------------------
+                |
+                | $ticketTypes is a PHP array, so use array_map() instead
+                | of Laravel Collection ->map().
+                |
+                */
+
+                $updatedTicketTypes = array_map(
+                    function (array $type) use ($ticketType): array {
+                        $currentCode = $type['code'] ?? null;
+                        $selectedCode = $ticketType['code'] ?? null;
+
+                        /*
+                         * Prefer matching using the generated ticket code.
+                         */
+                        if (
+                            $selectedCode !== null &&
+                            $currentCode === $selectedCode
+                        ) {
+                            return $ticketType;
+                        }
+
+                        /*
+                         * Fallback to matching by name if code is absent.
+                         */
+                        if (
+                            $selectedCode === null &&
+                            isset($ticketType['name'], $type['name']) &&
+                            strcasecmp(
+                                (string) $type['name'],
+                                (string) $ticketType['name']
+                            ) === 0
+                        ) {
+                            return $ticketType;
+                        }
+
+                        return $type;
+                    },
+                    $ticketTypes
+                );
+
+                $lockedEvent->ticket_types = array_values(
+                    $updatedTicketTypes
+                );
+
+                /*
+                |--------------------------------------------------------------------------
+                | Update Total Event Tickets Sold
+                |--------------------------------------------------------------------------
+                */
+
+                $lockedEvent->tickets_sold =
+                    (int) $lockedEvent->tickets_sold + $quantity;
+
                 $lockedEvent->save();
+
+                /*
+                |--------------------------------------------------------------------------
+                | Ticket Pricing
+                |--------------------------------------------------------------------------
+                */
+
+                $unitPrice = (float) ($ticketType['price'] ?? 0);
+
+                $totalAmount = $unitPrice * $quantity;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Create Purchase
+                |--------------------------------------------------------------------------
+                */
 
                 $purchase = EventTicketPurchase::query()->create([
                     'event_id' => $lockedEvent->id,
                     'buyer_id' => $request->user()->id,
-                    'ticket_type_code' => $ticketType['code'],
-                    'ticket_type_name' => $ticketType['name'],
+
+                    'ticket_type_code' => $ticketType['code'] ?? null,
+                    'ticket_type_name' => $ticketType['name'] ?? null,
+
                     'ticket_type_snapshot' => $ticketType,
+
                     'quantity' => $quantity,
-                    'unit_price' => $ticketType['price'],
-                    'total_amount' => $ticketType['price'] * $quantity,
+
+                    'unit_price' => $unitPrice,
+                    'total_amount' => $totalAmount,
+
                     'currency' => $lockedEvent->currency,
+
                     'status' => 'completed',
+
                     'reference' => (string) Str::uuid(),
-                    'idempotency_key' => $validated['idempotency_key'] ?? null,
-                    'metadata' => $validated['metadata'] ?? [],
+
+                    'idempotency_key' =>
+                        $validated['idempotency_key'] ?? null,
+
+                    'metadata' =>
+                        $validated['metadata'] ?? [],
+
                     'purchased_at' => now(),
                 ]);
 
-                $this->eventTicketService->issueTickets($purchase, $lockedEvent, $quantity);
+                /*
+                |--------------------------------------------------------------------------
+                | Issue Individual Tickets
+                |--------------------------------------------------------------------------
+                */
+
+                $this->eventTicketService->issueTickets(
+                    $purchase,
+                    $lockedEvent,
+                    $quantity
+                );
+
+                /*
+                |--------------------------------------------------------------------------
+                | Return Purchase
+                |--------------------------------------------------------------------------
+                */
 
                 return $purchase->load([
                     'event.creator.roles:id,name',
@@ -358,34 +680,52 @@ class EventController extends Controller
                     'tickets.event.creator.roles:id,name',
                     'tickets.buyer.roles:id,name',
                 ]);
-            });
-        } catch (Throwable $throwable) {
-            report($throwable);
-
-            if ($throwable instanceof ValidationException) {
-                return response()->json([
-                    'message' => 'Unable to purchase event tickets.',
-                    'errors' => $throwable->errors(),
-                ], 422);
             }
+        );
+    } catch (Throwable $throwable) {
+        report($throwable);
 
+        if ($throwable instanceof ValidationException) {
             return response()->json([
                 'message' => 'Unable to purchase event tickets.',
-                'error' => $throwable->getMessage(),
-            ], 500);
+                'errors' => $throwable->errors(),
+            ], 422);
         }
 
-        $event->refresh()->load(['creator.roles:id,name', 'purchases.buyer.roles:id,name']);
-        $event->loadCount('purchases');
+        /*
+         * You may want to remove "error" in production so internal
+         * exception messages are not exposed to API consumers.
+         */
 
         return response()->json([
-            'message' => 'Event ticket purchased successfully.',
-            'data' => [
-                'event' => new EventResource($event),
-                'purchase' => new EventTicketPurchaseResource($purchase),
-            ],
-        ], 201);
+            'message' => 'Unable to purchase event tickets.',
+            'error' => $throwable->getMessage(),
+        ], 500);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reload Event Data
+    |--------------------------------------------------------------------------
+    */
+
+    $event->refresh();
+
+    $event->load([
+        'creator.roles:id,name',
+        'purchases.buyer.roles:id,name',
+    ]);
+
+    $event->loadCount('purchases');
+
+    return response()->json([
+        'message' => 'Event ticket purchased successfully.',
+        'data' => [
+            'event' => new EventResource($event),
+            'purchase' => new EventTicketPurchaseResource($purchase),
+        ],
+    ], 201);
+}
 
     public function verifyTicket(Request $request)
     {
