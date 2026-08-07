@@ -104,6 +104,27 @@ class VideoStorageService
         ];
     }
 
+    public function uploadEventCoverImage(UploadedFile $file, int $userId): array
+    {
+        if (! $file->isValid()) {
+            throw new RuntimeException('The uploaded event cover image is not valid.');
+        }
+
+        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.event_cover_directory', 'events/covers'));
+
+        $storedPath = Storage::disk($disk)->putFileAs(dirname($path), $file, basename($path));
+
+        if (! $storedPath) {
+            throw new RuntimeException('Unable to store the event cover image in primary storage.');
+        }
+
+        return [
+            'disk' => $disk,
+            'source_key' => $storedPath,
+            'source_url' => Storage::disk($disk)->url($storedPath),
+        ];
+    }
+
     public function uploadRenderedVideo(string $localPath, int $userId, string $originalName = 'edited.mp4'): array
     {
         if (! is_file($localPath)) {

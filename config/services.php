@@ -63,4 +63,8 @@ return [
         'signature_ttl' => env('FASTAPI_SIGNATURE_TTL_SECONDS', 300),
     ],
 
+    'qr_code' => [
+        'generator_url' => env('QR_CODE_GENERATOR_URL', 'https://api.qrserver.com/v1/create-qr-code/'),
+    ],
+
 ];

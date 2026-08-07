@@ -126,6 +126,21 @@ class User extends Authenticatable
         return $this->hasMany(CommunityPost::class);
     }
 
+    public function events()
+    {
+        return $this->hasMany(Event::class);
+    }
+
+    public function eventTicketPurchases()
+    {
+        return $this->hasMany(EventTicketPurchase::class, 'buyer_id');
+    }
+
+    public function eventTickets()
+    {
+        return $this->hasMany(EventTicket::class, 'buyer_id');
+    }
+
     public function videoPlaylists()
     {
         return $this->hasMany(VideoPlaylist::class);

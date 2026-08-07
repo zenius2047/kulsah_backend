@@ -4,6 +4,7 @@ return [
     'storage_disk' => env('VIDEO_STORAGE_DISK', env('FILESYSTEM_DISK', 'local')),
     'upload_directory' => env('VIDEO_UPLOAD_DIRECTORY', 'videos/originals'),
     'community_media_directory' => env('VIDEO_COMMUNITY_MEDIA_DIRECTORY', 'community/media'),
+    'event_cover_directory' => env('VIDEO_EVENT_COVER_DIRECTORY', 'events/covers'),
     'rendered_directory' => env('VIDEO_RENDERED_DIRECTORY', 'videos/rendered'),
     'edit_asset_directory' => env('VIDEO_EDIT_ASSET_DIRECTORY', 'videos/edit-assets'),
     'thumbnail_directory' => env('VIDEO_THUMBNAIL_DIRECTORY', 'videos/thumbnails'),
