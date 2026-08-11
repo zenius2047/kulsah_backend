@@ -110,23 +110,30 @@ class CommunityPostResource extends JsonResource
     private function formatPoll(array $poll, Request $request): array
     {
         $optionTexts = array_values(array_filter($poll['options'] ?? [], static fn ($option) => is_string($option) && trim($option) !== ''));
+        /** @var CommunityPost $post */
+        $post = $this->resource;
+        $votes = $post->relationLoaded('pollVotes') ? $post->pollVotes : collect();
+        $totalVotes = $votes->count();
+        $viewerVote = $votes->firstWhere('user_id', $request->user()?->id);
         $options = [];
 
         foreach ($optionTexts as $index => $optionText) {
+            $votesCount = $votes->where('poll_option_index', $index)->count();
+
             $options[] = [
-                'id' => 'option_'.($index + 1),
+                'id' => $index + 1,
                 'text' => $optionText,
-                'votes_count' => 0,
-                'percentage' => 0,
-                'is_selected' => false,
+                'votes_count' => $votesCount,
+                'percentage' => $totalVotes > 0 ? round(($votesCount / $totalVotes) * 100, 2) : 0,
+                'is_selected' => $viewerVote !== null && (int) $viewerVote->poll_option_index === $index,
             ];
         }
 
         return [
             'options' => $options,
-            'total_votes' => 0,
-            'has_voted' => false,
-            'selected_option_id' => null,
+            'total_votes' => $totalVotes,
+            'has_voted' => $viewerVote !== null,
+            'selected_option_id' => $viewerVote !== null ? (int) $viewerVote->poll_option_index + 1 : null,
             'closes_at' => $poll['closes_at'] ?? null,
         ];
     }

@@ -4,13 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\CommunityPost;
 use App\Models\CommunityPostMedia;
-use App\Models\CommunityPostComment;
-use App\Models\CommunityPostGift;
-use App\Models\CommunityPostLike;
-use App\Models\CommunityPostShare;
-use App\Models\Role;
+use App\Models\CommunityPostPollVote;
 use App\Models\KulCoinGift;
 use App\Models\KulCoinWallet;
+use App\Models\Role;
 use App\Models\Subscription;
 use App\Models\User;
 use App\Services\CloudinaryService;
@@ -97,6 +94,7 @@ class CommunityPostsTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('data.type', 'poll')
+            ->assertJsonPath('data.poll.options.0.id', 1)
             ->assertJsonPath('data.poll.options.0.text', 'Shorts')
             ->assertJsonPath('data.poll.closes_at', $closesAt);
 
@@ -168,6 +166,91 @@ class CommunityPostsTest extends TestCase
         $this->assertTrue(Storage::disk('community-media')->exists($media->source_key));
     }
 
+    public function test_user_can_vote_once_in_a_community_poll(): void
+    {
+        $creator = User::factory()->create();
+        $viewer = User::factory()->create();
+        $poll = CommunityPost::create([
+            'user_id' => $creator->id,
+            'type' => 'poll',
+            'content' => 'Choose one',
+            'audience' => 'public',
+            'media_ids' => [],
+            'poll' => [
+                'options' => ['First', 'Second'],
+                'closes_at' => now()->addDay()->toIso8601String(),
+            ],
+        ]);
+
+        $this->actingAs($viewer)
+            ->withoutMiddleware()
+            ->postJson("/api/v1/general/community/posts/{$poll->id}/poll/vote", [
+                'option_id' => 2,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'Poll vote submitted successfully.')
+            ->assertJsonPath('data.poll.total_votes', 1)
+            ->assertJsonPath('data.poll.has_voted', true)
+            ->assertJsonPath('data.poll.selected_option_id', 2)
+            ->assertJsonPath('data.poll.options.1.votes_count', 1)
+            ->assertJsonPath('data.poll.options.1.percentage', 100);
+
+        $this->assertDatabaseHas('community_post_poll_votes', [
+            'community_post_id' => $poll->id,
+            'user_id' => $viewer->id,
+            'poll_option_index' => 1,
+        ]);
+
+        $this->actingAs($viewer)
+            ->withoutMiddleware()
+            ->postJson("/api/v1/general/community/posts/{$poll->id}/poll/vote", [
+                'option_id' => 1,
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'You have already voted in this poll.')
+            ->assertJsonPath('data.poll.selected_option_id', 2);
+
+        $this->assertSame(1, CommunityPostPollVote::query()->where('community_post_id', $poll->id)->count());
+    }
+
+    public function test_user_cannot_vote_for_an_invalid_option_or_closed_poll(): void
+    {
+        $creator = User::factory()->create();
+        $viewer = User::factory()->create();
+        $poll = CommunityPost::create([
+            'user_id' => $creator->id,
+            'type' => 'poll',
+            'content' => 'Choose one',
+            'audience' => 'public',
+            'media_ids' => [],
+            'poll' => [
+                'options' => ['First', 'Second'],
+                'closes_at' => now()->addDay()->toIso8601String(),
+            ],
+        ]);
+
+        $this->actingAs($viewer)
+            ->withoutMiddleware()
+            ->postJson("/api/v1/general/community/posts/{$poll->id}/poll/vote", [
+                'option_id' => 3,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('option_id');
+
+        $poll->update(['poll' => [
+            'options' => ['First', 'Second'],
+            'closes_at' => now()->subMinute()->toIso8601String(),
+        ]]);
+
+        $this->actingAs($viewer)
+            ->withoutMiddleware()
+            ->postJson("/api/v1/general/community/posts/{$poll->id}/poll/vote", [
+                'option_id' => 1,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('community_post');
+    }
+
     public function test_subscribers_only_posts_are_hidden_from_non_subscribers(): void
     {
         $creator = User::factory()->create([
@@ -203,6 +286,46 @@ class CommunityPostsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.id', $privatePost->id)
             ->assertJsonPath('data.status', 'published');
+    }
+
+    public function test_community_list_and_detail_include_comments(): void
+    {
+        $creator = User::factory()->create([
+            'username' => 'commented_post_creator',
+        ]);
+        $viewer = User::factory()->create([
+            'username' => 'community_commenter',
+        ]);
+        $post = CommunityPost::create([
+            'user_id' => $creator->id,
+            'type' => 'text',
+            'content' => 'A post with comments',
+            'audience' => 'public',
+            'media_ids' => [],
+            'poll' => null,
+        ]);
+        $comment = CommunityPostComment::create([
+            'community_post_id' => $post->id,
+            'user_id' => $viewer->id,
+            'parent_id' => null,
+            'body' => 'This comment must be returned.',
+        ]);
+
+        $this->actingAs($viewer)
+            ->withoutMiddleware()
+            ->getJson('/api/v1/general/community/posts')
+            ->assertOk()
+            ->assertJsonPath('data.0.comments.0.id', $comment->id)
+            ->assertJsonPath('data.0.comments.0.content', 'This comment must be returned.')
+            ->assertJsonPath('data.0.comments.0.author.handle', 'community_commenter');
+
+        $this->actingAs($viewer)
+            ->withoutMiddleware()
+            ->getJson("/api/v1/general/community/posts/{$post->id}")
+            ->assertOk()
+            ->assertJsonPath('data.comments.0.id', $comment->id)
+            ->assertJsonPath('data.comments.0.content', 'This comment must be returned.')
+            ->assertJsonPath('data.comments.0.author.handle', 'community_commenter');
     }
 
     public function test_user_can_comment_like_share_and_gift_community_post(): void

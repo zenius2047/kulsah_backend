@@ -10,7 +10,7 @@ use App\Models\CommunityPost;
 use App\Models\CommunityPostComment;
 use App\Models\CommunityPostGift;
 use App\Models\CommunityPostLike;
-use App\Models\CommunityPostMedia;
+use App\Models\CommunityPostPollVote;
 use App\Models\CommunityPostShare;
 use App\Models\KulCoinGift;
 use App\Models\Subscription;
@@ -19,9 +19,10 @@ use App\Services\CommunityMediaService;
 use App\Services\KulCoinService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Facades\DB;
 use Throwable;
 
 class CommunityPostController extends Controller
@@ -29,9 +30,7 @@ class CommunityPostController extends Controller
     public function __construct(
         private readonly KulCoinService $kulCoinService,
         private readonly CommunityMediaService $communityMediaService,
-    )
-    {
-    }
+    ) {}
 
     public function index(Request $request)
     {
@@ -45,7 +44,22 @@ class CommunityPostController extends Controller
         $subscribedCreatorIds = $this->subscribedCreatorIds($viewerId);
 
         $posts = CommunityPost::query()
-            ->with(['user.roles:id,name', 'media'])
+            ->with([
+                'user.roles:id,name',
+                'media',
+                'pollVotes',
+                'comments' => function ($query): void {
+                    $query->whereNull('parent_id')
+                        ->latest()
+                        ->with([
+                            'user.roles:id,name',
+                            'replies' => function ($replyQuery): void {
+                                $replyQuery->oldest()->with('user.roles:id,name')->withCount('replies');
+                            },
+                        ])
+                        ->withCount('replies');
+                },
+            ])
             ->withCount(['likes', 'comments', 'shares', 'gifts'])
             ->where(function ($query) use ($viewerId, $subscribedCreatorIds): void {
                 $query->where('audience', 'public')
@@ -171,6 +185,7 @@ class CommunityPostController extends Controller
         $post->load([
             'user.roles:id,name',
             'media',
+            'pollVotes',
             'comments' => function ($query): void {
                 $query->whereNull('parent_id')
                     ->latest()
@@ -409,6 +424,67 @@ class CommunityPostController extends Controller
         }
     }
 
+    public function vote(Request $request, string $communityPost)
+    {
+        $post = $this->findCommunityPost($communityPost);
+        $this->authorizeView($request, $post);
+
+        if ($post->type !== 'poll') {
+            throw ValidationException::withMessages([
+                'community_post' => 'The selected community post is not a poll.',
+            ]);
+        }
+
+        $validated = $request->validate([
+            'option_id' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $poll = is_array($post->poll) ? $post->poll : [];
+        $options = array_values(array_filter(
+            $poll['options'] ?? [],
+            static fn ($option) => is_string($option) && trim($option) !== ''
+        ));
+        $optionIndex = ((int) $validated['option_id']) - 1;
+
+        if (! array_key_exists($optionIndex, $options)) {
+            throw ValidationException::withMessages([
+                'option_id' => 'The selected poll option is invalid.',
+            ]);
+        }
+
+        if (! empty($poll['closes_at']) && Carbon::parse($poll['closes_at'])->isPast()) {
+            throw ValidationException::withMessages([
+                'community_post' => 'This poll is closed.',
+            ]);
+        }
+
+        $created = false;
+
+        DB::transaction(function () use ($request, $post, $optionIndex, &$created): void {
+            $vote = CommunityPostPollVote::query()->firstOrCreate(
+                [
+                    'community_post_id' => $post->id,
+                    'user_id' => $request->user()->id,
+                ],
+                ['poll_option_index' => $optionIndex]
+            );
+
+            $created = $vote->wasRecentlyCreated;
+        });
+
+        $post->unsetRelation('pollVotes');
+
+        return response()->json([
+            'message' => $created ? 'Poll vote submitted successfully.' : 'You have already voted in this poll.',
+            'data' => $this->postState(
+                $request,
+                $post,
+                isLiked: $this->postLikedByUser($request, $post),
+                isShared: $this->postSharedByUser($request, $post),
+            ),
+        ], $created ? 201 : 200);
+    }
+
     private function validatePostPayload(Request $request): array
     {
         $validated = $request->validate([
@@ -471,7 +547,7 @@ class CommunityPostController extends Controller
 
     private function postState(Request $request, CommunityPost $post, bool $isLiked, bool $isShared): array
     {
-        $post->loadMissing(['user.roles:id,name', 'media']);
+        $post->loadMissing(['user.roles:id,name', 'media', 'pollVotes']);
         $post->loadCount(['likes', 'comments', 'shares', 'gifts']);
         $post->setAttribute('is_liked', $isLiked);
         $post->setAttribute('is_shared', $isShared);
@@ -527,6 +603,6 @@ class CommunityPostController extends Controller
 
     private function findCommunityPost(string|int $communityPost): CommunityPost
     {
-        return CommunityPost::query()->with(['user.roles:id,name', 'media'])->findOrFail($communityPost);
+        return CommunityPost::query()->with(['user.roles:id,name', 'media', 'pollVotes'])->findOrFail($communityPost);
     }
 }

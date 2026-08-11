@@ -1,16 +1,16 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
-use App\Http\Controllers\Api\V1\Community\CommunityPostController;
 use App\Http\Controllers\Api\V1\Cloudinary\CloudinaryWebhookController;
+use App\Http\Controllers\Api\V1\Community\CommunityPostController;
 use App\Http\Controllers\Api\V1\Event\EventController;
-use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
 use App\Http\Controllers\Api\V1\Feed\FeedController;
 use App\Http\Controllers\Api\V1\Feed\SocialController;
 use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
+use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
+use Illuminate\Support\Facades\Route;
 
 Route::pattern('video', '[0-9]+');
 Route::pattern('playlist', '[0-9]+');
@@ -81,6 +81,7 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::delete('/community/posts/{communityPost}/like', [CommunityPostController::class, 'unlike']);
         Route::post('/community/posts/{communityPost}/share', [CommunityPostController::class, 'share']);
         Route::post('/community/posts/{communityPost}/gift', [CommunityPostController::class, 'gift']);
+        Route::post('/community/posts/{communityPost}/poll/vote', [CommunityPostController::class, 'vote']);
         Route::get('/events', [EventController::class, 'index']);
         Route::get('/events/{event}', [EventController::class, 'show']);
         Route::post('/events/{event}/tickets/purchase', [EventController::class, 'purchaseTicket']);
