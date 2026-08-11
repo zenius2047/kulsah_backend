@@ -2,10 +2,10 @@
 
 namespace Tests\Unit;
 
+use App\Models\Video;
 use App\Services\CloudinaryService;
 use App\Services\VideoEditRenderingService;
 use App\Services\VideoStorageService;
-use App\Models\Video;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -108,5 +108,54 @@ class VideoEditRenderingServiceTest extends TestCase
         ]);
 
         $this->assertGreaterThan(300, $timeout);
+    }
+
+    public function test_arbitrary_remote_overlay_urls_are_rejected(): void
+    {
+        $service = new VideoEditRenderingService(
+            $this->createMock(VideoStorageService::class),
+            $this->createMock(CloudinaryService::class),
+        );
+
+        $method = new \ReflectionMethod(VideoEditRenderingService::class, 'materializeOverlayInput');
+        $method->setAccessible(true);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('managed storage');
+
+        $method->invoke($service, [
+            'type' => 'image',
+            'asset_url' => 'https://attacker.example/overlay.png',
+        ]);
+    }
+
+    public function test_ffmpeg_graph_applies_media_rotation_opacity_and_timing(): void
+    {
+        $service = new VideoEditRenderingService(
+            $this->createMock(VideoStorageService::class),
+            $this->createMock(CloudinaryService::class),
+        );
+
+        $method = new \ReflectionMethod(VideoEditRenderingService::class, 'buildFilterGraph');
+        $method->setAccessible(true);
+
+        $graph = $method->invoke($service, [[
+            'type' => 'image',
+            'input_index' => 1,
+            'width' => 240,
+            'height' => 240,
+            'fit' => 'contain',
+            'rotation_radians' => pi() / 2,
+            'opacity' => 0.5,
+            'x' => 620,
+            'y' => 1280,
+            'start' => 3,
+            'end' => 11,
+        ]]);
+
+        $this->assertStringContainsString('force_original_aspect_ratio=decrease', $graph);
+        $this->assertStringContainsString('rotate=', $graph);
+        $this->assertStringContainsString('colorchannelmixer=aa=0.5', $graph);
+        $this->assertStringContainsString("overlay=620:1280:eof_action=pass:enable='between(t,3,11)'", $graph);
     }
 }

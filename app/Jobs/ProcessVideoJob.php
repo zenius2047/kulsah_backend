@@ -23,9 +23,7 @@ class ProcessVideoJob implements ShouldQueue
 
     public array $backoff = [30, 60, 120];
 
-    public function __construct(public Video $video)
-    {
-    }
+    public function __construct(public Video $video) {}
 
     public function handle(CloudinaryService $cloudinaryService): void
     {
@@ -44,6 +42,15 @@ class ProcessVideoJob implements ShouldQueue
             'status' => $video->status,
             'source_key' => $video->source_key,
         ]);
+
+        if ((bool) data_get($video->metadata, 'requires_editing', false)) {
+            Log::info('ProcessVideoJob skipped because the source must be edited before Cloudinary publication.', [
+                'video_id' => $video->id,
+                'source_key' => $video->source_key,
+            ]);
+
+            return;
+        }
 
         if ($video->status === 'ready' && $video->cdn_url && $video->cloudinary_public_id) {
             Log::info('ProcessVideoJob skipped because the video is already ready.', [

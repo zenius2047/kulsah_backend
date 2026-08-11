@@ -3,17 +3,16 @@
 namespace App\Services;
 
 use App\Jobs\ProcessVideoJob;
-use App\Models\Video;
 use App\Models\User;
+use App\Models\Video;
 use App\Models\VideoView;
 use App\Notifications\VideoMentionedNotification;
-use App\Services\FeedService;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
 use Throwable;
@@ -26,8 +25,7 @@ class VideoService
         private readonly VideoCaptionParserService $videoCaptionParserService,
         private readonly FastApiRecommendationService $fastApiRecommendationService,
         private readonly FeedService $feedService,
-    ) {
-    }
+    ) {}
 
     public function createDraftVideo(array $data, int $userId): Video
     {
@@ -275,7 +273,7 @@ class VideoService
             if ($thumbnail) {
                 $this->videoStorageService->delete($thumbnail['source_key'], $thumbnail['disk']);
             }
-                throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
+            throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
         }
 
         ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
@@ -328,6 +326,7 @@ class VideoService
                     'original_name' => $data['original_name'] ?? null,
                     'mime_type' => $data['mime_type'] ?? null,
                     'size' => $data['size'] ?? null,
+                    'requires_editing' => (bool) ($data['requires_editing'] ?? false),
                     'thumbnail_disk' => $thumbnail['disk'] ?? null,
                     'thumbnail_source_key' => $thumbnail['source_key'] ?? null,
                     'thumbnail_original_name' => $thumbnailFile?->getClientOriginalName(),
@@ -380,14 +379,28 @@ class VideoService
             ]);
         }
 
+        $requiresEditing = (bool) data_get($video->metadata, 'requires_editing', false);
+
         $video->update([
             'status' => 'draft',
             'progress_percentage' => 100,
+            'render_status' => $requiresEditing ? 'awaiting_edit' : $video->render_status,
             'metadata' => array_merge($video->metadata ?? [], [
                 'upload_state' => 'uploaded',
                 'upload_completed_at' => now()->toISOString(),
+                'processing_state' => $requiresEditing ? 'awaiting_edit' : 'queued',
             ]),
         ]);
+
+        if ($requiresEditing) {
+            Log::info('Direct video upload completed and Cloudinary processing was deferred for editing.', [
+                'video_id' => $video->id,
+                'user_id' => $userId,
+                'source_key' => $video->source_key,
+            ]);
+
+            return $video->fresh();
+        }
 
         ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
 

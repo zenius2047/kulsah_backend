@@ -14,8 +14,8 @@ class VideoEditRenderingService
     public function __construct(
         private readonly VideoStorageService $videoStorageService,
         private readonly CloudinaryService $cloudinaryService,
-    ) {
-    }
+        private readonly ?VideoInspectionService $videoInspectionService = null,
+    ) {}
 
     /**
      * Render a normalized rich timeline. This is the path used for TikTok-style
@@ -25,13 +25,13 @@ class VideoEditRenderingService
      */
     public function renderTimeline(Video $video, array $timeline): array
     {
-        return $this->render($video, (array) ($timeline['layers'] ?? []));
+        return $this->render($video, (array) ($timeline['layers'] ?? []), $timeline);
     }
 
     /**
      * @param  array<int, array<string, mixed>>  $overlays
      */
-    public function render(Video $video, array $overlays): array
+    public function render(Video $video, array $overlays, array $timeline = []): array
     {
         $sourceDisk = data_get($video->metadata, 'storage_disk', config('video.storage_disk', 's3'));
         $sourcePath = $this->copyStorageFileToTemp($sourceDisk, (string) $video->source_key, 'kulsah-edit-source-', '.mp4');
@@ -41,13 +41,21 @@ class VideoEditRenderingService
         $overlayTempFiles = [];
 
         try {
+            usort($overlays, static fn (mixed $left, mixed $right): int => ((int) (is_array($left) ? ($left['z_index'] ?? 0) : 0)) <=> ((int) (is_array($right) ? ($right['z_index'] ?? 0) : 0)));
+
             foreach ($overlays as $overlay) {
                 if (! is_array($overlay)) {
                     continue;
                 }
 
+                if (! filter_var($overlay['enabled'] ?? true, FILTER_VALIDATE_BOOLEAN)
+                    || (array_key_exists('visible', $overlay) && ! filter_var($overlay['visible'], FILTER_VALIDATE_BOOLEAN))) {
+                    continue;
+                }
+
                 if (! $this->requiresOverlayInput($overlay)) {
                     $preparedOverlays[] = $overlay;
+
                     continue;
                 }
 
@@ -56,12 +64,13 @@ class VideoEditRenderingService
                 $overlayInputs[] = [
                     'source' => $materializedOverlay['source'],
                     'loop' => $this->shouldLoopOverlayInput($overlay),
+                    'type' => (string) ($overlay['type'] ?? ''),
                 ];
                 $overlay['input_index'] = count($overlayInputs);
                 $preparedOverlays[] = $overlay;
             }
 
-            $command = $this->buildCommand($sourcePath, $overlayInputs, $preparedOverlays, $outputPath);
+            $command = $this->buildCommand($sourcePath, $overlayInputs, $preparedOverlays, $outputPath, $timeline);
             $process = new Process($command);
             $process->setTimeout($this->resolveProcessTimeoutSeconds($video, $preparedOverlays));
             $process->run();
@@ -75,6 +84,8 @@ class VideoEditRenderingService
 
                 throw new RuntimeException('Video edit render failed: '.trim($process->getErrorOutput()));
             }
+
+            $this->validateRenderedOutput($outputPath);
 
             return $this->cloudinaryService->uploadVideoFromLocalPath(
                 localPath: $outputPath,
@@ -92,23 +103,43 @@ class VideoEditRenderingService
     }
 
     /**
-     * @param  array<int, array{source:string,loop:bool}>  $overlayInputs
+     * @param  array<int, array{source:string,loop:bool,type?:string}>  $overlayInputs
      * @param  array<int, array<string, mixed>>  $overlays
      * @return array<int, string>
      */
-    private function buildCommand(string $sourcePath, array $overlayInputs, array $overlays, string $outputPath): array
+    private function buildCommand(string $sourcePath, array $overlayInputs, array $overlays, string $outputPath, array $timeline = []): array
     {
-        $command = ['ffmpeg', '-y', '-i', $sourcePath];
+        $command = ['ffmpeg', '-y'];
+        $trim = is_array($timeline['trim'] ?? null) ? $timeline['trim'] : [];
+
+        if (isset($trim['start']) && (float) $trim['start'] > 0) {
+            array_push($command, '-ss', (string) max(0.0, (float) $trim['start']));
+        }
+
+        if (isset($trim['end']) && (float) $trim['end'] > 0) {
+            array_push($command, '-to', (string) max(0.0, (float) $trim['end']));
+        }
+
+        array_push($command, '-i', $sourcePath);
 
         foreach ($overlayInputs as $overlayInput) {
             if (($overlayInput['loop'] ?? false) === true) {
-                array_push($command, '-loop', '1');
+                if (($overlayInput['type'] ?? '') === 'video') {
+                    array_push($command, '-stream_loop', '-1');
+                } else {
+                    array_push($command, '-loop', '1');
+                }
             }
 
             array_push($command, '-i', (string) $overlayInput['source']);
         }
 
-        $filter = $this->buildFilterGraph($overlays);
+        $filter = $this->buildFilterGraph($overlays, $timeline);
+        $output = is_array($timeline['output'] ?? null) ? $timeline['output'] : [];
+        $preset = in_array((string) ($output['preset'] ?? ''), ['veryfast', 'faster', 'fast', 'medium'], true)
+            ? (string) $output['preset']
+            : (string) config('video.transcode_preset', 'veryfast');
+        $crf = max(0, min(51, (int) ($output['crf'] ?? config('video.transcode_crf', 28))));
 
         array_push(
             $command,
@@ -123,9 +154,9 @@ class VideoEditRenderingService
             '-pix_fmt',
             'yuv420p',
             '-preset',
-            (string) config('video.transcode_preset', 'veryfast'),
+            $preset,
             '-crf',
-            (string) config('video.transcode_crf', 28),
+            (string) $crf,
             '-c:a',
             'aac',
             '-b:a',
@@ -154,7 +185,8 @@ class VideoEditRenderingService
      */
     private function shouldLoopOverlayInput(array $overlay): bool
     {
-        return in_array((string) ($overlay['type'] ?? ''), ['image', 'sticker', 'drawing'], true);
+        return filter_var($overlay['loop'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || in_array((string) ($overlay['type'] ?? ''), ['image', 'sticker', 'drawing'], true);
     }
 
     /**
@@ -171,6 +203,19 @@ class VideoEditRenderingService
             ];
         }
 
+        $publicId = (string) (data_get($overlay, 'public_id') ?? data_get($overlay, 'asset_public_id') ?? '');
+        if ($publicId !== '') {
+            $tempPath = $this->downloadTrustedCloudinarySource(
+                $sourcePath,
+                (string) ($overlay['type'] ?? 'overlay')
+            );
+
+            return [
+                'source' => $tempPath,
+                'cleanup' => $tempPath,
+            ];
+        }
+
         $tempPath = $this->copySourceToTemp($sourcePath, (string) ($overlay['type'] ?? 'overlay'));
 
         return [
@@ -184,12 +229,6 @@ class VideoEditRenderingService
      */
     private function resolveOverlaySourcePath(array $overlay): string
     {
-        $assetUrl = (string) data_get($overlay, 'asset_url', '');
-
-        if ($assetUrl !== '') {
-            return $assetUrl;
-        }
-
         $assetDisk = (string) data_get($overlay, 'asset_disk', '');
         $assetKey = (string) data_get($overlay, 'asset_key', '');
 
@@ -230,7 +269,7 @@ class VideoEditRenderingService
             return $this->cloudinaryService->generateImageUrlFromPublicId($publicId);
         }
 
-        throw new RuntimeException('Timeline overlay is missing a renderable source.');
+        throw new RuntimeException('Timeline overlays must use managed storage or a trusted Cloudinary public ID.');
     }
 
     private function copySourceToTemp(string $source, string $overlayType): string
@@ -246,6 +285,14 @@ class VideoEditRenderingService
             return $tempPath;
         }
 
+        @unlink($tempPath);
+
+        throw new RuntimeException('Remote URLs and arbitrary paths are not accepted as FFmpeg overlay inputs.');
+    }
+
+    private function downloadTrustedCloudinarySource(string $source, string $overlayType): string
+    {
+        $tempPath = $this->makeTempPath('kulsah-edit-overlay-', $this->guessOverlayExtension($source, $overlayType));
         $response = Http::timeout((int) config('video.edit_overlay_fetch_timeout_seconds', 45))
             ->retry(2, 250)
             ->sink($tempPath)
@@ -253,7 +300,7 @@ class VideoEditRenderingService
 
         if (! $response->successful()) {
             @unlink($tempPath);
-            throw new RuntimeException('Unable to download the overlay asset for rendering.');
+            throw new RuntimeException('Unable to download the trusted Cloudinary overlay asset.');
         }
 
         return $tempPath;
@@ -262,11 +309,20 @@ class VideoEditRenderingService
     /**
      * @param  array<int, array<string, mixed>>  $overlays
      */
-    private function buildFilterGraph(array $overlays): string
+    private function buildFilterGraph(array $overlays, array $timeline = []): string
     {
         $filters = [];
         $current = '[0:v]';
         $step = 0;
+        $output = is_array($timeline['output'] ?? null) ? $timeline['output'] : [];
+
+        if (isset($output['width'], $output['height'])) {
+            $width = max(16, min(3840, (int) $output['width']));
+            $height = max(16, min(3840, (int) $output['height']));
+            $filters[] = '[0:v]scale='.$width.':'.$height.':force_original_aspect_ratio=decrease,'
+                .'pad='.$width.':'.$height.':(ow-iw)/2:(oh-ih)/2:color=black[base]';
+            $current = '[base]';
+        }
 
         foreach ($overlays as $overlay) {
             $next = '[v'.$step.']';
@@ -317,6 +373,7 @@ class VideoEditRenderingService
                 $filters[] = $current.'drawtext='.implode(':', $drawText).$next;
                 $current = $next;
                 $step++;
+
                 continue;
             }
 
@@ -342,23 +399,83 @@ class VideoEditRenderingService
                     .$next;
                 $current = $next;
                 $step++;
+
                 continue;
             }
 
             $inputIndex = (int) ($overlay['input_index'] ?? ($step + 1));
             $overlayInput = '['.$inputIndex.':v]';
-            if (($overlay['width'] ?? null) || ($overlay['height'] ?? null)) {
-                $scaled = '[layer'.$step.']';
-                $width = $overlay['width'] ?? -1;
-                $height = $overlay['height'] ?? -1;
-                $filters[] = $overlayInput.'scale='.(int) $width.':'.(int) $height.$scaled;
-                $overlayInput = $scaled;
+            $inputFilters = [];
+            $layerWidth = isset($overlay['width']) ? max(1, (int) $overlay['width']) : null;
+            $layerHeight = isset($overlay['height']) ? max(1, (int) $overlay['height']) : null;
+            $fit = (string) ($overlay['fit'] ?? 'contain');
+            $trimStart = max(0.0, (float) ($overlay['trim_start'] ?? 0.0));
+            $trimEnd = isset($overlay['trim_end']) ? max(0.0, (float) $overlay['trim_end']) : null;
+            $playbackRate = max(0.01, min(100.0, (float) ($overlay['playback_rate'] ?? 1.0)));
+
+            if ($trimStart > 0 || $trimEnd !== null) {
+                $trimFilter = 'trim=start='.$trimStart;
+                if ($trimEnd !== null && $trimEnd > $trimStart) {
+                    $trimFilter .= ':end='.$trimEnd;
+                }
+                $inputFilters[] = $trimFilter;
+            }
+
+            if (filter_var($overlay['reverse'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                $inputFilters[] = 'reverse';
+            }
+
+            if ($fit !== 'none' && ($layerWidth !== null || $layerHeight !== null)) {
+                $width = $layerWidth ?? -1;
+                $height = $layerHeight ?? -1;
+
+                if ($layerWidth !== null && $layerHeight !== null && $fit === 'contain') {
+                    $inputFilters[] = 'scale='.$width.':'.$height.':force_original_aspect_ratio=decrease';
+                } elseif ($layerWidth !== null && $layerHeight !== null && $fit === 'cover') {
+                    $inputFilters[] = 'scale='.$width.':'.$height.':force_original_aspect_ratio=increase';
+                    $inputFilters[] = 'crop='.$width.':'.$height;
+                } else {
+                    $inputFilters[] = 'scale='.$width.':'.$height;
+                }
+            }
+
+            if (filter_var($overlay['flip_horizontal'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                $inputFilters[] = 'hflip';
+            }
+
+            if (filter_var($overlay['flip_vertical'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                $inputFilters[] = 'vflip';
+            }
+
+            $rotation = (float) ($overlay['rotation_radians'] ?? 0.0);
+            if (abs($rotation) > 0.000001) {
+                $inputFilters[] = 'format=rgba';
+                $inputFilters[] = 'rotate='.$rotation.':c=none:ow=rotw(iw):oh=roth(ih)';
+            }
+
+            $opacity = max(0.0, min(1.0, (float) ($overlay['opacity'] ?? 1.0)));
+            if ($opacity < 1.0) {
+                $inputFilters[] = 'format=rgba';
+                $inputFilters[] = 'colorchannelmixer=aa='.$opacity;
+            }
+
+            if (filter_var($overlay['freeze_at_end'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                $freezeDuration = max(0.0, (float) ($overlay['end'] ?? 0.0) - (float) ($overlay['start'] ?? 0.0));
+                $inputFilters[] = 'tpad=stop_mode=clone:stop_duration='.$freezeDuration;
+            }
+
+            $inputFilters[] = 'setpts=(PTS-STARTPTS)/'.$playbackRate.'+'.max(0.0, (float) ($overlay['start'] ?? 0.0)).'/TB';
+
+            if ($inputFilters !== []) {
+                $preparedInput = '[layer'.$step.']';
+                $filters[] = $overlayInput.implode(',', $inputFilters).$preparedInput;
+                $overlayInput = $preparedInput;
             }
 
             $overlayX = $this->buildNumericPositionExpression($overlay, 'x', (string) ($overlay['x'] ?? 0));
             $overlayY = $this->buildNumericPositionExpression($overlay, 'y', (string) ($overlay['y'] ?? 0));
 
-            $filters[] = $current.$overlayInput.'overlay='.$overlayX.':'.$overlayY.":enable='{$enable}'".$next;
+            $filters[] = $current.$overlayInput.'overlay='.$overlayX.':'.$overlayY.":eof_action=pass:enable='{$enable}'".$next;
             $current = $next;
             $step++;
         }
@@ -522,6 +639,7 @@ class VideoEditRenderingService
                 $segments[] = sprintf('if(lt(t,%s),%s', $time, $previousValue);
                 $previousTime = $time;
                 $previousValue = $value;
+
                 continue;
             }
 
@@ -637,6 +755,20 @@ class VideoEditRenderingService
         }
 
         return is_numeric($duration) ? max(0.0, (float) $duration) : 0.0;
+    }
+
+    private function validateRenderedOutput(string $outputPath): void
+    {
+        if (! is_file($outputPath) || filesize($outputPath) === false || filesize($outputPath) <= 0) {
+            throw new RuntimeException('FFmpeg did not produce a valid output file.');
+        }
+
+        $inspector = $this->videoInspectionService ?? app(VideoInspectionService::class);
+        $duration = $inspector->getDurationSeconds($outputPath);
+
+        if ($duration === null || $duration <= 0) {
+            throw new RuntimeException('The rendered video has an invalid duration.');
+        }
     }
 
     private function makeTempPath(string $prefix, string $extension): string

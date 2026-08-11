@@ -36,6 +36,8 @@ class VideoResource extends JsonResource
             'status' => $this->status,
             'render_status' => $this->render_status,
             'progress_percentage' => (int) ($this->progress_percentage ?? 0),
+            'requires_editing' => (bool) data_get($metadata, 'requires_editing', false),
+            'upload_state' => data_get($metadata, 'upload_state'),
             'views_count' => (int) ($this->views_count ?? 0),
             'created_at' => optional($this->created_at)?->toIso8601String(),
             'render_completed_at' => optional($this->render_completed_at)?->toIso8601String(),

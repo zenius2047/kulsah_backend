@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
 use App\Http\Controllers\Api\V1\Cloudinary\CloudinaryWebhookController;
 use App\Http\Controllers\Api\V1\Community\CommunityPostController;
+use App\Http\Controllers\Api\V1\Discovery\DiscoveryController;
 use App\Http\Controllers\Api\V1\Event\EventController;
 use App\Http\Controllers\Api\V1\Feed\FeedController;
 use App\Http\Controllers\Api\V1\Feed\SocialController;
@@ -50,9 +51,9 @@ Route::prefix('creator')
         Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
         Route::post('/community/posts', [CommunityPostController::class, 'store']);
-        Route::get('/events', [EventController::class, 'creatorIndex']);
+        Route::get('/events', [EventController::class, 'creatorIndex'])->middleware('cache.api:60');
         Route::post('/events', [EventController::class, 'store']);
-        Route::get('/events/{event}', [EventController::class, 'creatorShow']);
+        Route::get('/events/{event}', [EventController::class, 'creatorShow'])->middleware('cache.api:60');
         Route::patch('/events/{event}', [EventController::class, 'update']);
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
@@ -72,18 +73,19 @@ Route::prefix('creator-fan')
 Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
+        Route::get('/discovery', [DiscoveryController::class, 'index'])->middleware('cache.api:60');
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
-        Route::get('/community/posts', [CommunityPostController::class, 'index']);
-        Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show']);
-        Route::get('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comments']);
+        Route::get('/community/posts', [CommunityPostController::class, 'index'])->middleware('cache.api:30');
+        Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show'])->middleware('cache.api:30');
+        Route::get('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comments'])->middleware('cache.api:30');
         Route::post('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comment']);
         Route::post('/community/posts/{communityPost}/like', [CommunityPostController::class, 'like']);
         Route::delete('/community/posts/{communityPost}/like', [CommunityPostController::class, 'unlike']);
         Route::post('/community/posts/{communityPost}/share', [CommunityPostController::class, 'share']);
         Route::post('/community/posts/{communityPost}/gift', [CommunityPostController::class, 'gift']);
         Route::post('/community/posts/{communityPost}/poll/vote', [CommunityPostController::class, 'vote']);
-        Route::get('/events', [EventController::class, 'index']);
-        Route::get('/events/{event}', [EventController::class, 'show']);
+        Route::get('/events', [EventController::class, 'index'])->middleware('cache.api:60');
+        Route::get('/events/{event}', [EventController::class, 'show'])->middleware('cache.api:60');
         Route::post('/events/{event}/tickets/purchase', [EventController::class, 'purchaseTicket']);
         Route::post('/events/tickets/verify', [EventController::class, 'verifyTicket']);
         Route::get('/videos/watched', [VideoController::class, 'watched']);
@@ -91,8 +93,8 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::get('/videos/{video}', [VideoController::class, 'show']);
         Route::get('/kulcoin/wallet', [KulCoinController::class, 'wallet']);
         Route::get('/kulcoin/ledger', [KulCoinController::class, 'ledger']);
-        Route::get('/kulcoin/packages', [KulCoinController::class, 'packages']);
-        Route::get('/kulcoin/gifts', [KulCoinController::class, 'gifts']);
+        Route::get('/kulcoin/packages', [KulCoinController::class, 'packages'])->middleware('cache.api:300');
+        Route::get('/kulcoin/gifts', [KulCoinController::class, 'gifts'])->middleware('cache.api:300');
         Route::post('/kulcoin/purchase', [KulCoinController::class, 'purchase']);
         Route::post('/kulcoin/gifts/send', [KulCoinController::class, 'sendGift']);
         Route::post('/kulcoin/votes', [KulCoinController::class, 'vote']);
@@ -102,7 +104,7 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::post('/videos/{video}/bookmark', [SocialController::class, 'bookmark']);
         Route::delete('/videos/{video}/bookmark', [SocialController::class, 'unbookmark']);
         Route::post('/videos/{video}/comments', [SocialController::class, 'comment']);
-        Route::get('/videos/{video}/comments', [SocialController::class, 'comments']);
+        Route::get('/videos/{video}/comments', [SocialController::class, 'comments'])->middleware('cache.api:30');
         Route::post('/videos/{video}/comments/{comment}/reply', [SocialController::class, 'reply']);
         Route::post('/videos/{video}/comments/{comment}/like', [SocialController::class, 'likeComment']);
         Route::delete('/videos/{video}/comments/{comment}/like', [SocialController::class, 'unlikeComment']);

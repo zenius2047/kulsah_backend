@@ -29,14 +29,12 @@ class RenderVideoEditsJob implements ShouldQueue
     public function __construct(
         public Video $video,
         public array $timeline,
-    ) {
-    }
+    ) {}
 
     public function handle(
         CloudinaryVideoRendererService $cloudinaryRenderer,
         VideoEditRenderingService $ffmpegRenderer,
-    ): void
-    {
+    ): void {
         $video = $this->video->fresh();
 
         if (! $video) {
@@ -58,6 +56,7 @@ class RenderVideoEditsJob implements ShouldQueue
                 'render_status' => 'processing',
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => 'rendering',
+                    'processing_state' => 'rendering_edit',
                     'edit_started_at' => now()->toISOString(),
                     'render_timeline' => $this->timeline,
                     'render_engine' => $shouldUseFfmpeg ? 'ffmpeg' : 'cloudinary',
@@ -99,6 +98,7 @@ class RenderVideoEditsJob implements ShouldQueue
                 'poster_url' => $rendered['poster_url'] ?? $video->poster_url,
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => $isReady ? 'ready' : 'rendering',
+                    'processing_state' => $isReady ? 'ready' : 'rendering_edit',
                     'render_requested_at' => now()->toISOString(),
                     'render_completed_at' => $isReady ? now()->toISOString() : null,
                     'render_plan' => $rendered['metadata'] ?? [],
@@ -110,6 +110,7 @@ class RenderVideoEditsJob implements ShouldQueue
                 'render_status' => 'failed',
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => 'failed',
+                    'processing_state' => 'edit_failed',
                     'edit_error' => $throwable->getMessage(),
                 ]),
             ]);

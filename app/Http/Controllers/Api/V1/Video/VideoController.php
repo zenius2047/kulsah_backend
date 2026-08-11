@@ -4,16 +4,16 @@ namespace App\Http\Controllers\Api\V1\Video;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Video\VideoRenderRequest;
-use App\Http\Resources\CreatorVideoResource;
 use App\Http\Resources\CreatorVideoDetailResource;
+use App\Http\Resources\CreatorVideoResource;
 use App\Http\Resources\VideoPlaylistResource;
 use App\Http\Resources\VideoResource;
 use App\Models\Video;
 use App\Models\VideoPlaylist;
 use App\Models\VideoView;
-use App\Services\VideoService;
 use App\Services\VideoCacheService;
 use App\Services\VideoEditService;
+use App\Services\VideoService;
 use App\Services\VideoStorageService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -30,8 +30,7 @@ class VideoController extends Controller
         private readonly VideoCacheService $videoCacheService,
         private readonly VideoStorageService $videoStorageService,
         private readonly VideoEditService $videoEditService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request)
     {
@@ -272,6 +271,7 @@ class VideoController extends Controller
             'original_name' => ['nullable', 'string', 'max:255'],
             'mime_type' => ['nullable', 'string', 'max:120'],
             'size' => ['nullable', 'integer', 'min:0'],
+            'requires_editing' => ['sometimes', 'boolean'],
         ]);
 
         $contentTypes = $this->resolveContentTypes($request);
@@ -287,6 +287,7 @@ class VideoController extends Controller
                     'original_name' => $request->input('original_name'),
                     'mime_type' => $request->input('mime_type'),
                     'size' => $request->input('size'),
+                    'requires_editing' => $request->boolean('requires_editing'),
                 ],
                 userId: (int) $request->user()->id,
                 thumbnailFile: $request->file('thumbnail'),
@@ -349,8 +350,12 @@ class VideoController extends Controller
 
         $this->invalidateCreatorCaches((int) $request->user()->id);
 
+        $requiresEditing = (bool) data_get($video->metadata, 'requires_editing', false);
+
         return response()->json([
-            'message' => 'Direct upload completed successfully and processing has started.',
+            'message' => $requiresEditing
+                ? 'Direct upload completed successfully and is ready for editing.'
+                : 'Direct upload completed successfully and processing has started.',
             'data' => new VideoResource($video),
         ], 201);
     }
@@ -775,7 +780,11 @@ class VideoController extends Controller
                     'data' => [
                         'video_id' => $video->id,
                         'status' => $video->status,
+                        'render_status' => $video->render_status,
                         'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+                        'requires_editing' => (bool) data_get($video->metadata, 'requires_editing', false),
+                        'upload_state' => data_get($video->metadata, 'upload_state'),
+                        'processing_state' => data_get($video->metadata, 'processing_state'),
                     ],
                 ];
             }
@@ -808,7 +817,11 @@ class VideoController extends Controller
             'data' => [
                 'video_id' => $video->id,
                 'status' => $video->status,
+                'render_status' => $video->render_status,
                 'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+                'requires_editing' => (bool) data_get($video->metadata, 'requires_editing', false),
+                'upload_state' => data_get($video->metadata, 'upload_state'),
+                'processing_state' => data_get($video->metadata, 'processing_state'),
             ],
         ]);
     }
