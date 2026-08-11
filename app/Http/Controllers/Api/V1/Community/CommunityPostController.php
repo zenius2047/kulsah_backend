@@ -16,6 +16,7 @@ use App\Models\KulCoinGift;
 use App\Models\Subscription;
 use App\Models\UserFollow;
 use App\Services\CommunityMediaService;
+use App\Services\ContentViewStateService;
 use App\Services\KulCoinService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -30,6 +31,7 @@ class CommunityPostController extends Controller
     public function __construct(
         private readonly KulCoinService $kulCoinService,
         private readonly CommunityMediaService $communityMediaService,
+        private readonly ContentViewStateService $contentViewStateService,
     ) {}
 
     public function index(Request $request)
@@ -42,6 +44,7 @@ class CommunityPostController extends Controller
         $perPage = (int) ($validated['per_page'] ?? 20);
         $page = max(1, (int) $request->query('page', 1));
         $subscribedCreatorIds = $this->subscribedCreatorIds($viewerId);
+        $viewedPostIds = $this->contentViewStateService->viewedIds($viewerId, 'community_post');
 
         $posts = CommunityPost::query()
             ->with([
@@ -69,6 +72,7 @@ class CommunityPostController extends Controller
                             ->whereIn('user_id', $subscribedCreatorIds);
                     });
             })
+            ->when($viewedPostIds !== [], fn ($query) => $query->whereNotIn('id', $viewedPostIds))
             ->latest('id')
             ->paginate($perPage, ['*'], 'page', $page);
 
@@ -96,10 +100,17 @@ class CommunityPostController extends Controller
             ->map(static fn ($id) => (int) $id)
             ->flip();
 
-        $posts->getCollection()->each(function (CommunityPost $post) use ($likedPostIds, $sharedPostIds, $followedAuthorIds): void {
+        $totalPosts = $posts->total();
+        $startOffset = ($posts->currentPage() - 1) * $posts->perPage();
+
+        $posts->getCollection()->values()->each(function (CommunityPost $post, int $index) use ($likedPostIds, $sharedPostIds, $followedAuthorIds, $totalPosts, $startOffset): void {
             $post->setAttribute('is_liked', $likedPostIds->has((int) $post->id));
             $post->setAttribute('is_shared', $sharedPostIds->has((int) $post->id));
             $post->setAttribute('is_following', $followedAuthorIds->has((int) $post->user_id));
+            $post->setAttribute(
+                'community_count',
+                max(0, $totalPosts - ($startOffset + $index + 1))
+            );
             $post->setRelation('user', $post->user);
         });
 
@@ -110,6 +121,25 @@ class CommunityPostController extends Controller
                 'last_page' => $posts->lastPage(),
                 'per_page' => $posts->perPage(),
                 'total' => $posts->total(),
+            ],
+        ]);
+    }
+
+    public function view(Request $request, string $communityPost)
+    {
+        $post = $this->findCommunityPost($communityPost);
+        $this->authorizeView($request, $post);
+
+        $this->contentViewStateService->recordView(
+            viewerId: (int) $request->user()->id,
+            viewableType: 'community_post',
+            viewableId: (int) $post->id
+        );
+
+        return response()->json([
+            'message' => 'Community post view recorded successfully.',
+            'meta' => [
+                'community_post_id' => (int) $post->id,
             ],
         ]);
     }
@@ -170,6 +200,7 @@ class CommunityPostController extends Controller
         $post->setAttribute('is_liked', false);
         $post->setAttribute('is_shared', false);
         $post->setAttribute('is_following', false);
+        $post->setAttribute('community_count', 0);
 
         return response()->json([
             'message' => 'Community post created successfully.',
@@ -211,6 +242,7 @@ class CommunityPostController extends Controller
             ->where('follower_id', $request->user()->id)
             ->where('followed_id', $post->user_id)
             ->exists());
+        $post->setAttribute('community_count', 0);
 
         return response()->json([
             'data' => new CommunityPostResource($post),
@@ -551,6 +583,7 @@ class CommunityPostController extends Controller
         $post->loadCount(['likes', 'comments', 'shares', 'gifts']);
         $post->setAttribute('is_liked', $isLiked);
         $post->setAttribute('is_shared', $isShared);
+        $post->setAttribute('community_count', 0);
 
         return (new CommunityPostResource($post))->resolve($request);
     }

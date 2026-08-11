@@ -43,6 +43,7 @@ class DiscoveryEventResource extends JsonResource
             'tickets_available' => $hasCapacity && ($ticketTypes->isEmpty() || $hasAvailableTicketType),
             'minimum_ticket_price' => $minimumTicketPrice !== null ? (float) $minimumTicketPrice : null,
             'currency' => $event->currency,
+            'discovery_count' => (int) ($event->discovery_count ?? 0),
         ];
     }
 }

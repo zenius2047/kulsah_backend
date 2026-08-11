@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\DiscoveryCreatorResource;
 use App\Http\Resources\DiscoveryEventResource;
 use App\Http\Resources\DiscoveryVideoResource;
+use App\Services\ContentViewStateService;
 use App\Services\DiscoveryService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -14,6 +15,7 @@ class DiscoveryController extends Controller
 {
     public function __construct(
         private readonly DiscoveryService $discoveryService,
+        private readonly ContentViewStateService $contentViewStateService,
     ) {}
 
     public function index(Request $request)
@@ -41,11 +43,41 @@ class DiscoveryController extends Controller
             ],
             'meta' => [
                 'generated_at' => now()->toIso8601String(),
+                'discovery_count' => $result['discovery_count'],
+                'counts' => $result['counts'],
                 'pagination' => [
                     'current_page' => $result['page'],
                     'per_page' => $result['limit'],
                     'has_more' => $result['has_more'],
                 ],
+            ],
+        ]);
+    }
+
+    public function view(Request $request)
+    {
+        $validated = $request->validate([
+            'type' => ['required', 'string', Rule::in(['creator', 'event', 'video'])],
+            'item_id' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $viewableType = match ($validated['type']) {
+            'creator' => 'discovery_creator',
+            'event' => 'discovery_event',
+            'video' => 'discovery_video',
+        };
+
+        $this->contentViewStateService->recordView(
+            viewerId: (int) $request->user()->id,
+            viewableType: $viewableType,
+            viewableId: (int) $validated['item_id']
+        );
+
+        return response()->json([
+            'message' => 'Discovery item view recorded successfully.',
+            'meta' => [
+                'type' => $validated['type'],
+                'item_id' => (int) $validated['item_id'],
             ],
         ]);
     }

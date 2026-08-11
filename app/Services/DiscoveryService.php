@@ -10,6 +10,11 @@ use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 
 class DiscoveryService
 {
+    public function __construct(
+        private readonly ContentViewStateService $contentViewStateService,
+    ) {
+    }
+
     /**
      * @return array{
      *     creators:EloquentCollection<int, User>,
@@ -17,7 +22,9 @@ class DiscoveryService
      *     videos:EloquentCollection<int, Video>,
      *     page:int,
      *     limit:int,
-     *     has_more:bool
+     *     has_more:bool,
+     *     discovery_count:int,
+     *     counts:array{creators:int,events:int,videos:int}
      * }
      */
     public function discover(int $viewerId, string $tab, int $page, int $limit, string $searchQuery = ''): array
@@ -26,20 +33,43 @@ class DiscoveryService
         $creators = new EloquentCollection;
         $events = new EloquentCollection;
         $videos = new EloquentCollection;
+        $counts = [
+            'creators' => 0,
+            'events' => 0,
+            'videos' => 0,
+        ];
         $hasMore = false;
 
         if (in_array($tab, ['all', 'creators'], true)) {
-            [$creators, $creatorsHaveMore] = $this->creators($viewerId, $searchQuery, $offset, $limit);
+            [$creators, $creatorsHaveMore, $creatorsTotal] = $this->creators(
+                viewerId: $viewerId,
+                searchQuery: $searchQuery,
+                offset: $offset,
+                limit: $limit,
+            );
+            $counts['creators'] = $creatorsTotal;
             $hasMore = $hasMore || $creatorsHaveMore;
         }
 
         if (in_array($tab, ['all', 'events'], true)) {
-            [$events, $eventsHaveMore] = $this->events($searchQuery, $offset, $limit);
+            [$events, $eventsHaveMore, $eventsTotal] = $this->events(
+                viewerId: $viewerId,
+                searchQuery: $searchQuery,
+                offset: $offset,
+                limit: $limit,
+            );
+            $counts['events'] = $eventsTotal;
             $hasMore = $hasMore || $eventsHaveMore;
         }
 
         if (in_array($tab, ['all', 'videos'], true)) {
-            [$videos, $videosHaveMore] = $this->videos($viewerId, $searchQuery, $offset, $limit);
+            [$videos, $videosHaveMore, $videosTotal] = $this->videos(
+                viewerId: $viewerId,
+                searchQuery: $searchQuery,
+                offset: $offset,
+                limit: $limit,
+            );
+            $counts['videos'] = $videosTotal;
             $hasMore = $hasMore || $videosHaveMore;
         }
 
@@ -50,15 +80,19 @@ class DiscoveryService
             'page' => $page,
             'limit' => $limit,
             'has_more' => $hasMore,
+            'discovery_count' => array_sum($counts),
+            'counts' => $counts,
         ];
     }
 
     /**
-     * @return array{EloquentCollection<int, User>, bool}
+     * @return array{EloquentCollection<int, User>, bool, int}
      */
     private function creators(int $viewerId, string $searchQuery, int $offset, int $limit): array
     {
-        $creators = User::query()
+        $viewedCreatorIds = $this->contentViewStateService->viewedIds($viewerId, 'discovery_creator');
+
+        $query = User::query()
             ->where('id', '!=', $viewerId)
             ->whereHas('roles', fn ($query) => $query->where('name', 'creator'))
             ->withCount('followers')
@@ -73,22 +107,31 @@ class DiscoveryService
                         ->orWhereLike('bio', '%'.$searchQuery.'%');
                 });
             })
+            ->when($viewedCreatorIds !== [], fn ($query) => $query->whereNotIn('id', $viewedCreatorIds))
             ->orderByDesc('followers_count')
             ->orderByDesc('verified')
-            ->orderByDesc('id')
+            ->orderByDesc('id');
+
+        $total = (clone $query)->count();
+        $creators = $query
             ->offset($offset)
             ->limit($limit + 1)
             ->get();
 
-        return $this->takePage($creators, $limit);
+        [$creators, $hasMore] = $this->takePage($creators, $limit);
+        $this->applyDiscoveryCounts($creators, $total, $offset);
+
+        return [$creators, $hasMore, $total];
     }
 
     /**
-     * @return array{EloquentCollection<int, Event>, bool}
+     * @return array{EloquentCollection<int, Event>, bool, int}
      */
-    private function events(string $searchQuery, int $offset, int $limit): array
+    private function events(int $viewerId, string $searchQuery, int $offset, int $limit): array
     {
-        $events = Event::query()
+        $viewedEventIds = $this->contentViewStateService->viewedIds($viewerId, 'discovery_event');
+
+        $query = Event::query()
             ->with('creator:id,name,username,avatar')
             ->where('status', 'published')
             ->where(function ($query): void {
@@ -107,21 +150,30 @@ class DiscoveryService
                         });
                 });
             })
+            ->when($viewedEventIds !== [], fn ($query) => $query->whereNotIn('id', $viewedEventIds))
             ->orderBy('starts_at')
-            ->orderByDesc('id')
+            ->orderByDesc('id');
+
+        $total = (clone $query)->count();
+        $events = $query
             ->offset($offset)
             ->limit($limit + 1)
             ->get();
 
-        return $this->takePage($events, $limit);
+        [$events, $hasMore] = $this->takePage($events, $limit);
+        $this->applyDiscoveryCounts($events, $total, $offset);
+
+        return [$events, $hasMore, $total];
     }
 
     /**
-     * @return array{EloquentCollection<int, Video>, bool}
+     * @return array{EloquentCollection<int, Video>, bool, int}
      */
     private function videos(int $viewerId, string $searchQuery, int $offset, int $limit): array
     {
-        $videos = Video::query()
+        $viewedVideoIds = $this->contentViewStateService->viewedIds($viewerId, 'discovery_video');
+
+        $query = Video::query()
             ->with('user:id,name,username,avatar')
             ->withCount(['likes', 'comments'])
             ->withExists([
@@ -140,9 +192,13 @@ class DiscoveryService
                         });
                 });
             })
+            ->when($viewedVideoIds !== [], fn ($query) => $query->whereNotIn('id', $viewedVideoIds))
             ->orderByDesc('views_count')
             ->orderByDesc('likes_count')
-            ->orderByDesc('created_at')
+            ->orderByDesc('created_at');
+
+        $total = (clone $query)->count();
+        $videos = $query
             ->offset($offset)
             ->limit($limit + 1)
             ->get();
@@ -159,7 +215,10 @@ class DiscoveryService
             $video->setAttribute('viewer_is_following_creator', $followedCreatorIds->has((int) $video->user_id));
         });
 
-        return $this->takePage($videos, $limit);
+        [$videos, $hasMore] = $this->takePage($videos, $limit);
+        $this->applyDiscoveryCounts($videos, $total, $offset);
+
+        return [$videos, $hasMore, $total];
     }
 
     /**
@@ -173,5 +232,20 @@ class DiscoveryService
         $hasMore = $items->count() > $limit;
 
         return [new EloquentCollection($items->take($limit)->all()), $hasMore];
+    }
+
+    /**
+     * @template TModel of \Illuminate\Database\Eloquent\Model
+     *
+     * @param  EloquentCollection<int, TModel>  $items
+     */
+    private function applyDiscoveryCounts(EloquentCollection $items, int $total, int $offset): void
+    {
+        $items->values()->each(function ($item, int $index) use ($total, $offset): void {
+            $item->setAttribute(
+                'discovery_count',
+                max(0, $total - ($offset + $index + 1))
+            );
+        });
     }
 }

@@ -38,6 +38,7 @@ class DiscoveryVideoResource extends JsonResource
                 'likes_count' => (int) ($video->likes_count ?? 0),
                 'comments_count' => (int) ($video->comments_count ?? 0),
             ],
+            'discovery_count' => (int) ($video->discovery_count ?? 0),
             'viewer' => [
                 'is_liked' => (bool) ($video->viewer_is_liked ?? false),
                 'is_bookmarked' => (bool) ($video->viewer_is_bookmarked ?? false),

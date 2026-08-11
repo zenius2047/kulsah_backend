@@ -23,6 +23,7 @@ class DiscoveryCreatorResource extends JsonResource
             'is_following' => (bool) ($creator->viewer_is_following ?? false),
             'is_premium' => (bool) ($creator->has_active_subscription_plan ?? false),
             'followers_count' => (int) ($creator->followers_count ?? 0),
+            'discovery_count' => (int) ($creator->discovery_count ?? 0),
             'style' => null,
             'tools' => [],
         ];

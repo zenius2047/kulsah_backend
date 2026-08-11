@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\ContentViewStateService;
 use Closure;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Http\JsonResponse;
@@ -69,6 +70,7 @@ class CacheApiResponse
 
         $context = [
             'viewer_id' => (int) $request->user()?->id,
+            'viewer_version' => $request->user() ? app(ContentViewStateService::class)->viewerVersion((int) $request->user()->id) : 0,
             'path' => '/'.$request->path(),
             'query' => $query,
             'accept' => $request->header('Accept'),

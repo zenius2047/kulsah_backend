@@ -74,9 +74,11 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/discovery', [DiscoveryController::class, 'index'])->middleware('cache.api:60');
+        Route::post('/discovery/view', [DiscoveryController::class, 'view']);
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
         Route::get('/community/posts', [CommunityPostController::class, 'index'])->middleware('cache.api:30');
         Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show'])->middleware('cache.api:30');
+        Route::post('/community/posts/{communityPost}/view', [CommunityPostController::class, 'view']);
         Route::get('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comments'])->middleware('cache.api:30');
         Route::post('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comment']);
         Route::post('/community/posts/{communityPost}/like', [CommunityPostController::class, 'like']);

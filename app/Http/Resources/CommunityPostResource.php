@@ -36,6 +36,7 @@ class CommunityPostResource extends JsonResource
             'media' => $this->formatMedia($post),
             'poll' => $this->formatPoll($poll, $request),
             'live' => null,
+            'community_count' => (int) ($post->community_count ?? 0),
             'stats' => [
                 'likes_count' => (int) ($post->likes_count ?? 0),
                 'comments_count' => (int) ($post->comments_count ?? 0),
