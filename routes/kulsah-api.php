@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
 use App\Http\Controllers\Api\V1\Challenge\ChallengeController;
@@ -116,6 +116,7 @@ Route::prefix('creator')
         Route::prefix('challenges')
             ->middleware(['role:creator|admin'])
             ->group(function () {
+                Route::post('/draft', [ChallengeController::class, 'draft'])->middleware('throttle:challenge-create');
                 Route::post('/', [ChallengeController::class, 'store'])->middleware('throttle:challenge-create');
                 Route::patch('/{challenge}', [ChallengeController::class, 'update']);
                 Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);

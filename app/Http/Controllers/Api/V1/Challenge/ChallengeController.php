@@ -55,14 +55,27 @@ class ChallengeController extends Controller
 
     public function store(StoreChallengeRequest $request, CreateChallenge $action)
     {
-        return ChallengeResource::make($action->execute($request->user(), $request->validated()))->response()->setStatusCode(201);
+        return ChallengeResource::make($action->execute($request->user(), $request->validated(), ChallengeStatus::Approved))->response()->setStatusCode(201);
+    }
+
+    public function draft(StoreChallengeRequest $request, CreateChallenge $action)
+    {
+        return ChallengeResource::make($action->execute($request->user(), $request->validated(), ChallengeStatus::Draft))->response()->setStatusCode(201);
     }
 
     public function show(Request $request, Challenge $challenge)
     {
         $this->authorize('view', $challenge);
 
-        return ChallengeResource::make($challenge->load(['prizes', 'media.video', 'scoringComponents', 'juryCriteria'])->loadCount('entries'));
+        $challenge->load([
+            'prizes',
+            'media.video',
+            'entries' => fn ($query) => $query->with(['creator:id,name,username,avatar', 'video'])->orderByDesc('current_score')->latest('submitted_at'),
+            'scoringComponents',
+            'juryCriteria',
+        ]);
+
+        return ChallengeResource::make($challenge);
     }
 
     public function update(UpdateChallengeRequest $request, Challenge $challenge, UpdateChallenge $action)
@@ -166,3 +179,4 @@ class ChallengeController extends Controller
         return response()->json(['data' => $action->execute($challenge, $entry, $request->user(), $data['rank'], $data['reason'])], 201);
     }
 }
+

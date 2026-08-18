@@ -14,16 +14,16 @@ use Illuminate\Support\Str;
 
 class CreateChallenge
 {
-    public function execute(User $user, array $data): Challenge
+    public function execute(User $user, array $data, ChallengeStatus $status = ChallengeStatus::Draft): Challenge
     {
-        return DB::transaction(function () use ($user, $data): Challenge {
+        return DB::transaction(function () use ($user, $data, $status): Challenge {
             $challenge = new Challenge(Arr::except($data, ['rules', 'media', 'sponsors', 'reward_pools', 'prizes', 'judging_stages', 'scoring_components', 'jury_criteria']));
             $challenge->forceFill([
                 'created_by_user_id' => $user->id,
                 'host_type' => $data['host_type'] ?? ChallengeHostType::Creator,
                 'host_user_id' => ($data['host_type'] ?? 'creator') === 'creator' ? $user->id : ($data['host_user_id'] ?? null),
                 'slug' => $this->uniqueSlug($data['slug'] ?? $data['title']),
-                'status' => ChallengeStatus::Draft,
+                'status' => $status,
             ])->save();
 
             foreach ($data['rules'] ?? [] as $item) {
