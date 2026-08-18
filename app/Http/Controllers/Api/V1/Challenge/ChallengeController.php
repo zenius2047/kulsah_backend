@@ -25,6 +25,7 @@ use App\Http\Requests\Api\V1\Challenge\SubmitChallengeEntryRequest;
 use App\Http\Requests\Api\V1\Challenge\SubmitJuryScoreRequest;
 use App\Http\Requests\Api\V1\Challenge\UpdateChallengeRequest;
 use App\Http\Resources\ChallengeEntryResource;
+use App\Http\Resources\ChallengeListResource;
 use App\Http\Resources\ChallengeResource;
 use App\Models\Challenge;
 use App\Models\ChallengeEntry;
@@ -40,12 +41,16 @@ class ChallengeController extends Controller
     public function index(Request $request)
     {
         $validated = $request->validate(['status' => ['nullable', Rule::enum(ChallengeStatus::class)], 'per_page' => ['nullable', 'integer', 'min:1', 'max:100']]);
-        $query = Challenge::query()->whereNotIn('status', [ChallengeStatus::Draft, ChallengeStatus::PendingReview, ChallengeStatus::Rejected])->with(['prizes'])->withCount('entries')->latest();
+        $query = Challenge::query()
+            ->whereNotIn('status', [ChallengeStatus::Draft, ChallengeStatus::PendingReview, ChallengeStatus::Rejected])
+            ->with(['creator:id,name,username,avatar', 'prizes', 'media.video'])
+            ->withCount('entries')
+            ->latest();
         if (isset($validated['status'])) {
             $query->where('status', $validated['status']);
         }
 
-        return ChallengeResource::collection($query->paginate($validated['per_page'] ?? 20));
+        return ChallengeListResource::collection($query->paginate($validated['per_page'] ?? 20));
     }
 
     public function store(StoreChallengeRequest $request, CreateChallenge $action)

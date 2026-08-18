@@ -35,99 +35,20 @@ Route::prefix('media')
         Route::post('/videos/{video}/retry-processing', [VideoController::class, 'retryProcessing']);
     });
 
-Route::prefix('challenges')
+Route::prefix('general')
     ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
-    ->group(function () {
-        Route::get('/', [ChallengeController::class, 'index']);
-        Route::get('/{challenge}', [ChallengeController::class, 'show']);
-        Route::get('/{challenge}/leaderboard', [ChallengeController::class, 'leaderboard']);
-        Route::post('/{challenge}/entries', [ChallengeController::class, 'submitEntry'])->middleware('throttle:challenge-entries');
-        Route::delete('/{challenge}/entries/{entry}', [ChallengeController::class, 'withdraw']);
-        Route::put('/{challenge}/ballot', [ChallengeController::class, 'ballot'])->middleware('throttle:challenge-ballots');
-        Route::put('/{challenge}/entries/{entry}/jury-scores', [ChallengeController::class, 'juryScore'])->middleware('throttle:challenge-jury');
-        Route::post('/{challenge}/invites/{invite}/accept', [ChallengeController::class, 'acceptInvite']);
-    });
-
-Route::prefix('creator/challenges')
-    ->middleware(['auth:sanctum', 'role:creator|admin'])
-    ->group(function () {
-        Route::post('/', [ChallengeController::class, 'store'])->middleware('throttle:challenge-create');
-        Route::patch('/{challenge}', [ChallengeController::class, 'update']);
-        Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);
-        Route::post('/{challenge}/finalize', [ChallengeController::class, 'finalize'])->middleware('throttle:challenge-finalize');
-        Route::post('/{challenge}/entries/{entry}/select-winner', [ChallengeController::class, 'selectWinner']);
-        Route::post('/{challenge}/invites', [ChallengeController::class, 'inviteParticipant']);
-        Route::post('/{challenge}/jury', [ChallengeController::class, 'inviteJury']);
-        Route::post('/{challenge}/integrity-flags/{integrityFlag}/resolve', [ChallengeController::class, 'resolveIntegrity']);
-        Route::post('/{challenge}/reward-allocations/{allocation}/process', [ChallengeController::class, 'processReward'])->middleware('throttle:challenge-finalize');
-    });
-
-// Fan and creator routes
-Route::prefix('fan')
-    ->middleware(['auth:sanctum', 'role:creator|fan'])
-    ->group(function () {
-        Route::post('/subscription-plans/{subscriptionPlan}/subscribe', [SubscriptionController::class, 'subscribe']);
-    });
-
-// Creator routes
-Route::prefix('creator')
-    ->middleware(['auth:sanctum', 'role:creator'])
-    ->group(function () {
-        Route::prefix('kulscan')
-            ->group(function () {
-                Route::get('/dashboard', [KulscanCreatorDashboardController::class, 'show'])->middleware('cache.api:60');
-                Route::get('/events', [CreatorEventsController::class, 'index'])->middleware('cache.api:60');
-                Route::get('/events/{event}', [CreatorEventsController::class, 'show'])->middleware('cache.api:60');
-            });
-        Route::get('/dashboard', [CreatorDashboardController::class, 'show'])->middleware('cache.api:60');
-        Route::get('/videos', [VideoController::class, 'index']);
-        Route::get('/videos/analytics', [VideoController::class, 'analytics']);
-        Route::post('/videos/drafts', [VideoController::class, 'draft']);
-        Route::post('/videos', [VideoController::class, 'store']);
-        Route::post('/videos/uploads/init', [VideoController::class, 'initFastUpload']);
-        Route::post('/videos/{video}/upload/complete', [VideoController::class, 'completeFastUpload']);
-        Route::post('/videos/{video}/processing/retry', [VideoController::class, 'retryProcessing']);
-        Route::get('/video-playlists', [VideoController::class, 'playlists']);
-        Route::post('/video-playlists', [VideoController::class, 'storePlaylist']);
-        Route::post('/video-playlists/{playlist}/videos/bulk', [VideoController::class, 'moveManyToPlaylist']);
-        Route::post('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'moveToPlaylist']);
-        Route::get('/video-playlists/{playlist}/videos', [VideoController::class, 'playlistVideos']);
-        Route::get('/video-playlists/{playlist}', [VideoController::class, 'showPlaylist']);
-        Route::patch('/video-playlists/{playlist}', [VideoController::class, 'updatePlaylist']);
-        Route::delete('/video-playlists/{playlist}', [VideoController::class, 'destroyPlaylist']);
-        Route::delete('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'removeFromPlaylist']);
-        Route::post('/videos/{video}/upload', [VideoController::class, 'upload']);
-        Route::post('/videos/{video}/edits', [VideoController::class, 'edit']);
-        Route::patch('/videos/{video}/progress', [VideoController::class, 'updateProgress']);
-        Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
-        Route::patch('/videos/{video}', [VideoController::class, 'update']);
-        Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
-        Route::post('/community/posts', [CommunityPostController::class, 'store']);
-        Route::get('/events', [EventController::class, 'creatorIndex'])->middleware('cache.api:60');
-        Route::post('/events', [EventController::class, 'store']);
-        Route::get('/events/{event}', [EventController::class, 'creatorShow'])->middleware('cache.api:60');
-        Route::patch('/events/{event}', [EventController::class, 'update']);
-        Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
-        Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
-        Route::patch('/subscription-plans/{subscriptionPlan}', [SubscriptionController::class, 'update']);
-        Route::post('/subscription-plans/{subscriptionPlan}/disable', [SubscriptionController::class, 'disablePlan']);
-        Route::post('/subscriptions/{subscription}/block', [SubscriptionController::class, 'blockSubscriber']);
-    });
-
-// Shared routes
-Route::prefix('creator-fan')
-    ->middleware(['auth:sanctum', 'role:creator|fan'])
-    ->group(function () {
-        Route::get('/creators/{creator}/subscription-plans', [SubscriptionController::class, 'showCreatorPlans']);
-    });
-
-// General routes
-Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
         Route::get('/discovery', [DiscoveryController::class, 'index'])->middleware('cache.api:60');
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
+        Route::prefix('challenges')
+            ->group(function () {
+                Route::get('/', [ChallengeController::class, 'index']);
+                Route::get('/{challenge}', [ChallengeController::class, 'show']);
+                Route::put('/{challenge}/ballot', [ChallengeController::class, 'ballot'])->middleware('throttle:challenge-ballots');
+                Route::get('/{challenge}/leaderboard', [ChallengeController::class, 'leaderboard']);
+            });
         Route::get('/community/posts', [CommunityPostController::class, 'index'])->middleware('cache.api:30');
         Route::get('/community/history', [CommunityPostController::class, 'history']);
         Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show'])->middleware('cache.api:30');
@@ -174,3 +95,84 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::post('/wallet/transfer', [WalletController::class, 'transfer']);
         Route::post('/wallet/top-up', [WalletController::class, 'topUp']);
     });
+
+// Fan and creator routes
+Route::prefix('fan')
+    ->middleware(['auth:sanctum', 'role:creator|fan'])
+    ->group(function () {
+        Route::post('/subscription-plans/{subscriptionPlan}/subscribe', [SubscriptionController::class, 'subscribe']);
+    });
+
+// Creator routes
+Route::prefix('creator')
+    ->middleware(['auth:sanctum', 'role:creator'])
+    ->group(function () {
+        Route::prefix('kulscan')
+            ->group(function () {
+                Route::get('/dashboard', [KulscanCreatorDashboardController::class, 'show'])->middleware('cache.api:60');
+                Route::get('/events', [CreatorEventsController::class, 'index'])->middleware('cache.api:60');
+                Route::get('/events/{event}', [CreatorEventsController::class, 'show'])->middleware('cache.api:60');
+            });
+        Route::prefix('challenges')
+            ->middleware(['role:creator|admin'])
+            ->group(function () {
+                Route::post('/', [ChallengeController::class, 'store'])->middleware('throttle:challenge-create');
+                Route::patch('/{challenge}', [ChallengeController::class, 'update']);
+                Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);
+                Route::post('/{challenge}/finalize', [ChallengeController::class, 'finalize'])->middleware('throttle:challenge-finalize');
+                Route::post('/{challenge}/entries', [ChallengeController::class, 'submitEntry'])->middleware('throttle:challenge-entries');
+                Route::delete('/{challenge}/entries/{entry}', [ChallengeController::class, 'withdraw']);
+                Route::put('/{challenge}/entries/{entry}/jury-scores', [ChallengeController::class, 'juryScore'])->middleware('throttle:challenge-jury');
+                Route::post('/{challenge}/entries/{entry}/select-winner', [ChallengeController::class, 'selectWinner']);
+                Route::post('/{challenge}/invites', [ChallengeController::class, 'inviteParticipant']);
+                Route::post('/{challenge}/invites/{invite}/accept', [ChallengeController::class, 'acceptInvite']);
+                Route::post('/{challenge}/jury', [ChallengeController::class, 'inviteJury']);
+                Route::post('/{challenge}/integrity-flags/{integrityFlag}/resolve', [ChallengeController::class, 'resolveIntegrity']);
+                Route::post('/{challenge}/reward-allocations/{allocation}/process', [ChallengeController::class, 'processReward'])->middleware('throttle:challenge-finalize');
+            });
+        Route::get('/dashboard', [CreatorDashboardController::class, 'show'])->middleware('cache.api:60');
+        Route::get('/videos', [VideoController::class, 'index']);
+        Route::get('/videos/analytics', [VideoController::class, 'analytics']);
+        Route::post('/videos/drafts', [VideoController::class, 'draft']);
+        Route::post('/videos', [VideoController::class, 'store']);
+        Route::post('/videos/uploads/init', [VideoController::class, 'initFastUpload']);
+        Route::post('/videos/{video}/upload/complete', [VideoController::class, 'completeFastUpload']);
+        Route::post('/videos/{video}/processing/retry', [VideoController::class, 'retryProcessing']);
+        Route::get('/video-playlists', [VideoController::class, 'playlists']);
+        Route::post('/video-playlists', [VideoController::class, 'storePlaylist']);
+        Route::post('/video-playlists/{playlist}/videos/bulk', [VideoController::class, 'moveManyToPlaylist']);
+        Route::post('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'moveToPlaylist']);
+        Route::get('/video-playlists/{playlist}/videos', [VideoController::class, 'playlistVideos']);
+        Route::get('/video-playlists/{playlist}', [VideoController::class, 'showPlaylist']);
+        Route::patch('/video-playlists/{playlist}', [VideoController::class, 'updatePlaylist']);
+        Route::delete('/video-playlists/{playlist}', [VideoController::class, 'destroyPlaylist']);
+        Route::delete('/video-playlists/{playlist}/videos/{video}', [VideoController::class, 'removeFromPlaylist']);
+        Route::post('/videos/{video}/upload', [VideoController::class, 'upload']);
+        Route::post('/videos/{video}/edits', [VideoController::class, 'edit']);
+        Route::patch('/videos/{video}/progress', [VideoController::class, 'updateProgress']);
+        Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
+        Route::patch('/videos/{video}', [VideoController::class, 'update']);
+        Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
+        Route::post('/community/posts', [CommunityPostController::class, 'store']);
+        Route::get('/events', [EventController::class, 'creatorIndex'])->middleware('cache.api:60');
+        Route::post('/events', [EventController::class, 'store']);
+        Route::get('/events/{event}', [EventController::class, 'creatorShow'])->middleware('cache.api:60');
+        Route::patch('/events/{event}', [EventController::class, 'update']);
+        Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
+        Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
+        Route::patch('/subscription-plans/{subscriptionPlan}', [SubscriptionController::class, 'update']);
+        Route::post('/subscription-plans/{subscriptionPlan}/disable', [SubscriptionController::class, 'disablePlan']);
+        Route::post('/subscriptions/{subscription}/block', [SubscriptionController::class, 'blockSubscriber']);
+    });
+
+// Shared routes
+Route::prefix('creator-fan')
+    ->middleware(['auth:sanctum', 'role:creator|fan'])
+    ->group(function () {
+        Route::get('/creators/{creator}/subscription-plans', [SubscriptionController::class, 'showCreatorPlans']);
+    });
+
+
+
+
+
