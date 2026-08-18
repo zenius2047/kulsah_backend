@@ -20,6 +20,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -259,6 +260,11 @@ class VideoController extends Controller
 
     public function initFastUpload(Request $request)
     {
+        $request->merge([
+            'original_name' => $request->input('original_name', $request->input('filename')),
+            'mime_type' => $request->input('mime_type', $request->input('mimeType')),
+            'size' => $request->input('size', $request->input('fileSize')),
+        ]);
         $this->normalizeContentTypes($request);
 
         $validated = $request->validate([
@@ -268,9 +274,10 @@ class VideoController extends Controller
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
             'thumbnail' => $this->thumbnailValidationRules(),
-            'original_name' => ['nullable', 'string', 'max:255'],
-            'mime_type' => ['nullable', 'string', 'max:120'],
-            'size' => ['nullable', 'integer', 'min:0'],
+            'original_name' => ['required', 'string', 'max:255'],
+            'mime_type' => ['required', 'string', Rule::in(config('video.allowed_mimetypes', []))],
+            'size' => ['required', 'integer', 'min:1', 'max:'.((int) config('video.max_upload_kb', 102400) * 1024)],
+            'purpose' => ['sometimes', Rule::in(['post_video', 'challenge_video', 'challenge_instruction_video', 'challenge_entry', 'message_video', 'other'])],
             'requires_editing' => ['sometimes', 'boolean'],
         ]);
 
@@ -287,6 +294,7 @@ class VideoController extends Controller
                     'original_name' => $request->input('original_name'),
                     'mime_type' => $request->input('mime_type'),
                     'size' => $request->input('size'),
+                    'purpose' => $request->input('purpose', 'post_video'),
                     'requires_editing' => $request->boolean('requires_editing'),
                 ],
                 userId: (int) $request->user()->id,
@@ -313,8 +321,16 @@ class VideoController extends Controller
         return response()->json([
             'message' => 'Direct upload session created successfully.',
             'data' => [
+                'videoId' => $session['video']->id,
+                'status' => $session['video']->upload_status->value,
                 'video' => new VideoResource($session['video']),
-                'upload' => $session['upload'],
+                'upload' => [
+                    'method' => 'PUT',
+                    'url' => $session['upload']['upload_url'],
+                    'headers' => $session['upload']['upload_headers'],
+                    'expiresAt' => $session['upload']['expires_at'],
+                    'expiresIn' => (int) config('video.direct_upload_ttl_minutes', 15) * 60,
+                ],
             ],
         ], 201);
     }
@@ -358,6 +374,18 @@ class VideoController extends Controller
                 : 'Direct upload completed successfully and processing has started.',
             'data' => new VideoResource($video),
         ], 201);
+    }
+
+    public function retryProcessing(Request $request, Video $video)
+    {
+        abort_unless((int) $video->user_id === (int) $request->user()->id, 403);
+
+        $video = $this->videoService->retryProcessing($video, (int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Video processing has been queued for retry.',
+            'data' => new VideoResource($video),
+        ], 202);
     }
 
     public function storePlaylist(Request $request)
@@ -846,10 +874,15 @@ class VideoController extends Controller
         $rawGlobalAudioTracks = $request->input('globalAudioTracks');
         $rawGlobalEffects = $request->input('globalEffects');
         $rawGuides = $request->input('guides');
+        $rawLayers = $request->input('layers', []);
         $editAssetUploads = $this->storeEditAssetUploads($request->file('asset_files', []), (int) $request->user()->id);
 
         if (is_array($rawAssets) && $rawAssets !== []) {
             $rawAssets = $this->applyEditAssetUploadsToAssets($rawAssets, $editAssetUploads, (int) $request->user()->id);
+        }
+
+        if (is_array($rawLayers) && $rawLayers !== []) {
+            $rawLayers = $this->applyEditAssetUploadsToMediaLayers($rawLayers, $editAssetUploads, (int) $request->user()->id);
         }
 
         try {
@@ -866,6 +899,7 @@ class VideoController extends Controller
                 'globalAudioTracks' => is_array($rawGlobalAudioTracks) ? $rawGlobalAudioTracks : [],
                 'globalEffects' => is_array($rawGlobalEffects) ? $rawGlobalEffects : [],
                 'guides' => is_array($rawGuides) ? $rawGuides : [],
+                'layers' => is_array($rawLayers) ? $rawLayers : [],
                 'filters' => is_array($rawFilters) ? $rawFilters : [],
                 'audio' => is_array($rawAudio) ? $rawAudio : [],
                 'trim' => is_array($rawTrim) ? $rawTrim : [],

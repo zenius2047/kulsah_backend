@@ -2,10 +2,10 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
-use RuntimeException;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Symfony\Component\Process\Process;
 
 class CloudinaryService
@@ -58,22 +58,22 @@ class CloudinaryService
         return hash_equals($expectedSha1, $signature) || hash_equals($expectedSha256, $signature);
     }
 
-    public function uploadVideoFromS3Key(string $sourceKey): array
+    public function uploadVideoFromS3Key(string $sourceKey, ?string $sourceDisk = null): array
     {
-        return $this->uploadMediaFromS3Key($sourceKey, 'video');
+        return $this->uploadMediaFromS3Key($sourceKey, 'video', $sourceDisk);
     }
 
-    public function uploadImageFromS3Key(string $sourceKey): array
+    public function uploadImageFromS3Key(string $sourceKey, ?string $sourceDisk = null): array
     {
-        return $this->uploadMediaFromS3Key($sourceKey, 'image');
+        return $this->uploadMediaFromS3Key($sourceKey, 'image', $sourceDisk);
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function uploadMediaFromS3Key(string $sourceKey, string $resourceType = 'video'): array
+    public function uploadMediaFromS3Key(string $sourceKey, string $resourceType = 'video', ?string $sourceDisk = null): array
     {
-        $disk = config('video.storage_disk', 's3');
+        $disk = $sourceDisk ?: config('video.storage_disk', 's3');
         $cloudName = $this->getCloudName();
         $apiKey = $this->getApiKey();
         $apiSecret = $this->getApiSecret();
@@ -325,7 +325,7 @@ class CloudinaryService
 
     public function generateDerivedVideoUrl(string $publicId): string
     {
-        return "https://res.cloudinary.com/".$this->getCloudName()."/video/upload/a_auto,f_auto,q_auto/{$publicId}";
+        return 'https://res.cloudinary.com/'.$this->getCloudName()."/video/upload/a_auto,f_auto,q_auto/{$publicId}";
     }
 
     public function generateThumbnailUrl(string $publicId): string
@@ -343,6 +343,13 @@ class CloudinaryService
         $cloudName = $this->getCloudName();
 
         return "https://res.cloudinary.com/{$cloudName}/video/upload/so_0,w_720,h_1280,c_fill,f_jpg,q_auto/{$publicId}";
+    }
+
+    public function generatePosterAtTimeUrl(string $publicId, int $frameTimeMs): string
+    {
+        $seconds = number_format(max(0, $frameTimeMs) / 1000, 3, '.', '');
+
+        return 'https://res.cloudinary.com/'.$this->getCloudName().'/video/upload/so_'.$seconds.',w_720,h_1280,c_fill,f_jpg,q_auto/'.$publicId;
     }
 
     private function buildPublicId(string $sourceKey): string

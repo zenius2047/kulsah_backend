@@ -4,14 +4,13 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
-use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
-use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
@@ -42,7 +41,6 @@ class User extends Authenticatable
         'activated',
     ];
 
-
     /**
      * Get the attributes that should be cast.
      *
@@ -65,7 +63,7 @@ class User extends Authenticatable
         return $this->belongsToMany(Role::class, 'user_roles');
     }
 
-    //define relationship with sessions
+    // define relationship with sessions
     public function sessions()
     {
         return $this->hasMany(Session::class);
@@ -121,9 +119,24 @@ class User extends Authenticatable
         return $this->hasMany(Video::class);
     }
 
+    public function createdChallenges()
+    {
+        return $this->hasMany(Challenge::class, 'created_by_user_id');
+    }
+
+    public function challengeEntries()
+    {
+        return $this->hasMany(ChallengeEntry::class, 'creator_id');
+    }
+
     public function communityPosts()
     {
         return $this->hasMany(CommunityPost::class);
+    }
+
+    public function communityPostViews()
+    {
+        return $this->hasMany(CommunityPostView::class);
     }
 
     public function events()
@@ -243,7 +256,4 @@ class User extends Authenticatable
             ->where('videos.user_id', $this->id)
             ->count();
     }
-
-
-
 }

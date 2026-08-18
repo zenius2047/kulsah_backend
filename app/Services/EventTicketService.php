@@ -41,7 +41,7 @@ class EventTicketService
 
     public function buildQrCodeUrl(string $verificationUrl): string
     {
-        $generator = rtrim((string) config('services.qr_code.generator_url', 'https://api.qrserver.com/v1/create-qr-code/'), '/');
+        $generator = rtrim((string) config('services.qr_code.generator_url', 'https://api.qrserver.com/v1/create-qr-code/'), '/').'/';
 
         return $generator.'?'.http_build_query([
             'size' => '300x300',

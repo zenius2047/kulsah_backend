@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Community;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Community\RecordCommunityPostViewRequest;
 use App\Http\Resources\CommunityPostCommentResource;
 use App\Http\Resources\CommunityPostResource;
 use App\Http\Resources\KulCoinTransactionResource;
@@ -15,8 +16,9 @@ use App\Models\CommunityPostShare;
 use App\Models\KulCoinGift;
 use App\Models\Subscription;
 use App\Models\UserFollow;
+use App\Services\CommunityFeedService;
 use App\Services\CommunityMediaService;
-use App\Services\ContentViewStateService;
+use App\Services\CommunityPostViewService;
 use App\Services\KulCoinService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -31,7 +33,8 @@ class CommunityPostController extends Controller
     public function __construct(
         private readonly KulCoinService $kulCoinService,
         private readonly CommunityMediaService $communityMediaService,
-        private readonly ContentViewStateService $contentViewStateService,
+        private readonly CommunityFeedService $communityFeedService,
+        private readonly CommunityPostViewService $communityPostViewService,
     ) {}
 
     public function index(Request $request)
@@ -40,108 +43,53 @@ class CommunityPostController extends Controller
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $viewerId = (int) $request->user()->id;
         $perPage = (int) ($validated['per_page'] ?? 20);
         $page = max(1, (int) $request->query('page', 1));
-        $subscribedCreatorIds = $this->subscribedCreatorIds($viewerId);
-        $viewedPostIds = $this->contentViewStateService->viewedIds($viewerId, 'community_post');
+        $posts = $this->communityFeedService->feed($request->user(), $perPage, $page);
 
-        $posts = CommunityPost::query()
-            ->with([
-                'user.roles:id,name',
-                'media',
-                'pollVotes',
-                'comments' => function ($query): void {
-                    $query->whereNull('parent_id')
-                        ->latest()
-                        ->with([
-                            'user.roles:id,name',
-                            'replies' => function ($replyQuery): void {
-                                $replyQuery->oldest()->with('user.roles:id,name')->withCount('replies');
-                            },
-                        ])
-                        ->withCount('replies');
-                },
-            ])
-            ->withCount(['likes', 'comments', 'shares', 'gifts'])
-            ->where(function ($query) use ($viewerId, $subscribedCreatorIds): void {
-                $query->where('audience', 'public')
-                    ->orWhere('user_id', $viewerId)
-                    ->orWhere(function ($query) use ($subscribedCreatorIds): void {
-                        $query->where('audience', 'subscribers')
-                            ->whereIn('user_id', $subscribedCreatorIds);
-                    });
-            })
-            ->when($viewedPostIds !== [], fn ($query) => $query->whereNotIn('id', $viewedPostIds))
-            ->latest('id')
-            ->paginate($perPage, ['*'], 'page', $page);
-
-        $postIds = $posts->getCollection()->pluck('id')->all();
-        $authorIds = $posts->getCollection()->pluck('user_id')->filter()->map(static fn ($id) => (int) $id)->unique()->values()->all();
-
-        $likedPostIds = CommunityPostLike::query()
-            ->where('user_id', $viewerId)
-            ->whereIn('community_post_id', $postIds)
-            ->pluck('community_post_id')
-            ->map(static fn ($id) => (int) $id)
-            ->flip();
-
-        $sharedPostIds = CommunityPostShare::query()
-            ->where('user_id', $viewerId)
-            ->whereIn('community_post_id', $postIds)
-            ->pluck('community_post_id')
-            ->map(static fn ($id) => (int) $id)
-            ->flip();
-
-        $followedAuthorIds = UserFollow::query()
-            ->where('follower_id', $viewerId)
-            ->whereIn('followed_id', $authorIds)
-            ->pluck('followed_id')
-            ->map(static fn ($id) => (int) $id)
-            ->flip();
-
-        $totalPosts = $posts->total();
-        $startOffset = ($posts->currentPage() - 1) * $posts->perPage();
-
-        $posts->getCollection()->values()->each(function (CommunityPost $post, int $index) use ($likedPostIds, $sharedPostIds, $followedAuthorIds, $totalPosts, $startOffset): void {
-            $post->setAttribute('is_liked', $likedPostIds->has((int) $post->id));
-            $post->setAttribute('is_shared', $sharedPostIds->has((int) $post->id));
-            $post->setAttribute('is_following', $followedAuthorIds->has((int) $post->user_id));
-            $post->setAttribute(
-                'community_count',
-                max(0, $totalPosts - ($startOffset + $index + 1))
-            );
-            $post->setRelation('user', $post->user);
-        });
-
-        return response()->json([
-            'data' => CommunityPostResource::collection($posts)->resolve($request),
-            'meta' => [
-                'current_page' => $posts->currentPage(),
-                'last_page' => $posts->lastPage(),
-                'per_page' => $posts->perPage(),
-                'total' => $posts->total(),
-            ],
-        ]);
+        return $this->paginatedPostsResponse($request, $posts);
     }
 
-    public function view(Request $request, string $communityPost)
+    public function view(RecordCommunityPostViewRequest $request, string $communityPost)
     {
         $post = $this->findCommunityPost($communityPost);
         $this->authorizeView($request, $post);
 
-        $this->contentViewStateService->recordView(
-            viewerId: (int) $request->user()->id,
-            viewableType: 'community_post',
-            viewableId: (int) $post->id
-        );
+        $result = $this->communityPostViewService->recordView($request->user(), $post, $request->validated());
 
         return response()->json([
-            'message' => 'Community post view recorded successfully.',
+            'message' => $result['meaningful']
+                ? 'Community post view recorded successfully.'
+                : 'Community post visibility did not meet the meaningful-view threshold.',
+            'data' => $result['view'] ? [
+                'community_post_id' => (int) $post->id,
+                'view_count' => (int) $result['view']->view_count,
+                'last_viewed_at' => optional($result['view']->last_viewed_at)?->toIso8601String(),
+                'completion_percentage' => (float) $result['view']->completion_percentage,
+                'max_completion_percentage' => (float) $result['view']->max_completion_percentage,
+            ] : null,
             'meta' => [
                 'community_post_id' => (int) $post->id,
+                'meaningful' => $result['meaningful'],
+                'counted' => $result['counted'],
             ],
         ]);
+    }
+
+    public function history(Request $request)
+    {
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'type' => ['sometimes', Rule::in(['all', 'text', 'image', 'video', 'poll', 'challenge'])],
+        ]);
+        $posts = $this->communityFeedService->history(
+            $request->user(),
+            (int) ($validated['per_page'] ?? 20),
+            max(1, (int) $request->query('page', 1)),
+            $validated['type'] ?? 'all',
+        );
+
+        return $this->paginatedPostsResponse($request, $posts);
     }
 
     public function store(Request $request)
@@ -316,6 +264,7 @@ class CommunityPostController extends Controller
                 $query->oldest()->with('user.roles:id,name')->withCount('replies');
             },
         ]);
+        $this->communityPostViewService->markEngaged($request->user(), $post);
 
         $isReply = array_key_exists('parent_id', $validated) && $validated['parent_id'] !== null;
 
@@ -340,6 +289,9 @@ class CommunityPostController extends Controller
 
             $created = $like->wasRecentlyCreated;
         });
+        if ($created) {
+            $this->communityPostViewService->markEngaged($request->user(), $post);
+        }
 
         return response()->json([
             'message' => $created ? 'Community post liked successfully.' : 'Community post was already liked.',
@@ -378,6 +330,9 @@ class CommunityPostController extends Controller
 
             $created = $share->wasRecentlyCreated;
         });
+        if ($created) {
+            $this->communityPostViewService->markEngaged($request->user(), $post);
+        }
 
         return response()->json([
             'message' => $created ? 'Community post shared successfully.' : 'Community post was already shared.',
@@ -422,6 +377,7 @@ class CommunityPostController extends Controller
                 'coin_amount' => (int) $transaction->coin_amount,
                 'message' => $validated['message'] ?? null,
             ]);
+            $this->communityPostViewService->markEngaged($request->user(), $post);
 
             $post->loadCount(['likes', 'comments', 'shares', 'gifts']);
 
@@ -503,6 +459,9 @@ class CommunityPostController extends Controller
 
             $created = $vote->wasRecentlyCreated;
         });
+        if ($created) {
+            $this->communityPostViewService->markEngaged($request->user(), $post);
+        }
 
         $post->unsetRelation('pollVotes');
 
@@ -586,6 +545,20 @@ class CommunityPostController extends Controller
         $post->setAttribute('community_count', 0);
 
         return (new CommunityPostResource($post))->resolve($request);
+    }
+
+    private function paginatedPostsResponse(Request $request, $posts)
+    {
+        return response()->json([
+            'data' => CommunityPostResource::collection($posts)->resolve($request),
+            'meta' => [
+                'current_page' => $posts->currentPage(),
+                'last_page' => $posts->lastPage(),
+                'per_page' => $posts->perPage(),
+                'total' => $posts->total(),
+                'next_cursor' => null,
+            ],
+        ]);
     }
 
     private function postLikedByUser(Request $request, CommunityPost $post): bool

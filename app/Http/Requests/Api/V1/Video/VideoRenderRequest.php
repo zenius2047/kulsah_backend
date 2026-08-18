@@ -26,6 +26,7 @@ class VideoRenderRequest extends FormRequest
             'globalAudioTracks',
             'globalEffects',
             'guides',
+            'layers',
         ] as $key) {
             $value = $this->input($key);
 
@@ -53,6 +54,7 @@ class VideoRenderRequest extends FormRequest
             'globalAudioTracks' => ['sometimes', 'array'],
             'globalEffects' => ['sometimes', 'array'],
             'guides' => ['sometimes', 'array'],
+            'layers' => ['sometimes', 'array', 'max:100'],
             'filters' => ['sometimes', 'array'],
             'trim' => ['sometimes', 'array'],
             'audio' => ['sometimes', 'array'],

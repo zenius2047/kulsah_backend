@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\CommunityPost;
+use App\Models\CommunityPostComment;
 use App\Models\CommunityPostMedia;
 use App\Models\CommunityPostPollVote;
 use App\Models\KulCoinGift;

@@ -16,6 +16,7 @@ class CommunityPost extends Model
         'audience',
         'status',
         'views_count',
+        'last_activity_at',
         'media_ids',
         'poll',
     ];
@@ -24,6 +25,7 @@ class CommunityPost extends Model
     {
         return [
             'views_count' => 'integer',
+            'last_activity_at' => 'datetime',
             'media_ids' => 'array',
             'poll' => 'array',
         ];
@@ -62,5 +64,10 @@ class CommunityPost extends Model
     public function gifts()
     {
         return $this->hasMany(CommunityPostGift::class, 'community_post_id');
+    }
+
+    public function views()
+    {
+        return $this->hasMany(CommunityPostView::class, 'community_post_id');
     }
 }

@@ -90,6 +90,19 @@ class VideoProjectNormalizer
             }
         }
 
+        $legacyLayers = is_array($payload['layers'] ?? null) ? array_values($payload['layers']) : [];
+        foreach ($legacyLayers as $layerIndex => $layer) {
+            if (! is_array($layer)) {
+                throw ValidationException::withMessages([
+                    'layers.'.$layerIndex => 'Each layer must be an array.',
+                ]);
+            }
+
+            $normalizedLayer = $this->normalizeLegacyLayer($layer, $layerIndex, $userId);
+            $tracks[] = $normalizedLayer['track'];
+            $renderLayers[] = $normalizedLayer['render_layer'];
+        }
+
         $renderLayers = $this->normalizeRenderPlanTransforms($renderLayers, $canvas, $output);
 
         $globalAudioTracks = $this->normalizeV3GlobalAudioTracks(is_array($payload['globalAudioTracks'] ?? null) ? $payload['globalAudioTracks'] : []);

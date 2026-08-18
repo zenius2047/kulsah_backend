@@ -206,7 +206,7 @@ class VideoRenderTimelineTest extends TestCase
         $this->assertNotEmpty($video->metadata['edit_overlays'][0]['asset_key']);
         $this->assertSame('testlocal', $video->metadata['edit_overlays'][0]['asset_disk']);
         $this->assertStringStartsWith(
-            'http://localhost/storage/videos/edit-assets/1/',
+            'http://localhost/storage/videos/edit-assets/'.$creator->id.'/',
             $video->metadata['edit_overlays'][0]['asset_url']
         );
         $this->assertTrue(Storage::disk('testlocal')->exists($video->metadata['edit_overlays'][0]['asset_key']));

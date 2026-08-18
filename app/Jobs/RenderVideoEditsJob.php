@@ -86,6 +86,14 @@ class RenderVideoEditsJob implements ShouldQueue
 
             $video->update([
                 'status' => $isReady ? 'ready' : 'processing',
+                'processing_status' => $isReady ? 'ready' : 'processing',
+                'processing_error' => null,
+                'playback_type' => $isReady ? 'hls' : $video->playback_type,
+                'hls_url' => $isReady ? ($rendered['streaming_url'] ?? $video->hls_url) : $video->hls_url,
+                'fallback_mp4_url' => $isReady ? ($rendered['rendered_url'] ?? $video->fallback_mp4_url) : $video->fallback_mp4_url,
+                'processing_started_at' => $video->processing_started_at ?: now(),
+                'processed_at' => $isReady ? now() : null,
+                'failed_at' => null,
                 'progress_percentage' => $isReady ? 100 : 75,
                 'render_status' => $renderStatus,
                 'render_completed_at' => $isReady ? now() : $video->render_completed_at,
@@ -104,10 +112,16 @@ class RenderVideoEditsJob implements ShouldQueue
                     'render_plan' => $rendered['metadata'] ?? [],
                 ]),
             ]);
+            if ($isReady) {
+                event(new VideoUploaded($video->fresh()));
+            }
         } catch (Throwable $throwable) {
             $video->update([
                 'status' => 'failed',
                 'render_status' => 'failed',
+                'processing_status' => 'processing_failed',
+                'processing_error' => mb_substr($throwable->getMessage(), 0, 5000),
+                'failed_at' => now(),
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => 'failed',
                     'processing_state' => 'edit_failed',

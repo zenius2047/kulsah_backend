@@ -21,6 +21,8 @@ class VideoCommentResource extends JsonResource
             'avatar' => $user?->avatar,
             'banner' => $user?->banner,
             'text' => (string) $comment->body,
+            'body' => (string) $comment->body,
+            'parent_id' => $comment->parent_id === null ? null : (string) $comment->parent_id,
             'stickerUrl' => data_get($metadata, 'stickerUrl', data_get($metadata, 'sticker_url')),
             'gift' => data_get($metadata, 'gift'),
             'time' => optional($comment->created_at)?->diffForHumans(),

@@ -1,22 +1,66 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
+use App\Http\Controllers\Api\V1\Challenge\ChallengeController;
 use App\Http\Controllers\Api\V1\Cloudinary\CloudinaryWebhookController;
 use App\Http\Controllers\Api\V1\Community\CommunityPostController;
+use App\Http\Controllers\Api\V1\Creator\CreatorDashboardController;
 use App\Http\Controllers\Api\V1\Discovery\DiscoveryController;
 use App\Http\Controllers\Api\V1\Event\EventController;
 use App\Http\Controllers\Api\V1\Feed\FeedController;
 use App\Http\Controllers\Api\V1\Feed\SocialController;
 use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
 use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
+use App\Http\Controllers\Api\V1\Kulscan\CreatorDashboardController as KulscanCreatorDashboardController;
+use App\Http\Controllers\Api\V1\Kulscan\CreatorEventsController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 use Illuminate\Support\Facades\Route;
 
 Route::pattern('video', '[0-9]+');
 Route::pattern('playlist', '[0-9]+');
+Route::pattern('challenge', '[0-9]+');
+Route::pattern('entry', '[0-9]+');
+Route::pattern('invite', '[0-9]+');
+Route::pattern('integrityFlag', '[0-9]+');
+Route::pattern('allocation', '[0-9]+');
 
 Route::post('/cloudinary/webhook', [CloudinaryWebhookController::class, 'store']);
+
+Route::prefix('media')
+    ->middleware(['auth:sanctum', 'role:creator'])
+    ->group(function () {
+        Route::post('/video-uploads', [VideoController::class, 'initFastUpload']);
+        Route::post('/video-uploads/{video}/complete', [VideoController::class, 'completeFastUpload']);
+        Route::post('/videos/{video}/retry-processing', [VideoController::class, 'retryProcessing']);
+    });
+
+Route::prefix('challenges')
+    ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
+    ->group(function () {
+        Route::get('/', [ChallengeController::class, 'index']);
+        Route::get('/{challenge}', [ChallengeController::class, 'show']);
+        Route::get('/{challenge}/leaderboard', [ChallengeController::class, 'leaderboard']);
+        Route::post('/{challenge}/entries', [ChallengeController::class, 'submitEntry'])->middleware('throttle:challenge-entries');
+        Route::delete('/{challenge}/entries/{entry}', [ChallengeController::class, 'withdraw']);
+        Route::put('/{challenge}/ballot', [ChallengeController::class, 'ballot'])->middleware('throttle:challenge-ballots');
+        Route::put('/{challenge}/entries/{entry}/jury-scores', [ChallengeController::class, 'juryScore'])->middleware('throttle:challenge-jury');
+        Route::post('/{challenge}/invites/{invite}/accept', [ChallengeController::class, 'acceptInvite']);
+    });
+
+Route::prefix('creator/challenges')
+    ->middleware(['auth:sanctum', 'role:creator|admin'])
+    ->group(function () {
+        Route::post('/', [ChallengeController::class, 'store'])->middleware('throttle:challenge-create');
+        Route::patch('/{challenge}', [ChallengeController::class, 'update']);
+        Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);
+        Route::post('/{challenge}/finalize', [ChallengeController::class, 'finalize'])->middleware('throttle:challenge-finalize');
+        Route::post('/{challenge}/entries/{entry}/select-winner', [ChallengeController::class, 'selectWinner']);
+        Route::post('/{challenge}/invites', [ChallengeController::class, 'inviteParticipant']);
+        Route::post('/{challenge}/jury', [ChallengeController::class, 'inviteJury']);
+        Route::post('/{challenge}/integrity-flags/{integrityFlag}/resolve', [ChallengeController::class, 'resolveIntegrity']);
+        Route::post('/{challenge}/reward-allocations/{allocation}/process', [ChallengeController::class, 'processReward'])->middleware('throttle:challenge-finalize');
+    });
 
 // Fan and creator routes
 Route::prefix('fan')
@@ -29,12 +73,20 @@ Route::prefix('fan')
 Route::prefix('creator')
     ->middleware(['auth:sanctum', 'role:creator'])
     ->group(function () {
+        Route::prefix('kulscan')
+            ->group(function () {
+                Route::get('/dashboard', [KulscanCreatorDashboardController::class, 'show'])->middleware('cache.api:60');
+                Route::get('/events', [CreatorEventsController::class, 'index'])->middleware('cache.api:60');
+                Route::get('/events/{event}', [CreatorEventsController::class, 'show'])->middleware('cache.api:60');
+            });
+        Route::get('/dashboard', [CreatorDashboardController::class, 'show'])->middleware('cache.api:60');
         Route::get('/videos', [VideoController::class, 'index']);
         Route::get('/videos/analytics', [VideoController::class, 'analytics']);
         Route::post('/videos/drafts', [VideoController::class, 'draft']);
         Route::post('/videos', [VideoController::class, 'store']);
         Route::post('/videos/uploads/init', [VideoController::class, 'initFastUpload']);
         Route::post('/videos/{video}/upload/complete', [VideoController::class, 'completeFastUpload']);
+        Route::post('/videos/{video}/processing/retry', [VideoController::class, 'retryProcessing']);
         Route::get('/video-playlists', [VideoController::class, 'playlists']);
         Route::post('/video-playlists', [VideoController::class, 'storePlaylist']);
         Route::post('/video-playlists/{playlist}/videos/bulk', [VideoController::class, 'moveManyToPlaylist']);
@@ -77,6 +129,7 @@ Route::prefix('general')->middleware(['auth:sanctum', 'role:admin|fan|creator'])
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
         Route::get('/recommendations', [FeedController::class, 'recommendations']);
         Route::get('/community/posts', [CommunityPostController::class, 'index'])->middleware('cache.api:30');
+        Route::get('/community/history', [CommunityPostController::class, 'history']);
         Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show'])->middleware('cache.api:30');
         Route::post('/community/posts/{communityPost}/view', [CommunityPostController::class, 'view']);
         Route::get('/community/posts/{communityPost}/comments', [CommunityPostController::class, 'comments'])->middleware('cache.api:30');

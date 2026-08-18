@@ -630,18 +630,23 @@ class VideoPipelineTest extends TestCase
     public function test_video_processing_keeps_a_creator_uploaded_thumbnail(): void
     {
         config()->set('logging.default', 'null');
+        Storage::fake('testlocal');
+        config()->set('video.storage_disk', 'testlocal');
 
         $creator = User::factory()->create([
             'username' => 'creator_thumbnail',
         ]);
 
+        $sourceKey = 'videos/originals/1/thumbnail-test.mp4';
+        Storage::disk('testlocal')->put($sourceKey, 'raw-video');
         $video = Video::create([
             'user_id' => $creator->id,
             'title' => 'Thumbnail test',
             'caption' => 'Keeping my own cover image',
             'visibility' => 'public',
             'source_url' => 'https://example.com/source.mp4',
-            'source_key' => 'videos/originals/1/thumbnail-test.mp4',
+            'source_key' => $sourceKey,
+            'source_disk' => 'testlocal',
             'thumbnail_url' => 'https://example.com/custom-thumbnail.jpg',
             'duration' => 18,
             'status' => 'processing',
@@ -721,7 +726,12 @@ class VideoPipelineTest extends TestCase
             'visibility' => 'public',
             'source_url' => 'https://example.com/source.mp4',
             'source_key' => 'videos/originals/1/example.mp4',
-            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'hls_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'playback_type' => 'hls',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
             'thumbnail_url' => 'https://res.cloudinary.com/demo/video/upload/example.jpg',
             'duration' => 42,
             'status' => 'ready',
@@ -816,7 +826,12 @@ class VideoPipelineTest extends TestCase
             'visibility' => 'public',
             'source_url' => 'https://example.com/source.mp4',
             'source_key' => 'videos/originals/1/example.mp4',
-            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'hls_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'playback_type' => 'hls',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
             'thumbnail_url' => 'https://res.cloudinary.com/demo/video/upload/example.jpg',
             'duration' => 42,
             'status' => 'ready',

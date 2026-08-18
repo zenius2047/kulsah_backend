@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\RoleMiddleware;
 use App\Models\Event;
 use App\Models\EventTicket;
 use App\Models\EventTicketPurchase;
@@ -45,7 +46,7 @@ class EventsTest extends TestCase
         });
 
         $response = $this->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->post('/api/v1/creator/events', [
                 'title' => 'Afrobeats Live Experience',
                 'description' => 'A live performance featuring new songs and special guests.',
@@ -98,6 +99,8 @@ class EventsTest extends TestCase
         $creator = User::factory()->create([
             'username' => 'event_owner',
         ]);
+        $creatorRole = Role::query()->create(['name' => 'creator']);
+        $creator->roles()->attach($creatorRole);
         $buyer = User::factory()->create([
             'username' => 'event_buyer',
         ]);
@@ -142,7 +145,7 @@ class EventsTest extends TestCase
         ]);
 
         $response = $this->actingAs($buyer, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson("/api/v1/general/events/{$event->id}/tickets/purchase", [
                 'ticket_type_code' => 'regular',
                 'quantity' => 2,
@@ -180,7 +183,7 @@ class EventsTest extends TestCase
         $this->assertStringStartsWith('https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=', $firstTicket->qr_code_url);
 
         $verifyResponse = $this->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson('/api/v1/general/events/tickets/verify', [
                 'ticket_id' => $firstTicket->ticket_id,
                 'signature' => $firstTicket->scan_signature,

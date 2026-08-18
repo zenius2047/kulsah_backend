@@ -51,6 +51,11 @@ class EventResource extends JsonResource
                 'seating_map_url' => data_get($event->venue_meta ?? [], 'seating_map_url'),
             ],
             'ticket_types' => $this->normalizeDetailTicketTypes($event),
+            'stats' => [
+                'tickets_sold' => $ticketsSold,
+                'tickets_remaining' => max(0, $capacity - $ticketsSold),
+                'capacity' => $capacity,
+            ],
             'viewer' => [
                 'is_owner' => $isOwner,
                 'has_booked' => $viewerBookings->isNotEmpty(),
@@ -102,13 +107,16 @@ class EventResource extends JsonResource
 
             return [
                 'id' => $id,
+                'code' => (string) ($ticketType['code'] ?? Str::slug((string) ($ticketType['name'] ?? 'ticket'))),
                 'name' => (string) ($ticketType['name'] ?? 'Ticket'),
                 'description' => $ticketType['description'] ?? null,
                 'price' => (float) ($ticketType['price'] ?? 0),
                 'currency' => $event->currency,
                 'quantity' => $quantity,
                 'sold_count' => $soldCount,
+                'sold_quantity' => $soldCount,
                 'remaining_count' => max(0, $quantity - $soldCount),
+                'available_quantity' => max(0, $quantity - $soldCount),
                 'minimum_per_order' => (int) ($ticketType['minimum_per_order'] ?? 1),
                 'maximum_per_order' => (int) ($ticketType['maximum_per_order'] ?? 10),
                 'is_available' => max(0, $quantity - $soldCount) > 0,

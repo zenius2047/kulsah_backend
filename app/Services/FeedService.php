@@ -13,13 +13,14 @@ use Illuminate\Support\Facades\Log;
 class FeedService
 {
     private const ROOT_TAG = 'feed';
+
     private const CACHE_VERSION_KEY = 'feed:version';
+
     private const FEED_RULES_VERSION = 2;
 
     public function __construct(
         private readonly FastApiRecommendationService $fastApiRecommendationService,
-    ) {
-    }
+    ) {}
 
     public function getFeed(int $userId, int $limit = 20, int $page = 1, array $context = []): array
     {
@@ -254,7 +255,7 @@ class FeedService
 
     private function feedCacheVersion(): int
     {
-        return (int) $this->cacheStore()->get(self::CACHE_VERSION_KEY, 1);
+        return (int) $this->taggedCache(['feed'])->get(self::CACHE_VERSION_KEY, 1);
     }
 
     private function cacheKey(int $userId, int $limit, int $page, int $version, array $context = []): string

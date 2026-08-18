@@ -9,8 +9,11 @@ use Illuminate\Support\Facades\Cache;
 class VideoCacheService
 {
     private const ROOT_TAG = 'videos';
+
     private const CREATOR_VERSION_PREFIX = 'videos:creator:version:';
+
     private const VIEWER_VERSION_PREFIX = 'videos:viewer:version:';
+
     private const VIDEO_VERSION_PREFIX = 'videos:video:version:';
 
     public function cacheStore(): CacheRepository
@@ -121,7 +124,19 @@ class VideoCacheService
         $key = $this->viewerCacheKey($viewerId, $scope, $context);
         $ttlSeconds = max(60, (int) config('video.cache_ttl_seconds', 300));
 
-        return $cache->remember($key, now()->addSeconds($ttlSeconds), $resolver);
+        if ($cache->has($key)) {
+            $value = $cache->get($key);
+            if (is_array($value) && isset($value['meta']) && is_array($value['meta'])) {
+                $value['meta']['cache_hit'] = true;
+            }
+
+            return $value;
+        }
+
+        $value = $resolver();
+        $cache->put($key, $value, now()->addSeconds($ttlSeconds));
+
+        return $value;
     }
 
     /**
