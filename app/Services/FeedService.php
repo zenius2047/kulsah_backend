@@ -41,6 +41,7 @@ class FeedService
             ->ready()
             ->where('user_id', '!=', $userId)
             ->with(['user:id,name,username,avatar,banner'])
+            ->withExists(['challengeEntries'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->latest()
             ->take(max($limit * $page, $limit));
@@ -280,3 +281,4 @@ class FeedService
         return ['feed:user', "feed:user:{$userId}"];
     }
 }
+

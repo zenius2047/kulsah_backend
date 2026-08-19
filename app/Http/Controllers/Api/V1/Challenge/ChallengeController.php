@@ -98,6 +98,12 @@ class ChallengeController extends Controller
             'reward_type' => is_array($primaryAward) ? ($primaryAward['reward_type'] ?? null) : null,
             'title' => is_array($primaryAward) ? ($primaryAward['title'] ?? null) : null,
             'reward_pools' => $rewardPools,
+            'voting' => [
+                'payment_method' => 'kulcoin',
+                'currency_code' => config('kulcoin.currency_code', 'KC'),
+                'vote_coin_price' => max(1, (int) config('kulcoin.vote_coin_price', 10)),
+                'vote_cost_per_choice' => max(1, (int) config('kulcoin.vote_coin_price', 10)),
+            ],
         ];
     }
     public function update(UpdateChallengeRequest $request, Challenge $challenge, UpdateChallenge $action)
@@ -122,7 +128,7 @@ class ChallengeController extends Controller
 
     public function ballot(CastChallengeBallotRequest $request, Challenge $challenge, CastChallengeBallot $action)
     {
-        return response()->json(['data' => $action->execute($challenge, $request->user(), $request->validated('choices'))]);
+        return response()->json(['data' => $action->execute($challenge, $request->user(), $request->validated())]);
     }
 
     public function juryScore(SubmitJuryScoreRequest $request, Challenge $challenge, ChallengeEntry $entry, SubmitJuryScore $action)

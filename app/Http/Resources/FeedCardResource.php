@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\VideoPurpose;
 use App\Models\Video;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -17,6 +18,14 @@ class FeedCardResource extends JsonResource
 
         $creatorName = $creator?->name ?: $creator?->username ?: 'Unknown Creator';
         $creatorHandle = $creator?->username ? ltrim((string) $creator->username, '@') : null;
+        $purpose = $video->purpose instanceof VideoPurpose
+            ? $video->purpose->value
+            : (string) $video->purpose;
+        $isChallengeVideo = in_array($purpose, [
+            VideoPurpose::ChallengeVideo->value,
+            VideoPurpose::ChallengeInstructionVideo->value,
+            VideoPurpose::ChallengeEntry->value,
+        ], true) || (bool) ($video->challenge_entries_exists ?? false);
 
         return [
             'id' => (string) $video->id,
@@ -44,6 +53,7 @@ class FeedCardResource extends JsonResource
             'soundArtist' => data_get($metadata, 'sound_artist'),
             'soundTitle' => data_get($metadata, 'sound_title'),
             'following' => (bool) ($video->is_following ?? data_get($metadata, 'following', false)),
+            'isChallenge' => $isChallengeVideo,
             'bookmarks' => $this->formatCount($video->bookmarks_count ?? data_get($metadata, 'bookmarks', data_get($metadata, 'bookmarks_count', 0))),
             'saves' => $this->formatCount($video->bookmarks_count ?? data_get($metadata, 'saves', data_get($metadata, 'saves_count', 0))),
         ];
