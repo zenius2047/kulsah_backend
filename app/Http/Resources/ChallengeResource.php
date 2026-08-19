@@ -5,6 +5,10 @@ namespace App\Http\Resources;
 use App\Domain\Challenges\Services\ChallengeEligibilityService;
 use App\Enums\ChallengeStatus;
 use App\Models\ChallengeMedia;
+use App\Models\ChallengePrize;
+use App\Models\ChallengeRewardPool;
+use App\Models\ChallengeRule;
+use App\Models\Video;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -35,12 +39,82 @@ class ChallengeResource extends JsonResource
             'can_vote' => $canVote, 'has_user_joined' => $hasJoined, 'has_user_voted' => $hasVoted,
             'eligibility' => $eligibility, 'official_sound_id' => $this->official_sound_id,
             'official_video' => $this->formatOfficialVideo(),
-            'entries' => $this->formatEntries($canVote, $hasVoted, $officialSound),
+            'reward' => $this->resolveReward(),
+            'awards' => ChallengePrizeResource::collection($this->whenLoaded('prizes')),
             'prizes' => ChallengePrizeResource::collection($this->whenLoaded('prizes')),
+            'rules' => $this->formatRules(),
+            'reward_pools' => $this->formatRewardPools(),
             'media' => ChallengeMediaResource::collection($this->whenLoaded('media')),
             'scoring_components' => $this->whenLoaded('scoringComponents'), 'jury_criteria' => $this->whenLoaded('juryCriteria'),
             'created_at' => optional($this->created_at)?->toIso8601String(), 'updated_at' => optional($this->updated_at)?->toIso8601String(),
         ];
+    }
+
+    private function resolveReward(): ?string
+    {
+        $prize = $this->relationLoaded('prizes')
+            ? $this->prizes->first()
+            : $this->prizes()->orderBy('rank_from')->first();
+
+        if (! $prize instanceof ChallengePrize) {
+            return data_get($this->metadata, 'reward');
+        }
+
+        if ($prize->amount !== null) {
+            $amount = rtrim(rtrim(number_format((float) $prize->amount, 2, '.', ''), '0'), '.');
+
+            return trim($amount.' '.($prize->currency ?: ''));
+        }
+
+        if (is_string($prize->title) && trim($prize->title) !== '') {
+            return $prize->title;
+        }
+
+        return data_get($this->metadata, 'reward');
+    }
+
+    private function formatRules(): array
+    {
+        $rules = $this->relationLoaded('rules')
+            ? $this->rules
+            : $this->rules()->orderBy('scope')->orderBy('id')->get();
+
+        return $rules->values()->map(function ($rule): array {
+            /** @var ChallengeRule $rule */
+            return [
+                'id' => $rule->id,
+                'scope' => $rule->scope,
+                'rule_type' => $rule->rule_type,
+                'operator' => $rule->operator,
+                'value' => $rule->value,
+                'is_required' => (bool) $rule->is_required,
+                'rules_version' => $rule->rules_version,
+            ];
+        })->all();
+    }
+
+    private function formatRewardPools(): array
+    {
+        $pools = $this->relationLoaded('rewardPools')
+            ? $this->rewardPools
+            : $this->rewardPools()->orderBy('id')->get();
+
+        return $pools->values()->map(function ($pool): array {
+            /** @var ChallengeRewardPool $pool */
+            return [
+                'id' => $pool->id,
+                'sponsor_id' => $pool->sponsor_id,
+                'funding_source_type' => $pool->funding_source_type,
+                'funding_source_id' => $pool->funding_source_id,
+                'currency' => $pool->currency,
+                'committed_amount' => $pool->committed_amount,
+                'funded_amount' => $pool->funded_amount,
+                'reserved_amount' => $pool->reserved_amount,
+                'distributed_amount' => $pool->distributed_amount,
+                'status' => $pool->status,
+                'funded_at' => optional($pool->funded_at)?->toIso8601String(),
+            ];
+        })->all();
     }
 
     private function formatOfficialVideo(): ?array
@@ -181,5 +255,3 @@ class ChallengeResource extends JsonResource
         return $target ? max(0, now()->diffInSeconds($target, false)) : null;
     }
 }
-
-

@@ -68,16 +68,38 @@ class ChallengeController extends Controller
         $this->authorize('view', $challenge);
 
         $challenge->load([
+            'rules',
             'prizes',
+            'rewardPools',
             'media.video',
             'entries' => fn ($query) => $query->with(['creator:id,name,username,avatar', 'video'])->orderByDesc('current_score')->latest('submitted_at'),
             'scoringComponents',
             'juryCriteria',
         ]);
 
-        return ChallengeResource::make($challenge);
+        $data = ChallengeResource::make($challenge)->resolve($request);
+        $data['reward_summary'] = $data['reward'] ?? null;
+        $data['awards'] = $data['prizes'] ?? [];
+        $data['pricing'] = $this->formatChallengePricing($data);
+
+        return response()->json(['data' => ['challenge' => $data]]);
     }
 
+    private function formatChallengePricing(array $data): array
+    {
+        $awards = is_array($data['awards'] ?? null) ? $data['awards'] : [];
+        $rewardPools = is_array($data['reward_pools'] ?? null) ? $data['reward_pools'] : [];
+        $primaryAward = $awards[0] ?? null;
+
+        return [
+            'reward_summary' => $data['reward_summary'] ?? null,
+            'currency' => is_array($primaryAward) ? ($primaryAward['currency'] ?? null) : null,
+            'amount' => is_array($primaryAward) ? ($primaryAward['amount'] ?? null) : null,
+            'reward_type' => is_array($primaryAward) ? ($primaryAward['reward_type'] ?? null) : null,
+            'title' => is_array($primaryAward) ? ($primaryAward['title'] ?? null) : null,
+            'reward_pools' => $rewardPools,
+        ];
+    }
     public function update(UpdateChallengeRequest $request, Challenge $challenge, UpdateChallenge $action)
     {
         $this->authorize('update', $challenge);
