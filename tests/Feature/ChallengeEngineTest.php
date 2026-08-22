@@ -33,12 +33,22 @@ class ChallengeEngineTest extends TestCase
         $this->assertDatabaseHas('challenge_collaborators', ['challenge_id' => $challenge->id, 'user_id' => $creator->id, 'role' => 'owner']);
     }
 
+    public function test_creation_with_null_status_resolves_active_when_the_submission_window_is_open(): void
+    {
+        $creator = User::factory()->create();
+        $challenge = app(CreateChallenge::class)->execute($creator, $this->payload(), null);
+
+        $this->assertSame(ChallengeStatus::Active, $challenge->status);
+    }
+
     public function test_lifecycle_accepts_valid_and_rejects_invalid_transitions(): void
     {
         $challenge = Challenge::factory()->create();
         $service = app(ChallengeLifecycleService::class);
         $service->transition($challenge, ChallengeStatus::PendingReview);
         $this->assertSame(ChallengeStatus::PendingReview, $challenge->refresh()->status);
+        $service->transition($challenge, ChallengeStatus::Active);
+        $this->assertSame(ChallengeStatus::Active, $challenge->refresh()->status);
         $this->expectException(InvalidChallengeTransition::class);
         $service->transition($challenge, ChallengeStatus::Completed);
     }

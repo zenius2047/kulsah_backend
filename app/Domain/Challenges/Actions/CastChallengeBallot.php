@@ -42,11 +42,11 @@ class CastChallengeBallot
             }
 
             $entryIds = array_column($choices, 'challenge_entry_id');
-            $entries = ChallengeEntry::where('challenge_id', $challenge->id)->where('status', 'approved')
+            $entries = ChallengeEntry::where('challenge_id', $challenge->id)->where('status', 'active')
                 ->whereHas('video', fn ($query) => $query->where('processing_status', 'ready')->whereNotNull('hls_url'))
                 ->whereIn('id', $entryIds)->get()->keyBy('id');
             if ($entries->count() !== count($entryIds)) {
-                throw ValidationException::withMessages(['choices' => 'Every choice must be an approved entry in this challenge.']);
+                throw ValidationException::withMessages(['choices' => 'Every choice must be an active entry in this challenge.']);
             }
             if (! ($config['allow_self_voting'] ?? false) && $entries->contains(fn ($entry) => (int) $entry->creator_id === (int) $voter->id)) {
                 throw ValidationException::withMessages(['choices' => 'Self-voting is not allowed.']);

@@ -173,7 +173,6 @@ class VideoUploadArchitectureTest extends TestCase
         $challenge = app(CreateChallenge::class)->execute($creator, $payload);
         $lifecycle = app(ChallengeLifecycleService::class);
         $lifecycle->transition($challenge, ChallengeStatus::PendingReview);
-        $lifecycle->transition($challenge, ChallengeStatus::Approved);
 
         try {
             $lifecycle->transition($challenge, ChallengeStatus::Active);

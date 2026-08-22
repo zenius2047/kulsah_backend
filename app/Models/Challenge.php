@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\ChallengeHostType;
 use App\Enums\ChallengeJudgingStrategy;
+use App\Enums\ChallengeMode;
 use App\Enums\ChallengeStatus;
 use App\Enums\ChallengeVisibility;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -21,6 +22,7 @@ class Challenge extends Model
         return [
             'host_type' => ChallengeHostType::class,
             'visibility' => ChallengeVisibility::class,
+            'mode' => ChallengeMode::class,
             'status' => ChallengeStatus::class,
             'judging_strategy' => ChallengeJudgingStrategy::class,
             'registration_starts_at' => 'datetime', 'registration_ends_at' => 'datetime',
@@ -45,6 +47,11 @@ class Challenge extends Model
     }
 
     public function collaborators()
+    {
+        return $this->hasMany(ChallengeCollaborator::class);
+    }
+
+    public function participants()
     {
         return $this->hasMany(ChallengeCollaborator::class);
     }
@@ -140,5 +147,12 @@ class Challenge extends Model
         return in_array($this->status, [ChallengeStatus::Active, ChallengeStatus::SubmissionsClosed], true)
             && $this->voting_starts_at && $this->voting_ends_at
             && now()->betweenIncluded($this->voting_starts_at, $this->voting_ends_at);
+    }
+
+    public function isCreatorBattle(): bool
+    {
+        return $this->mode instanceof ChallengeMode
+            ? $this->mode === ChallengeMode::CreatorBattle
+            : $this->mode === ChallengeMode::CreatorBattle->value;
     }
 }

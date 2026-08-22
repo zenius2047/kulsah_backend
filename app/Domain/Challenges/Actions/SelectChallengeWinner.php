@@ -14,8 +14,8 @@ class SelectChallengeWinner
 {
     public function execute(Challenge $challenge, ChallengeEntry $entry, User $actor, int $rank, string $reason): ChallengeSelectionDecision
     {
-        if ((int) $entry->challenge_id !== (int) $challenge->id || $entry->status !== 'approved') {
-            throw ValidationException::withMessages(['entry' => 'Only approved challenge entries may be selected.']);
+        if ((int) $entry->challenge_id !== (int) $challenge->id || $entry->status !== 'active') {
+            throw ValidationException::withMessages(['entry' => 'Only active challenge entries may be selected.']);
         }
 
         return DB::transaction(function () use ($challenge, $entry, $actor, $rank, $reason): ChallengeSelectionDecision {

@@ -29,6 +29,9 @@ class VideoResource extends JsonResource
             'content_type' => $this->content_type,
             'content_types' => is_array($this->content_types) ? $this->content_types : [],
             'purpose' => $this->purpose?->value ?? 'post_video',
+            'allowDuet' => (bool) ($this->allow_duet ?? false),
+            'isDuet' => (bool) ($this->duet_source_video_id ?? data_get($metadata, 'duet_source_video_id')),
+            'duetSourceVideoId' => $this->duet_source_video_id ? (int) $this->duet_source_video_id : data_get($metadata, 'duet_source_video_id'),
             'playlist_ids' => $this->relationLoaded('playlists')
                 ? $this->playlists->pluck('id')->sort()->values()->all()
                 : [],

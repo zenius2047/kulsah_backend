@@ -23,7 +23,7 @@ class SubmitJuryScore
         if (! $member) {
             throw ValidationException::withMessages(['judge' => 'You are not an accepted jury member.']);
         }
-        if ((int) $entry->challenge_id !== (int) $challenge->id || $entry->status !== 'approved') {
+        if ((int) $entry->challenge_id !== (int) $challenge->id || $entry->status !== 'active') {
             throw ValidationException::withMessages(['entry' => 'This entry cannot be scored.']);
         }
         $entry->loadMissing('video');

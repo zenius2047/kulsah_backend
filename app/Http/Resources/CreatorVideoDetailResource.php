@@ -28,6 +28,9 @@ class CreatorVideoDetailResource extends JsonResource
             'views' => $this->formatCount($video->views_count ?? data_get($metadata, 'views', data_get($metadata, 'views_count', 0))),
             'likes' => $this->formatCount($video->likes_count ?? data_get($metadata, 'likes', data_get($metadata, 'likes_count', 0))),
             'comments_count' => $this->formatCount($video->comments_count ?? data_get($metadata, 'comments_count', data_get($metadata, 'comments', 0))),
+            'allowDuet' => (bool) ($video->allow_duet ?? false),
+            'isDuet' => (bool) ($video->duet_source_video_id ?? data_get($metadata, 'duet_source_video_id')),
+            'duetSourceVideoId' => $video->duet_source_video_id ? (int) $video->duet_source_video_id : data_get($metadata, 'duet_source_video_id'),
             'comments' => $this->whenLoaded('comments', fn () => VideoCommentResource::collection($this->comments)->resolve($request), []),
             'otherVideos' => $this->whenLoaded('otherVideos', fn () => CreatorVideoDetailResource::collection($this->otherVideos)->resolve($request), []),
         ];

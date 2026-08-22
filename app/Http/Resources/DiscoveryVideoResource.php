@@ -14,6 +14,9 @@ class DiscoveryVideoResource extends JsonResource
         $video = $this->resource;
         $creator = $video->relationLoaded('user') ? $video->user : null;
         $metadata = is_array($video->metadata) ? $video->metadata : [];
+        $viewerId = (int) ($request->user()?->id ?? 0);
+        $isOwner = $viewerId > 0 && (int) $video->user_id === $viewerId;
+        $canDuet = $isOwner || ((bool) $video->allow_duet && $video->status === 'ready' && $video->visibility === 'public');
         $category = $video->content_type
             ?: (is_array($video->content_types) ? ($video->content_types[0] ?? null) : null)
             ?: data_get($metadata, 'category');
@@ -33,6 +36,10 @@ class DiscoveryVideoResource extends JsonResource
             'content_type' => 'video',
             'category' => $category,
             'duration_seconds' => $video->duration !== null ? (int) $video->duration : null,
+            'allowDuet' => (bool) ($video->allow_duet ?? false),
+            'isDuet' => (bool) ($video->duet_source_video_id ?? data_get($metadata, 'duet_source_video_id')),
+            'duetSourceVideoId' => $video->duet_source_video_id ? (int) $video->duet_source_video_id : data_get($metadata, 'duet_source_video_id'),
+            'canDuet' => $canDuet,
             'stats' => [
                 'views_count' => (int) ($video->views_count ?? 0),
                 'likes_count' => (int) ($video->likes_count ?? 0),

@@ -545,6 +545,10 @@ class VideoService
             $updates['visibility'] = $data['visibility'] ?? 'public';
         }
 
+        if (array_key_exists('allow_duet', $data)) {
+            $updates['allow_duet'] = (bool) $data['allow_duet'];
+        }
+
         if ($updates !== []) {
             $video->update($updates);
         }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\ChallengeMode;
 use App\Models\Challenge;
 use App\Models\ChallengeMedia;
 use App\Models\ChallengePrize;
@@ -16,6 +17,7 @@ class ChallengeListResource extends JsonResource
         $challenge = $this->resource;
         $creator = $challenge->relationLoaded('creator') ? $challenge->creator : null;
         $metadata = is_array($challenge->metadata) ? $challenge->metadata : [];
+        $mode = $this->resolveMode($challenge);
 
         return [
             'id' => $challenge->id,
@@ -27,12 +29,52 @@ class ChallengeListResource extends JsonResource
             'description' => $challenge->description,
             'reward' => $this->resolveReward($challenge),
             'deadline' => optional($challenge->submission_ends_at)?->toIso8601String(),
-            'participants' => isset($challenge->participants_count)
-                ? (int) $challenge->participants_count
-                : $challenge->entries()->distinct()->count('creator_id'),
+            'mode' => $this->enumValue($mode),
+            'is_creator_battle' => $mode === ChallengeMode::CreatorBattle,
+            'participant_limit' => $challenge->max_participants,
+            'participants' => $this->resolveParticipants($challenge),
             'image' => $this->resolveImage($challenge),
             'isNew' => $this->resolveIsNew($challenge, $metadata),
         ];
+    }
+
+    private function resolveParticipants(Challenge $challenge): int
+    {
+        if ($this->resolveMode($challenge) === ChallengeMode::CreatorBattle) {
+            return (int) $challenge->collaborators()->whereIn('role', ['owner', 'challenger'])->count();
+        }
+
+        return isset($challenge->participants_count)
+            ? (int) $challenge->participants_count
+            : $challenge->entries()->distinct()->count('creator_id');
+    }
+
+    private function resolveMode(Challenge $challenge): ChallengeMode
+    {
+        $mode = $challenge->mode;
+
+        if ($mode instanceof ChallengeMode) {
+            return $mode;
+        }
+
+        if (is_string($mode) && $mode !== '') {
+            return ChallengeMode::tryFrom($mode) ?? ChallengeMode::Open;
+        }
+
+        return ChallengeMode::Open;
+    }
+
+    private function enumValue(mixed $value): ?string
+    {
+        if ($value instanceof \BackedEnum) {
+            return (string) $value->value;
+        }
+
+        if (is_string($value) && $value !== '') {
+            return $value;
+        }
+
+        return null;
     }
 
     private function resolveCategory(Challenge $challenge, array $metadata): string|int|null

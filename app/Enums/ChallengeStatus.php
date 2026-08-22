@@ -5,8 +5,8 @@ namespace App\Enums;
 enum ChallengeStatus: string
 {
     case Draft = 'draft';
+    case AwaitingParticipants = 'awaiting_participants';
     case PendingReview = 'pending_review';
-    case Approved = 'approved';
     case Scheduled = 'scheduled';
     case Active = 'active';
     case Paused = 'paused';

@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Domain\Challenges\Services\ChallengeEligibilityService;
+use App\Enums\ChallengeMode;
 use App\Enums\ChallengeStatus;
 use App\Models\ChallengeMedia;
 use App\Models\ChallengePrize;
@@ -18,21 +19,24 @@ class ChallengeResource extends JsonResource
     {
         $user = $request->user();
         $entryCount = isset($this->entries_count) ? (int) $this->entries_count : $this->entries()->count();
-        $participantCount = isset($this->participants_count) ? (int) $this->participants_count : $this->entries()->distinct()->count('creator_id');
+        $participantCount = $this->resolveParticipantCount();
         $hasJoined = $user ? $this->entries()->where('creator_id', $user->id)->exists() : false;
         $hasVoted = $user ? $this->ballots()->where('voter_id', $user->id)->exists() : false;
         $canVote = (bool) ($user && $this->isVotingOpen());
         $officialSound = (bool) $this->official_sound_id;
         $eligibility = $user ? app(ChallengeEligibilityService::class)->evaluate($this->resource, $user) : null;
         $status = $this->resolveStatus();
+        $mode = $this->resolveMode();
 
         return [
             'id' => $this->id, 'title' => $this->title, 'slug' => $this->slug, 'description' => $this->description,
             'instructions' => $this->instructions, 'host_type' => $this->enumValue($this->host_type), 'host_user_id' => $this->host_user_id,
-            'host_organization_id' => $this->host_organization_id, 'visibility' => $this->enumValue($this->visibility), 'status' => $this->enumValue($status),
+            'host_organization_id' => $this->host_organization_id, 'visibility' => $this->enumValue($this->visibility), 'mode' => $this->enumValue($mode),
+            'is_creator_battle' => $mode === ChallengeMode::CreatorBattle, 'status' => $this->enumValue($status),
             'judging_strategy' => $this->enumValue($this->judging_strategy), 'winner_selection_method' => $this->winner_selection_method,
             'schedule' => collect(['registration_starts_at', 'registration_ends_at', 'submission_starts_at', 'submission_ends_at', 'voting_starts_at', 'voting_ends_at', 'judging_starts_at', 'judging_ends_at', 'results_publish_at'])->mapWithKeys(fn ($key) => [$key => optional($this->{$key})?->toIso8601String()])->all(),
             'leaderboard' => ['enabled' => (bool) $this->show_leaderboard, 'mode' => $this->leaderboard_mode],
+            'participant_limit' => $this->max_participants,
             'participant_count' => $participantCount, 'entry_count' => $entryCount,
             'current_phase' => $this->enumValue($status), 'time_remaining_seconds' => $this->timeRemaining($status),
             'can_join' => $user && $this->isAcceptingSubmissions() && ($eligibility['eligible'] ?? false) && ! ($this->max_entries_per_creator <= $this->entries()->where('creator_id', $user->id)->count()),
@@ -48,6 +52,32 @@ class ChallengeResource extends JsonResource
             'scoring_components' => $this->whenLoaded('scoringComponents'), 'jury_criteria' => $this->whenLoaded('juryCriteria'),
             'created_at' => optional($this->created_at)?->toIso8601String(), 'updated_at' => optional($this->updated_at)?->toIso8601String(),
         ];
+    }
+
+    private function resolveParticipantCount(): int
+    {
+        if ($this->isCreatorBattle()) {
+            return (int) $this->collaborators()->whereIn('role', ['owner', 'challenger'])->count();
+        }
+
+        return isset($this->participants_count)
+            ? (int) $this->participants_count
+            : $this->entries()->distinct()->count('creator_id');
+    }
+
+    private function resolveMode(): ChallengeMode
+    {
+        $mode = $this->mode;
+
+        if ($mode instanceof ChallengeMode) {
+            return $mode;
+        }
+
+        if (is_string($mode) && $mode !== '') {
+            return ChallengeMode::tryFrom($mode) ?? ChallengeMode::Open;
+        }
+
+        return ChallengeMode::Open;
     }
 
     private function resolveReward(): ?string

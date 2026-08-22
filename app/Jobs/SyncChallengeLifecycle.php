@@ -24,7 +24,6 @@ class SyncChallengeLifecycle implements ShouldQueue
         }
 
         $target = match ($challenge->status) {
-            ChallengeStatus::Approved => $challenge->submission_starts_at->isFuture() ? ChallengeStatus::Scheduled : ChallengeStatus::Active,
             ChallengeStatus::Scheduled => $challenge->submission_starts_at->isPast() ? ChallengeStatus::Active : null,
             ChallengeStatus::Active => $challenge->submission_ends_at->isPast() ? ChallengeStatus::SubmissionsClosed : null,
             ChallengeStatus::SubmissionsClosed => $challenge->voting_ends_at?->isPast()

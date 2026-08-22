@@ -82,18 +82,12 @@ class ChallengeShowPayloadTest extends TestCase
             'video_id' => $entryVideo->id,
             'submission_number' => 1,
             'caption' => 'My challenge entry',
-            'status' => 'approved',
+            'status' => 'active',
             'submitted_at' => now()->subHour(),
             'current_score' => 87.5,
         ]);
 
-        dump($challenge->fresh()->official_sound_id);
-        dump($challenge->media()->count());
-        dump($challenge->entries()->count());
-
         $response = $this->actingAs($viewer)->withoutMiddleware()->getJson("/api/v1/general/challenges/{$challenge->id}");
-        dump($response->json('data.official_video'));
-        dump($response->json('data.entries'));
 
         $response
             ->assertOk()
@@ -118,5 +112,3 @@ class ChallengeShowPayloadTest extends TestCase
             ->assertJsonPath('data.entries.0.isVote', true);
     }
 }
-
-

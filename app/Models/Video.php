@@ -15,11 +15,13 @@ class Video extends Model
 
     protected $fillable = [
         'user_id',
+        'duet_source_video_id',
         'media_type',
         'purpose',
         'title',
         'caption',
         'visibility',
+        'allow_duet',
         'content_type',
         'content_types',
         'original_filename',
@@ -76,6 +78,7 @@ class Video extends Model
             'purpose' => VideoPurpose::class,
             'upload_status' => VideoUploadStatus::class,
             'processing_status' => VideoProcessingStatus::class,
+            'allow_duet' => 'boolean',
             'progress_percentage' => 'integer',
             'views_count' => 'integer',
             'render_completed_at' => 'datetime',
@@ -122,6 +125,16 @@ class Video extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function duetSourceVideo()
+    {
+        return $this->belongsTo(self::class, 'duet_source_video_id');
+    }
+
+    public function duetVideos()
+    {
+        return $this->hasMany(self::class, 'duet_source_video_id');
     }
 
     public function playlists()

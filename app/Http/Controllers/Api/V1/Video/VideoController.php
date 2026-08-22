@@ -208,6 +208,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
         ]);
 
         try {
@@ -273,6 +274,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
             'thumbnail' => $this->thumbnailValidationRules(),
             'original_name' => ['required', 'string', 'max:255'],
             'mime_type' => ['required', 'string', Rule::in(config('video.allowed_mimetypes', []))],
@@ -625,6 +627,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
             'thumbnail' => $this->thumbnailValidationRules(),
         ]);
 
@@ -659,6 +662,42 @@ class VideoController extends Controller
         return response()->json([
             'message' => 'Video draft created successfully.',
             'data' => new VideoResource($video),
+        ], 201);
+    }
+
+    public function duetDraft(Request $request, Video $video)
+    {
+        $this->ensureDuetSourceIsAvailable($video, (int) $request->user()->id);
+
+        $validated = $request->validate([
+            'title' => ['nullable', 'string', 'max:255'],
+            'caption' => ['nullable', 'string', 'max:5000'],
+            'content_type' => ['sometimes', 'array', 'min:1'],
+            'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
+            'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
+        ]);
+
+        $contentTypes = $this->resolveContentTypes($request);
+
+        $duet = $this->videoService->createDraftVideo(
+            data: [
+                'title' => $validated['title'] ?? null,
+                'caption' => $validated['caption'] ?? null,
+                'content_type' => $contentTypes[0] ?? null,
+                'content_types' => $contentTypes,
+                'visibility' => $validated['visibility'] ?? 'public',
+                'purpose' => 'post_video',
+            ],
+            userId: (int) $request->user()->id,
+        );
+
+        $duet = $this->attachDuetSourceToVideo($duet, $video);
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Duet draft created successfully.',
+            'data' => new VideoResource($duet),
         ], 201);
     }
 
@@ -732,6 +771,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
         ]);
 
         try {
@@ -1005,6 +1045,46 @@ class VideoController extends Controller
         );
 
         return response()->json($payload);
+    }
+
+    private function ensureDuetSourceIsAvailable(Video $video, int $userId): void
+    {
+        $video->refresh();
+
+        if ($video->status !== 'ready' || $video->processing_status?->value !== 'ready') {
+            throw ValidationException::withMessages([
+                'video' => 'This video is not ready for dueting yet.',
+            ]);
+        }
+
+        if ((int) $video->user_id !== $userId && ! (bool) $video->allow_duet) {
+            throw ValidationException::withMessages([
+                'video' => 'The creator has not allowed duets on this video.',
+            ]);
+        }
+
+        if ((int) $video->user_id !== $userId && $video->visibility !== 'public') {
+            throw ValidationException::withMessages([
+                'video' => 'Only public videos can be dueted.',
+            ]);
+        }
+    }
+
+    private function attachDuetSourceToVideo(Video $video, Video $sourceVideo): Video
+    {
+        $metadata = is_array($video->metadata) ? $video->metadata : [];
+
+        $video->update([
+            'duet_source_video_id' => $sourceVideo->id,
+            'metadata' => array_merge($metadata, [
+                'is_duet' => true,
+                'duet_source_video_id' => $sourceVideo->id,
+                'duet_source_user_id' => $sourceVideo->user_id,
+                'duet_source_title' => $sourceVideo->title,
+            ]),
+        ]);
+
+        return $video->fresh();
     }
 
     private function normalizeContentTypes(Request $request): void

@@ -55,7 +55,7 @@ class ChallengeController extends Controller
 
     public function store(StoreChallengeRequest $request, CreateChallenge $action)
     {
-        return ChallengeResource::make($action->execute($request->user(), $request->validated(), ChallengeStatus::Approved))->response()->setStatusCode(201);
+        return ChallengeResource::make($action->execute($request->user(), $request->validated(), null))->response()->setStatusCode(201);
     }
 
     public function draft(StoreChallengeRequest $request, CreateChallenge $action)
@@ -106,6 +106,7 @@ class ChallengeController extends Controller
             ],
         ];
     }
+
     public function update(UpdateChallengeRequest $request, Challenge $challenge, UpdateChallenge $action)
     {
         $this->authorize('update', $challenge);
@@ -207,4 +208,3 @@ class ChallengeController extends Controller
         return response()->json(['data' => $action->execute($challenge, $entry, $request->user(), $data['rank'], $data['reason'])], 201);
     }
 }
-

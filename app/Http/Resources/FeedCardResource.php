@@ -15,6 +15,9 @@ class FeedCardResource extends JsonResource
         $video = $this->resource;
         $creator = $video->relationLoaded('user') ? $video->user : null;
         $metadata = is_array($video->metadata) ? $video->metadata : [];
+        $viewerId = (int) ($request->user()?->id ?? 0);
+        $isOwner = $viewerId > 0 && (int) $video->user_id === $viewerId;
+        $canDuet = $isOwner || ((bool) $video->allow_duet && $video->status === 'ready' && $video->visibility === 'public');
 
         $creatorName = $creator?->name ?: $creator?->username ?: 'Unknown Creator';
         $creatorHandle = $creator?->username ? ltrim((string) $creator->username, '@') : null;
@@ -54,6 +57,10 @@ class FeedCardResource extends JsonResource
             'soundTitle' => data_get($metadata, 'sound_title'),
             'following' => (bool) ($video->is_following ?? data_get($metadata, 'following', false)),
             'isChallenge' => $isChallengeVideo,
+            'allowDuet' => (bool) ($video->allow_duet ?? false),
+            'isDuet' => (bool) ($video->duet_source_video_id ?? data_get($metadata, 'duet_source_video_id')),
+            'duetSourceVideoId' => $video->duet_source_video_id ? (int) $video->duet_source_video_id : data_get($metadata, 'duet_source_video_id'),
+            'canDuet' => $canDuet,
             'bookmarks' => $this->formatCount($video->bookmarks_count ?? data_get($metadata, 'bookmarks', data_get($metadata, 'bookmarks_count', 0))),
             'saves' => $this->formatCount($video->bookmarks_count ?? data_get($metadata, 'saves', data_get($metadata, 'saves_count', 0))),
         ];

@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
 use App\Http\Controllers\Api\V1\Challenge\ChallengeController;
@@ -136,6 +136,7 @@ Route::prefix('creator')
         Route::get('/videos/analytics', [VideoController::class, 'analytics']);
         Route::post('/videos/drafts', [VideoController::class, 'draft']);
         Route::post('/videos', [VideoController::class, 'store']);
+        Route::post('/videos/{video}/duet-draft', [VideoController::class, 'duetDraft']);
         Route::post('/videos/uploads/init', [VideoController::class, 'initFastUpload']);
         Route::post('/videos/{video}/upload/complete', [VideoController::class, 'completeFastUpload']);
         Route::post('/videos/{video}/processing/retry', [VideoController::class, 'retryProcessing']);

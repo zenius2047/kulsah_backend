@@ -3,25 +3,42 @@
 namespace App\Domain\Challenges\Actions;
 
 use App\Enums\ChallengeHostType;
+use App\Enums\ChallengeMode;
 use App\Enums\ChallengeStatus;
 use App\Jobs\ExtractChallengeCoverFrame;
 use App\Models\Challenge;
 use App\Models\ChallengeAuditLog;
+use App\Models\ChallengeCollaborator;
+use App\Models\ChallengeInvite;
 use App\Models\User;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class CreateChallenge
 {
-    public function execute(User $user, array $data, ChallengeStatus $status = ChallengeStatus::Draft): Challenge
+    public function execute(User $user, array $data, ?ChallengeStatus $status = ChallengeStatus::Draft): Challenge
     {
         return DB::transaction(function () use ($user, $data, $status): Challenge {
-            $challenge = new Challenge(Arr::except($data, ['rules', 'media', 'sponsors', 'reward_pools', 'prizes', 'judging_stages', 'scoring_components', 'jury_criteria']));
+            $mode = ChallengeMode::tryFrom((string) ($data['mode'] ?? ChallengeMode::Open->value)) ?? ChallengeMode::Open;
+            $battleParticipantIds = collect($data['battle_participant_ids'] ?? [])
+                ->map(static fn ($value) => (int) $value)
+                ->filter()
+                ->unique()
+                ->values();
+
+            $status ??= $this->resolveInitialStatus($data);
+            if ($mode === ChallengeMode::CreatorBattle && $status !== ChallengeStatus::Draft) {
+                $status = ChallengeStatus::AwaitingParticipants;
+            }
+
+            $challenge = new Challenge(Arr::except($data, ['rules', 'media', 'sponsors', 'reward_pools', 'prizes', 'judging_stages', 'scoring_components', 'jury_criteria', 'battle_participant_ids']));
             $challenge->forceFill([
                 'created_by_user_id' => $user->id,
                 'host_type' => $data['host_type'] ?? ChallengeHostType::Creator,
                 'host_user_id' => ($data['host_type'] ?? 'creator') === 'creator' ? $user->id : ($data['host_user_id'] ?? null),
+                'mode' => $mode,
                 'slug' => $this->uniqueSlug($data['slug'] ?? $data['title']),
                 'status' => $status,
             ])->save();
@@ -53,11 +70,68 @@ class CreateChallenge
             foreach ($data['jury_criteria'] ?? [] as $item) {
                 $challenge->juryCriteria()->create($item);
             }
-            $challenge->collaborators()->create(['user_id' => $user->id, 'role' => 'owner', 'invited_by_user_id' => $user->id, 'status' => 'accepted', 'accepted_at' => now()]);
-            ChallengeAuditLog::create(['challenge_id' => $challenge->id, 'actor_user_id' => $user->id, 'action' => 'challenge.created', 'subject_type' => Challenge::class, 'subject_id' => $challenge->id, 'after' => $challenge->toArray()]);
 
-            return $challenge->load(['creator', 'prizes', 'rules', 'media.video', 'scoringComponents', 'juryCriteria']);
+            $challenge->collaborators()->create([
+                'user_id' => $user->id,
+                'role' => 'owner',
+                'invited_by_user_id' => $user->id,
+                'status' => 'accepted',
+                'accepted_at' => now(),
+            ]);
+
+            if ($mode === ChallengeMode::CreatorBattle) {
+                foreach ($battleParticipantIds as $participantId) {
+                    ChallengeInvite::updateOrCreate(
+                        ['challenge_id' => $challenge->id, 'invited_user_id' => $participantId],
+                        [
+                            'invited_by_user_id' => $user->id,
+                            'status' => 'pending',
+                            'token' => hash('sha256', Str::random(64)),
+                            'expires_at' => null,
+                            'accepted_at' => null,
+                            'declined_at' => null,
+                        ]
+                    );
+
+                    ChallengeCollaborator::updateOrCreate(
+                        ['challenge_id' => $challenge->id, 'user_id' => $participantId],
+                        [
+                            'role' => 'challenger',
+                            'invited_by_user_id' => $user->id,
+                            'status' => 'pending',
+                            'accepted_at' => null,
+                        ]
+                    );
+                }
+            }
+
+            ChallengeAuditLog::create([
+                'challenge_id' => $challenge->id,
+                'actor_user_id' => $user->id,
+                'action' => 'challenge.created',
+                'subject_type' => Challenge::class,
+                'subject_id' => $challenge->id,
+                'after' => $challenge->toArray(),
+            ]);
+
+            return $challenge->load(['creator', 'prizes', 'rules', 'media.video', 'scoringComponents', 'juryCriteria', 'collaborators', 'invites']);
         });
+    }
+
+    private function resolveInitialStatus(array $data): ChallengeStatus
+    {
+        $submissionStartsAt = isset($data['submission_starts_at']) ? Carbon::parse($data['submission_starts_at']) : null;
+        $submissionEndsAt = isset($data['submission_ends_at']) ? Carbon::parse($data['submission_ends_at']) : null;
+
+        if ($submissionStartsAt && now()->lt($submissionStartsAt)) {
+            return ChallengeStatus::Scheduled;
+        }
+
+        if ($submissionEndsAt && now()->gt($submissionEndsAt)) {
+            return ChallengeStatus::SubmissionsClosed;
+        }
+
+        return ChallengeStatus::Active;
     }
 
     private function uniqueSlug(string $value): string

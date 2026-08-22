@@ -32,7 +32,7 @@ class FinalizeChallengeResults
                 throw ValidationException::withMessages(['integrity' => 'Open integrity flags must be resolved before finalization.']);
             }
 
-            $entries = $challenge->entries()->where('status', 'approved')
+            $entries = $challenge->entries()->where('status', 'active')
                 ->whereHas('video', fn ($query) => $query->where('processing_status', 'ready')->whereNotNull('hls_url'))
                 ->orderBy('id')->lockForUpdate()->get();
             foreach ($entries as $entry) {
@@ -49,7 +49,7 @@ class FinalizeChallengeResults
 
                     return $decision->entry;
                 })->filter()->values()
-                : $challenge->entries()->where('status', 'approved')
+                : $challenge->entries()->where('status', 'active')
                     ->whereHas('video', fn ($query) => $query->where('processing_status', 'ready')->whereNotNull('hls_url'))
                     ->orderByDesc('current_score')->orderBy('submitted_at')->orderBy('id')->lockForUpdate()->get();
             $maxRank = max(0, (int) $challenge->prizes()->max('rank_to'));

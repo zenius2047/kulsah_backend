@@ -9,11 +9,11 @@ class ChallengeEntry extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id', 'current_score', 'current_rank', 'approved_at', 'rejected_at', 'disqualified_at'];
+    protected $guarded = ['id', 'current_score', 'current_rank', 'rejected_at', 'disqualified_at'];
 
     protected function casts(): array
     {
-        return ['submitted_at' => 'datetime', 'approved_at' => 'datetime', 'rejected_at' => 'datetime', 'withdrawn_at' => 'datetime', 'disqualified_at' => 'datetime', 'current_score' => 'decimal:6'];
+        return ['submitted_at' => 'datetime', 'rejected_at' => 'datetime', 'withdrawn_at' => 'datetime', 'disqualified_at' => 'datetime', 'current_score' => 'decimal:6'];
     }
 
     public function challenge()

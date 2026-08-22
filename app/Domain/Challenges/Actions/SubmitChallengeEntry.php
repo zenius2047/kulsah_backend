@@ -4,6 +4,7 @@ namespace App\Domain\Challenges\Actions;
 
 use App\Domain\Challenges\Services\ChallengeEligibilityService;
 use App\Domain\Challenges\Services\ChallengeRuleEngine;
+use App\Enums\ChallengeMode;
 use App\Models\Challenge;
 use App\Models\ChallengeAuditLog;
 use App\Models\ChallengeEntry;
@@ -23,6 +24,16 @@ class SubmitChallengeEntry
             if (! $challenge->isAcceptingSubmissions()) {
                 throw ValidationException::withMessages(['challenge' => 'This challenge is not accepting submissions.']);
             }
+
+            if ($challenge->isCreatorBattle()) {
+                $isParticipant = $challenge->created_by_user_id === $user->id
+                    || $challenge->collaborators()->where('user_id', $user->id)->where('status', 'accepted')->whereIn('role', ['owner', 'challenger'])->exists();
+
+                if (! $isParticipant) {
+                    throw ValidationException::withMessages(['challenge' => 'Only accepted creator battle participants may submit.']);
+                }
+            }
+
             $video = Video::query()->whereKey($data['video_id'])->where('user_id', $user->id)->lockForUpdate()->first();
             if (! $video) {
                 throw ValidationException::withMessages(['video_id' => 'The selected video does not belong to you.']);
@@ -47,10 +58,14 @@ class SubmitChallengeEntry
             $this->validateSubmissionRules($challenge, $video);
 
             $entry = ChallengeEntry::create([
-                'challenge_id' => $challenge->id, 'creator_id' => $user->id, 'video_id' => $video->id,
-                'submission_number' => $existing + 1, 'caption' => $data['caption'] ?? $video->caption,
-                'status' => 'approved', 'moderation_status' => 'approved', 'eligibility_status' => 'eligible',
-                'submitted_at' => now(), 'approved_at' => now(),
+                'challenge_id' => $challenge->id,
+                'creator_id' => $user->id,
+                'video_id' => $video->id,
+                'submission_number' => $existing + 1,
+                'caption' => $data['caption'] ?? $video->caption,
+                'status' => 'active',
+                'eligibility_status' => 'eligible',
+                'submitted_at' => now(),
             ]);
             $entry->eligibilitySnapshots()->create(['rules_version' => $challenge->rules_version, 'eligible' => true, 'evaluation' => $evaluation, 'evaluated_at' => now()]);
             ChallengeAuditLog::create(['challenge_id' => $challenge->id, 'actor_user_id' => $user->id, 'action' => 'entry.submitted', 'subject_type' => ChallengeEntry::class, 'subject_id' => $entry->id, 'after' => $entry->toArray()]);

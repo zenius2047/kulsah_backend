@@ -14,9 +14,9 @@ use Illuminate\Validation\ValidationException;
 class ChallengeLifecycleService
 {
     private const TRANSITIONS = [
-        'draft' => ['pending_review', 'cancelled'],
-        'pending_review' => ['approved', 'rejected', 'cancelled'],
-        'approved' => ['scheduled', 'active', 'cancelled'],
+        'draft' => ['awaiting_participants', 'pending_review', 'cancelled'],
+        'awaiting_participants' => ['scheduled', 'active', 'submissions_closed', 'cancelled', 'voided'],
+        'pending_review' => ['scheduled', 'active', 'rejected', 'cancelled', 'awaiting_participants'],
         'scheduled' => ['active', 'paused', 'cancelled'],
         'active' => ['paused', 'submissions_closed', 'cancelled', 'voided'],
         'paused' => ['scheduled', 'active', 'cancelled', 'voided'],
@@ -43,7 +43,7 @@ class ChallengeLifecycleService
                 throw new InvalidChallengeTransition("Challenge cannot transition from {$from} to {$to->value}.");
             }
 
-            if (in_array($to, [ChallengeStatus::Scheduled, ChallengeStatus::Active], true)
+            if (in_array($to, [ChallengeStatus::Scheduled, ChallengeStatus::Active, ChallengeStatus::AwaitingParticipants], true)
                 && $locked->media()->whereIn('role', ['challenge_video', 'instruction_video'])
                     ->whereHas('video', fn ($query) => $query->where('processing_status', '!=', 'ready')->orWhereNull('hls_url'))
                     ->exists()) {
