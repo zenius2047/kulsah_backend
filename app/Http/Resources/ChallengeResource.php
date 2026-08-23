@@ -5,10 +5,16 @@ namespace App\Http\Resources;
 use App\Domain\Challenges\Services\ChallengeEligibilityService;
 use App\Enums\ChallengeMode;
 use App\Enums\ChallengeStatus;
+use App\Models\ChallengeBallot;
+use App\Models\ChallengeCollaborator;
+use App\Models\ChallengeEntry;
+use App\Models\ChallengeInvite;
 use App\Models\ChallengeMedia;
 use App\Models\ChallengePrize;
 use App\Models\ChallengeRewardPool;
 use App\Models\ChallengeRule;
+use App\Models\ChallengeWinner;
+use App\Models\User;
 use App\Models\Video;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -17,6 +23,10 @@ class ChallengeResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        if ($this->isCreatorBattle()) {
+            return $this->formatCreatorBattle($request);
+        }
+
         $user = $request->user();
         $entryCount = isset($this->entries_count) ? (int) $this->entries_count : $this->entries()->count();
         $participantCount = $this->resolveParticipantCount();
@@ -54,10 +64,477 @@ class ChallengeResource extends JsonResource
         ];
     }
 
+    private function formatCreatorBattle(Request $request): array
+    {
+        $user = $request->user();
+        $status = $this->resolveStatus();
+        $mode = $this->resolveMode();
+        $category = $this->resolveCategory();
+        $coverImage = $this->resolveCoverImage();
+        $participants = $this->resolveCreatorBattleParticipants($request);
+        $ballots = $this->resolveCreatorBattleBallots($user);
+        $voteCounts = $this->resolveCreatorBattleVoteCounts($participants, $ballots);
+        $totalVotes = array_sum($voteCounts);
+        $viewVote = $participants->values()
+            ->map(function (array $participant) use ($voteCounts, $totalVotes): array {
+                $votes = (int) ($voteCounts[$participant['creator']['id']] ?? 0);
+
+                return [
+                    'creator' => $participant['creator']['name'] ?? $participant['creator']['username'] ?? 'Unknown Creator',
+                    'avatar' => $participant['creator']['avatar'] ?? null,
+                    'votes' => $votes,
+                    'percentage' => $totalVotes > 0 ? round(($votes / $totalVotes) * 100, 2) : 0.0,
+                ];
+            })
+            ->sortByDesc('votes')
+            ->values()
+            ->all();
+        $currentUserVote = $this->resolveCurrentUserVote($user, $ballots);
+        $hasVoted = $currentUserVote !== null;
+        $votingOpen = $this->isVotingOpen();
+        $canVote = (bool) ($user && $votingOpen && (! $hasVoted || (bool) data_get($this->voting_configuration, 'allow_vote_changes', false)));
+
+        return [
+            'id' => $this->id,
+            'creator_id' => $this->created_by_user_id,
+            'mode' => $this->enumValue($mode),
+            'title' => $this->title,
+            'description' => $this->description,
+            'category' => $category,
+            'hashtag' => $this->resolveHashtag(),
+            'cover_image' => $coverImage,
+            'status' => $this->enumValue($status),
+            'participant_limit' => $this->max_participants,
+            'participant_count' => count($participants),
+            'winner_selection_method' => $this->winner_selection_method,
+            'submission' => [
+                'starts_at' => optional($this->submission_starts_at)?->toIso8601String(),
+                'ends_at' => optional($this->submission_ends_at)?->toIso8601String(),
+                'is_open' => $this->isAcceptingSubmissions(),
+            ],
+            'voting' => [
+                'enabled' => (bool) ($this->voting_starts_at && $this->voting_ends_at),
+                'status' => $this->resolveVotingStatus(),
+                'starts_at' => optional($this->voting_starts_at)?->toIso8601String(),
+                'ends_at' => optional($this->voting_ends_at)?->toIso8601String(),
+                'total_votes' => $totalVotes,
+                'visibility' => $this->resolveVotingVisibility(),
+                'allow_vote_change' => (bool) data_get($this->voting_configuration, 'allow_vote_changes', false),
+                'current_user_has_voted' => $hasVoted,
+                'current_user_voted_entry_id' => $currentUserVote,
+            ],
+            'viewVote' => $viewVote,
+            'viewVote' => $viewVote,
+            'participants' => $participants->values()->map(function (array $participant) use ($voteCounts, $totalVotes): array {
+                $votes = (int) ($voteCounts[$participant['creator']['id']] ?? 0);
+                $entry = $participant['entry'];
+
+                return [
+                    'id' => $participant['id'],
+                    'role' => $participant['role'],
+                    'position' => $participant['position'],
+                    'creator' => $participant['creator'],
+                    'invitation_status' => $participant['invitation_status'],
+                    'submission_status' => $participant['submission_status'],
+                    'entry' => $entry,
+                    'likes' => (int) data_get($entry, 'engagement.likes', 0),
+                    'comments' => (int) data_get($entry, 'engagement.comments', 0),
+                    'votes' => [
+                        'count' => $votes,
+                        'percentage' => $totalVotes > 0 ? round(($votes / $totalVotes) * 100, 2) : 0.0,
+                    ],
+                    'is_winner' => $participant['is_winner'],
+                ];
+            })->all(),
+            'current_user' => [
+                'is_host' => (bool) ($user && (int) $this->created_by_user_id === (int) $user->id),
+                'is_participant' => $this->resolveIsCurrentUserParticipant($user, $participants),
+                'has_voted' => $hasVoted,
+                'voted_entry_id' => $currentUserVote,
+                'can_vote' => $canVote,
+                'can_submit' => $this->resolveCanCurrentUserSubmit($user, $participants),
+                'can_manage' => $this->resolveCanCurrentUserManage($user),
+            ],
+            'result' => $this->formatCreatorBattleResult(),
+            'created_at' => optional($this->created_at)?->toIso8601String(),
+            'updated_at' => optional($this->updated_at)?->toIso8601String(),
+        ];
+    }
+
+    private function resolveCreatorBattleParticipants(Request $request)
+    {
+        $host = $this->creator()->first();
+        $hostUser = $host instanceof User ? $host : null;
+        $collaborators = $this->relationLoaded('collaborators')
+            ? $this->collaborators
+            : $this->collaborators()->orderBy('id')->get();
+        $invites = $this->relationLoaded('invites')
+            ? $this->invites
+            : $this->invites()->orderBy('id')->get();
+        $entries = $this->relationLoaded('entries')
+            ? $this->entries
+            : $this->entries()->with(['creator:id,name,username,avatar,verified', 'video'])->where('status', 'active')->orderByDesc('submitted_at')->orderBy('id')->get();
+
+        $users = collect([$hostUser])
+            ->filter()
+            ->merge(
+                User::query()
+                    ->whereIn('id', $collaborators->pluck('user_id')->filter()->all())
+                    ->get(['id', 'name', 'username', 'avatar', 'verified'])
+            )
+            ->keyBy('id');
+
+        $entriesByCreator = $entries->groupBy('creator_id')->map(fn ($group) => $group->first());
+        $inviteByUserId = $invites->keyBy('invited_user_id');
+
+        $participants = collect();
+
+        if ($hostUser) {
+            $participants->push($this->formatCreatorBattleParticipant(
+                user: $users->get($hostUser->id),
+                role: 'host',
+                position: 1,
+                invitationStatus: 'accepted',
+                entry: $entriesByCreator->get($hostUser->id),
+                isWinner: false,
+            ));
+        }
+
+        $collaborators
+            ->whereIn('role', ['owner', 'challenger'])
+            ->values()
+            ->each(function (ChallengeCollaborator $collaborator, int $index) use ($users, $inviteByUserId, $entriesByCreator, $participants): void {
+                $user = $users->get($collaborator->user_id) ?? User::query()->find($collaborator->user_id);
+                if (! $user) {
+                    return;
+                }
+
+                $participants->push($this->formatCreatorBattleParticipant(
+                    user: $user,
+                    role: $collaborator->role === 'owner' ? 'host' : 'challenger',
+                    position: $participants->count() + 1,
+                    invitationStatus: $inviteByUserId->get($collaborator->user_id)?->status ?? $collaborator->status ?? 'pending',
+                    entry: $entriesByCreator->get($collaborator->user_id),
+                    isWinner: false,
+                ));
+            });
+
+        return $participants->values();
+    }
+
+    private function formatCreatorBattleParticipant(User|int|null $user, string $role, int $position, string $invitationStatus, ?ChallengeEntry $entry, bool $isWinner): array
+    {
+        $userId = $user instanceof User ? $user->id : (int) $user;
+        $displayUser = $user instanceof User ? $user : null;
+
+        return [
+            'id' => 'participant_'.$userId,
+            'role' => $role,
+            'position' => $position,
+            'creator' => [
+                'id' => $userId,
+                'name' => $displayUser?->name,
+                'username' => $displayUser?->username,
+                'avatar' => $displayUser?->avatar,
+                'verified' => (bool) $displayUser?->verified,
+            ],
+            'invitation_status' => $invitationStatus,
+            'submission_status' => $entry ? 'submitted' : 'not_submitted',
+            'entry' => $entry ? $this->formatCreatorBattleEntry($entry) : null,
+            'is_winner' => $isWinner,
+        ];
+    }
+
+    private function formatCreatorBattleEntry(ChallengeEntry $entry): array
+    {
+        $creator = $entry->relationLoaded('creator') ? $entry->creator : $entry->creator()->with('roles')->first();
+        $video = $entry->relationLoaded('video') ? $entry->video : $entry->video()->first();
+        $metadata = is_array($video?->metadata) ? $video->metadata : [];
+
+        $comments = $video
+            ? ($video->relationLoaded('comments')
+                ? $video->comments
+                : $video->comments()->with(['user', 'replies.user'])->latest()->limit(20)->get())
+            : collect();
+
+        return [
+            'id' => $entry->id,
+            'caption' => $entry->caption ?? $video?->caption ?? '',
+            'hashtags' => $this->resolveEntryHashtags($entry, $video),
+            'video' => $this->formatBattleVideo($video),
+            'audio' => $this->formatBattleAudio($video),
+            'comments_count' => (int) ($video?->comments_count ?? $comments->count()),
+            'comments' => VideoCommentResource::collection($comments->values())->resolve($request),
+            'engagement' => [
+                'likes' => (int) data_get($metadata, 'engagement.likes', 0),
+                'comments' => (int) data_get($metadata, 'engagement.comments', 0),
+                'shares' => (int) data_get($metadata, 'engagement.shares', 0),
+            ],
+        ];
+    }
+
+    private function formatBattleVideo(?Video $video): ?array
+    {
+        if (! $video) {
+            return null;
+        }
+
+        $metadata = is_array($video->metadata) ? $video->metadata : [];
+        $processingStatus = $video->processing_status?->value ?? ($video->status === 'ready' ? 'ready' : 'initialized');
+        $playbackUrl = $video->playback_url ?: $video->streaming_url ?: $video->cdn_url ?: $video->rendered_url;
+
+        return [
+            'id' => $video->id,
+            'status' => $video->status,
+            'stream_url' => $playbackUrl,
+            'thumbnail_url' => $video->poster_url ?: $video->thumbnail_url ?: data_get($metadata, 'thumbnail'),
+            'duration' => $video->duration ? (float) $video->duration : null,
+            'width' => $video->width,
+            'height' => $video->height,
+            'processing_status' => $processingStatus,
+        ];
+    }
+
+    private function formatBattleAudio(?Video $video): ?array
+    {
+        if (! $video) {
+            return null;
+        }
+
+        $metadata = is_array($video->metadata) ? $video->metadata : [];
+        $audio = data_get($metadata, 'audio');
+
+        if (! is_array($audio) || $audio === []) {
+            return null;
+        }
+
+        return [
+            'id' => $audio['id'] ?? null,
+            'title' => $audio['title'] ?? null,
+            'artist' => $audio['artist'] ?? null,
+            'is_original' => (bool) ($audio['is_original'] ?? false),
+        ];
+    }
+
+    private function resolveEntryHashtags(ChallengeEntry $entry, ?Video $video): array
+    {
+        $metadata = is_array($video?->metadata) ? $video->metadata : [];
+        $hashtags = data_get($metadata, 'caption_hashtags', []);
+
+        return is_array($hashtags) ? array_values($hashtags) : [];
+    }
+
+    private function resolveCreatorBattleVoteCounts($participants, $ballots): array
+    {
+        $counts = [];
+
+        foreach ($participants as $participant) {
+            $counts[$participant['creator']['id']] = 0;
+        }
+
+        foreach ($ballots as $ballot) {
+            foreach ($ballot->choices as $choice) {
+                $entry = $choice->entry ?? null;
+                if ($entry) {
+                    $counts[$entry->creator_id] = ($counts[$entry->creator_id] ?? 0) + 1;
+                }
+            }
+        }
+
+        return $counts;
+    }
+
+    private function resolveCreatorBattleBallots(?User $user)
+    {
+        if (! $user) {
+            return collect();
+        }
+
+        $ballots = $this->relationLoaded('ballots')
+            ? $this->ballots
+            : $this->ballots()->with(['choices.entry'])->orderBy('id')->get();
+
+        return $ballots->where('voter_id', $user->id)->values();
+    }
+
+    private function resolveCurrentUserVote(?User $user, $ballots): ?int
+    {
+        if (! $user) {
+            return null;
+        }
+
+        $ballot = $ballots->firstWhere('voter_id', $user->id);
+        $choice = $ballot?->choices?->first();
+
+        return $choice?->challenge_entry_id ? (int) $choice->challenge_entry_id : null;
+    }
+
+    private function resolveIsCurrentUserParticipant(?User $user, $participants): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        return $participants->contains(fn (array $participant) => (int) $participant['creator']['id'] === (int) $user->id);
+    }
+
+    private function resolveCanCurrentUserSubmit(?User $user, $participants): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        $isParticipant = $this->resolveIsCurrentUserParticipant($user, $participants);
+
+        if (! $isParticipant || ! $this->isAcceptingSubmissions()) {
+            return false;
+        }
+
+        $existingSubmissions = $this->entries()->where('creator_id', $user->id)->count();
+
+        return ! ($this->max_entries_per_creator <= $existingSubmissions);
+    }
+
+    private function resolveCanCurrentUserManage(?User $user): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        if ((int) $this->created_by_user_id === (int) $user->id) {
+            return true;
+        }
+
+        return $user->roles()->where('name', 'admin')->exists();
+    }
+
+    private function formatCreatorBattleResult(): ?array
+    {
+        $winner = $this->relationLoaded('winners')
+            ? $this->winners->first()
+            : $this->winners()->with(['entry.creator', 'entry.video'])->orderBy('rank')->first();
+
+        if (! $winner instanceof ChallengeWinner) {
+            return null;
+        }
+
+        $entry = $winner->entry;
+        $creator = $entry?->relationLoaded('creator') ? $entry->creator : $entry?->creator()->first();
+
+        return [
+            'winner_entry_id' => $winner->challenge_entry_id,
+            'rank' => $winner->rank,
+            'final_score' => $winner->final_score,
+            'confirmed_at' => optional($winner->confirmed_at)?->toIso8601String(),
+            'entry' => $entry ? $this->formatCreatorBattleEntry($entry) : null,
+            'creator' => $creator ? [
+                'id' => $creator->id,
+                'name' => $creator->name,
+                'username' => $creator->username,
+                'avatar' => $creator->avatar,
+                'verified' => (bool) $creator->verified,
+            ] : null,
+        ];
+    }
+
+    private function resolveCreatorBattleParticipantsCount(): int
+    {
+        return (int) $this->collaborators()->whereIn('role', ['owner', 'challenger'])->count();
+    }
+
+    private function resolveCategory(): ?array
+    {
+        $metadata = is_array($this->metadata) ? $this->metadata : [];
+        $category = data_get($metadata, 'category');
+
+        if (is_array($category)) {
+            return [
+                'id' => $category['id'] ?? null,
+                'name' => $category['name'] ?? ($category['label'] ?? null),
+            ];
+        }
+
+        if (is_string($category) && trim($category) !== '') {
+            return ['id' => null, 'name' => $category];
+        }
+
+        if (isset($this->category_id) && $this->category_id !== null) {
+            return [
+                'id' => $this->category_id,
+                'name' => data_get($metadata, 'category_name'),
+            ];
+        }
+
+        return null;
+    }
+
+    private function resolveCoverImage(): ?string
+    {
+        if ($this->relationLoaded('media') && $this->media->isNotEmpty()) {
+            $cover = $this->media->sortBy([['sort_order', 'asc'], ['id', 'asc']])->firstWhere('role', 'cover')
+                ?? $this->media->sortBy([['sort_order', 'asc'], ['id', 'asc']])->first();
+
+            if ($cover instanceof ChallengeMedia) {
+                $coverUrl = data_get($cover->metadata, 'cover_url');
+
+                if (is_string($coverUrl) && trim($coverUrl) !== '') {
+                    return $coverUrl;
+                }
+
+                $video = $cover->relationLoaded('video') ? $cover->video : null;
+
+                if ($video) {
+                    return $video->poster_url ?: $video->thumbnail_url;
+                }
+            }
+        }
+
+        return data_get($this->metadata, 'cover_image')
+            ?: data_get($this->metadata, 'image');
+    }
+
+    private function resolveHashtag(): ?string
+    {
+        $metadata = is_array($this->metadata) ? $this->metadata : [];
+        $hashtag = data_get($metadata, 'hashtag');
+
+        if (is_string($hashtag) && trim($hashtag) !== '') {
+            return $hashtag;
+        }
+
+        return is_string($this->hashtag ?? null) && trim((string) $this->hashtag) !== ''
+            ? (string) $this->hashtag
+            : null;
+    }
+
+    private function resolveVotingStatus(): string
+    {
+        if (! $this->voting_starts_at || ! $this->voting_ends_at) {
+            return 'closed';
+        }
+
+        if (now()->lt($this->voting_starts_at)) {
+            return 'upcoming';
+        }
+
+        if (now()->betweenIncluded($this->voting_starts_at, $this->voting_ends_at)) {
+            return 'open';
+        }
+
+        return 'closed';
+    }
+
+    private function resolveVotingVisibility(): string
+    {
+        return (bool) $this->show_leaderboard && $this->leaderboard_mode === 'live'
+            ? 'live_count'
+            : 'hidden';
+    }
+
     private function resolveParticipantCount(): int
     {
         if ($this->isCreatorBattle()) {
-            return (int) $this->collaborators()->whereIn('role', ['owner', 'challenger'])->count();
+            return $this->resolveCreatorBattleParticipantsCount();
         }
 
         return isset($this->participants_count)

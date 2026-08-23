@@ -68,19 +68,28 @@ class ChallengeController extends Controller
         $this->authorize('view', $challenge);
 
         $challenge->load([
+            'creator:id,name,username,avatar,verified',
             'rules',
             'prizes',
             'rewardPools',
             'media.video',
-            'entries' => fn ($query) => $query->with(['creator:id,name,username,avatar', 'video'])->orderByDesc('current_score')->latest('submitted_at'),
+            'entries' => fn ($query) => $query->with(['creator:id,name,username,avatar,verified', 'video'])->orderByDesc('current_score')->latest('submitted_at'),
             'scoringComponents',
             'juryCriteria',
+            'collaborators',
+            'invites',
+            'ballots.choices.entry',
+            'winners.entry.creator',
+            'winners.entry.video',
         ]);
 
         $data = ChallengeResource::make($challenge)->resolve($request);
-        $data['reward_summary'] = $data['reward'] ?? null;
-        $data['awards'] = $data['prizes'] ?? [];
-        $data['pricing'] = $this->formatChallengePricing($data);
+
+        if (! $challenge->isCreatorBattle()) {
+            $data['reward_summary'] = $data['reward'] ?? null;
+            $data['awards'] = $data['prizes'] ?? [];
+            $data['pricing'] = $this->formatChallengePricing($data);
+        }
 
         return response()->json(['data' => ['challenge' => $data]]);
     }

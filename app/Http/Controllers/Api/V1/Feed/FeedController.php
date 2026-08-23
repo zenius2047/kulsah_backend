@@ -141,7 +141,7 @@ class FeedController extends Controller
         }
 
         $videosById = Video::query()
-            ->with('user')
+            ->with(['user', 'duetSourceVideo.user'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->whereIn('id', $videoIds)
             ->get()
@@ -336,3 +336,4 @@ class FeedController extends Controller
         )));
     }
 }
+
