@@ -121,6 +121,7 @@ Route::prefix('creator')
                 Route::patch('/{challenge}', [ChallengeController::class, 'update']);
                 Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);
                 Route::post('/{challenge}/finalize', [ChallengeController::class, 'finalize'])->middleware('throttle:challenge-finalize');
+                Route::post('/{challenge}/settle-creator-battle', [ChallengeController::class, 'settleCreatorBattle'])->middleware('throttle:challenge-finalize');
                 Route::post('/{challenge}/entries', [ChallengeController::class, 'submitEntry'])->middleware('throttle:challenge-entries');
                 Route::delete('/{challenge}/entries/{entry}', [ChallengeController::class, 'withdraw']);
                 Route::put('/{challenge}/entries/{entry}/jury-scores', [ChallengeController::class, 'juryScore'])->middleware('throttle:challenge-jury');

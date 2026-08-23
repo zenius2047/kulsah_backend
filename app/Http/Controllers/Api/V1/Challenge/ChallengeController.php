@@ -9,6 +9,7 @@ use App\Domain\Challenges\Actions\FinalizeChallengeResults;
 use App\Domain\Challenges\Actions\InviteChallengeParticipant;
 use App\Domain\Challenges\Actions\InviteJuryMember;
 use App\Domain\Challenges\Actions\ProcessChallengeRewards;
+use App\Domain\Challenges\Actions\ProcessCreatorBattleSettlement;
 use App\Domain\Challenges\Actions\ResolveIntegrityFlag;
 use App\Domain\Challenges\Actions\SelectChallengeWinner;
 use App\Domain\Challenges\Actions\SubmitChallengeEntry;
@@ -27,6 +28,7 @@ use App\Http\Requests\Api\V1\Challenge\UpdateChallengeRequest;
 use App\Http\Resources\ChallengeEntryResource;
 use App\Http\Resources\ChallengeListResource;
 use App\Http\Resources\ChallengeResource;
+use App\Http\Resources\CreatorBattleSettlementResource;
 use App\Models\Challenge;
 use App\Models\ChallengeEntry;
 use App\Models\ChallengeIntegrityFlag;
@@ -85,11 +87,9 @@ class ChallengeController extends Controller
 
         $data = ChallengeResource::make($challenge)->resolve($request);
 
-        if (! $challenge->isCreatorBattle()) {
-            $data['reward_summary'] = $data['reward'] ?? null;
-            $data['awards'] = $data['prizes'] ?? [];
-            $data['pricing'] = $this->formatChallengePricing($data);
-        }
+        $data['reward_summary'] = $data['reward'] ?? null;
+        $data['awards'] = $data['prizes'] ?? [];
+        $data['pricing'] = $this->formatChallengePricing($data);
 
         return response()->json(['data' => ['challenge' => $data]]);
     }
@@ -162,6 +162,13 @@ class ChallengeController extends Controller
         return ChallengeResource::make($action->execute($challenge, $request->user()));
     }
 
+    public function settleCreatorBattle(Request $request, Challenge $challenge, ProcessCreatorBattleSettlement $action)
+    {
+        $this->authorize('finance', $challenge);
+
+        return CreatorBattleSettlementResource::make($action->execute($challenge, $request->user()));
+    }
+
     public function inviteParticipant(Request $request, Challenge $challenge, InviteChallengeParticipant $action)
     {
         $this->authorize('manage', $challenge);
@@ -217,3 +224,4 @@ class ChallengeController extends Controller
         return response()->json(['data' => $action->execute($challenge, $entry, $request->user(), $data['rank'], $data['reason'])], 201);
     }
 }
+

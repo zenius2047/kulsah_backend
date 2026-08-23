@@ -762,3 +762,4 @@ class ChallengeResource extends JsonResource
         return $target ? max(0, now()->diffInSeconds($target, false)) : null;
     }
 }
+
