@@ -38,6 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => RoleMiddleware::class,
             'cache.api' => CacheApiResponse::class,
+            'optional.sanctum' => \App\Http\Middleware\OptionalSanctumAuthentication::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -8,6 +8,12 @@ Route::get('/', function () {
     return view('welcome');
 });
 
+Route::middleware('auth')->group(function () {
+    Route::get('/dashboard', function () {
+        return view('dashboard');
+    })->name('dashboard');
+});
+
 Route::middleware('guest')->group(function () {
     Route::get('/login', [WebAuthController::class, 'create'])->name('login');
     Route::post('/login', [WebAuthController::class, 'store'])->name('web.login');
