@@ -203,7 +203,7 @@ class ChallengeResource extends JsonResource
         $collaborators
             ->whereIn('role', ['owner', 'challenger'])
             ->values()
-            ->each(function (ChallengeCollaborator $collaborator, int $index) use ($users, $inviteByUserId, $entriesByCreator, $participants): void {
+            ->each(function (ChallengeCollaborator $collaborator, int $index) use ($request, $users, $inviteByUserId, $entriesByCreator, $participants): void {
                 $user = $users->get($collaborator->user_id) ?? User::query()->find($collaborator->user_id);
                 if (! $user) {
                     return;
@@ -762,6 +762,7 @@ class ChallengeResource extends JsonResource
         return $target ? max(0, now()->diffInSeconds($target, false)) : null;
     }
 }
+
 
 
 
