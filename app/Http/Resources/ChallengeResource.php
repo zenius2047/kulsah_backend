@@ -155,7 +155,7 @@ class ChallengeResource extends JsonResource
                 'can_submit' => $this->resolveCanCurrentUserSubmit($user, $participants),
                 'can_manage' => $this->resolveCanCurrentUserManage($user),
             ],
-            'result' => $this->formatCreatorBattleResult(),
+            'result' => $this->formatCreatorBattleResult($request),
             'created_at' => optional($this->created_at)?->toIso8601String(),
             'updated_at' => optional($this->updated_at)?->toIso8601String(),
         ];
@@ -190,7 +190,7 @@ class ChallengeResource extends JsonResource
         $participants = collect();
 
         if ($hostUser) {
-            $participants->push($this->formatCreatorBattleParticipant(
+            $participants->push($this->formatCreatorBattleParticipant($request, 
                 user: $users->get($hostUser->id),
                 role: 'host',
                 position: 1,
@@ -209,7 +209,7 @@ class ChallengeResource extends JsonResource
                     return;
                 }
 
-                $participants->push($this->formatCreatorBattleParticipant(
+                $participants->push($this->formatCreatorBattleParticipant($request, 
                     user: $user,
                     role: $collaborator->role === 'owner' ? 'host' : 'challenger',
                     position: $participants->count() + 1,
@@ -222,7 +222,7 @@ class ChallengeResource extends JsonResource
         return $participants->values();
     }
 
-    private function formatCreatorBattleParticipant(User|int|null $user, string $role, int $position, string $invitationStatus, ?ChallengeEntry $entry, bool $isWinner): array
+    private function formatCreatorBattleParticipant(Request $request, User|int|null $user, string $role, int $position, string $invitationStatus, ?ChallengeEntry $entry, bool $isWinner): array
     {
         $userId = $user instanceof User ? $user->id : (int) $user;
         $displayUser = $user instanceof User ? $user : null;
@@ -240,12 +240,12 @@ class ChallengeResource extends JsonResource
             ],
             'invitation_status' => $invitationStatus,
             'submission_status' => $entry ? 'submitted' : 'not_submitted',
-            'entry' => $entry ? $this->formatCreatorBattleEntry($entry) : null,
+            'entry' => $entry ? $this->formatCreatorBattleEntry($entry, $request) : null,
             'is_winner' => $isWinner,
         ];
     }
 
-    private function formatCreatorBattleEntry(ChallengeEntry $entry): array
+    private function formatCreatorBattleEntry(ChallengeEntry $entry, Request $request): array
     {
         $creator = $entry->relationLoaded('creator') ? $entry->creator : $entry->creator()->with('roles')->first();
         $video = $entry->relationLoaded('video') ? $entry->video : $entry->video()->first();
@@ -408,7 +408,7 @@ class ChallengeResource extends JsonResource
         return $user->roles()->where('name', 'admin')->exists();
     }
 
-    private function formatCreatorBattleResult(): ?array
+    private function formatCreatorBattleResult(Request $request): ?array
     {
         $winner = $this->relationLoaded('winners')
             ? $this->winners->first()
@@ -426,7 +426,7 @@ class ChallengeResource extends JsonResource
             'rank' => $winner->rank,
             'final_score' => $winner->final_score,
             'confirmed_at' => optional($winner->confirmed_at)?->toIso8601String(),
-            'entry' => $entry ? $this->formatCreatorBattleEntry($entry) : null,
+            'entry' => $entry ? $this->formatCreatorBattleEntry($entry, $request) : null,
             'creator' => $creator ? [
                 'id' => $creator->id,
                 'name' => $creator->name,
@@ -762,4 +762,6 @@ class ChallengeResource extends JsonResource
         return $target ? max(0, now()->diffInSeconds($target, false)) : null;
     }
 }
+
+
 
