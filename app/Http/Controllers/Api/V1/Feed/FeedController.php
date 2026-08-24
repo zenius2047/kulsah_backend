@@ -55,7 +55,6 @@ class FeedController extends Controller
             resolver: function () use ($request, $viewerKey, $userId, $limit, $page, $context): array {
                 $feed = $this->feedService->getFeed(
                     viewerKey: $viewerKey,
-                    userId: $userId > 0 ? $userId : null,
                     limit: $limit,
                     page: $page,
                     context: $context,
@@ -115,7 +114,6 @@ class FeedController extends Controller
             resolver: function () use ($viewerKey, $userId, $limit, $page, $context): array {
                 $feed = $this->feedService->getFeed(
                     viewerKey: $viewerKey,
-                    userId: $userId > 0 ? $userId : null,
                     limit: $limit,
                     page: $page,
                     context: $context,
@@ -403,4 +401,5 @@ class FeedController extends Controller
         ), static fn ($value) => $value !== null));
     }
 }
+
 
