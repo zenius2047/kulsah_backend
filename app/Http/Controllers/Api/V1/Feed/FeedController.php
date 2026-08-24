@@ -7,10 +7,11 @@ use App\Http\Resources\FeedCardResource;
 use App\Models\Onboarding;
 use App\Models\Subscription;
 use App\Models\UserFollow;
+use App\Models\Video;
 use App\Models\VideoBookmark;
 use App\Models\VideoLike;
-use App\Models\Video;
 use App\Services\FeedService;
+use App\Services\FeedViewerContextService;
 use App\Services\VideoCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -20,24 +21,28 @@ class FeedController extends Controller
     public function __construct(
         private readonly FeedService $feedService,
         private readonly VideoCacheService $videoCacheService,
+        private readonly FeedViewerContextService $feedViewerContextService,
     ) {
     }
 
     public function index(Request $request)
     {
         $validated = $this->validateRecommendationRequest($request);
+        $viewer = $this->feedViewerContextService->resolve($request);
+        $userId = (int) ($viewer['user_id'] ?? 0);
+        $viewerKey = (string) $viewer['viewer_key'];
+        $limit = (int) ($validated['limit'] ?? 20);
+        $page = (int) ($validated['page'] ?? 1);
         $context = $this->buildRecommendationContext(
-            userId: (int) $request->user()->id,
+            userId: $userId > 0 ? $userId : null,
+            viewer: $viewer,
             searchQuery: $validated['search_query'] ?? null,
             interestTerms: $validated['interest_terms'] ?? [],
         );
-        $userId = (int) $request->user()->id;
-        $limit = (int) ($validated['limit'] ?? 20);
-        $page = (int) ($validated['page'] ?? 1);
         $feedVersion = $this->feedService->currentFeedCacheVersion();
 
         $payload = $this->videoCacheService->rememberViewer(
-            viewerId: $userId,
+            viewerId: $viewerKey,
             scope: 'feed:index',
             context: [
                 'feed_version' => $feedVersion,
@@ -45,10 +50,12 @@ class FeedController extends Controller
                 'page' => $page,
                 'search_query' => $validated['search_query'] ?? null,
                 'interest_terms' => $validated['interest_terms'] ?? [],
+                'viewer_state_updated_at' => $viewer['viewer_state_updated_at'] ?? null,
             ],
-            resolver: function () use ($request, $userId, $limit, $page, $context): array {
+            resolver: function () use ($request, $viewerKey, $userId, $limit, $page, $context): array {
                 $feed = $this->feedService->getFeed(
-                    userId: $userId,
+                    viewerKey: $viewerKey,
+                    userId: $userId > 0 ? $userId : null,
                     limit: $limit,
                     page: $page,
                     context: $context,
@@ -70,24 +77,32 @@ class FeedController extends Controller
             }
         );
 
+        $this->feedViewerContextService->recordServedVideos(
+            $viewerKey,
+            collect($payload['data'] ?? [])->pluck('id')->all()
+        );
+
         return response()->json($payload);
     }
 
     public function recommendations(Request $request)
     {
         $validated = $this->validateRecommendationRequest($request);
+        $viewer = $this->feedViewerContextService->resolve($request);
+        $userId = (int) ($viewer['user_id'] ?? 0);
+        $viewerKey = (string) $viewer['viewer_key'];
+        $limit = (int) ($validated['limit'] ?? 20);
+        $page = (int) ($validated['page'] ?? 1);
         $context = $this->buildRecommendationContext(
-            userId: (int) $request->user()->id,
+            userId: $userId > 0 ? $userId : null,
+            viewer: $viewer,
             searchQuery: $validated['search_query'] ?? null,
             interestTerms: $validated['interest_terms'] ?? [],
         );
-        $userId = (int) $request->user()->id;
-        $limit = (int) ($validated['limit'] ?? 20);
-        $page = (int) ($validated['page'] ?? 1);
         $feedVersion = $this->feedService->currentFeedCacheVersion();
 
         $payload = $this->videoCacheService->rememberViewer(
-            viewerId: $userId,
+            viewerId: $viewerKey,
             scope: 'feed:recommendations',
             context: [
                 'feed_version' => $feedVersion,
@@ -95,10 +110,12 @@ class FeedController extends Controller
                 'page' => $page,
                 'search_query' => $validated['search_query'] ?? null,
                 'interest_terms' => $validated['interest_terms'] ?? [],
+                'viewer_state_updated_at' => $viewer['viewer_state_updated_at'] ?? null,
             ],
-            resolver: function () use ($request, $userId, $limit, $page, $context): array {
+            resolver: function () use ($viewerKey, $userId, $limit, $page, $context): array {
                 $feed = $this->feedService->getFeed(
-                    userId: $userId,
+                    viewerKey: $viewerKey,
+                    userId: $userId > 0 ? $userId : null,
                     limit: $limit,
                     page: $page,
                     context: $context,
@@ -119,6 +136,11 @@ class FeedController extends Controller
                     ],
                 ];
             }
+        );
+
+        $this->feedViewerContextService->recordServedVideos(
+            $viewerKey,
+            collect($payload['data'] ?? [])->all()
         );
 
         return response()->json($payload);
@@ -154,34 +176,42 @@ class FeedController extends Controller
             ->unique()
             ->values();
 
-        $likedVideoIds = VideoLike::query()
-            ->where('user_id', $currentUserId)
-            ->whereIn('video_id', $videoIds)
-            ->pluck('video_id')
-            ->map(static fn ($id) => (int) $id)
-            ->flip();
+        $likedVideoIds = $currentUserId > 0
+            ? VideoLike::query()
+                ->where('user_id', $currentUserId)
+                ->whereIn('video_id', $videoIds)
+                ->pluck('video_id')
+                ->map(static fn ($id) => (int) $id)
+                ->flip()
+            : collect();
 
-        $bookmarkedVideoIds = VideoBookmark::query()
-            ->where('user_id', $currentUserId)
-            ->whereIn('video_id', $videoIds)
-            ->pluck('video_id')
-            ->map(static fn ($id) => (int) $id)
-            ->flip();
+        $bookmarkedVideoIds = $currentUserId > 0
+            ? VideoBookmark::query()
+                ->where('user_id', $currentUserId)
+                ->whereIn('video_id', $videoIds)
+                ->pluck('video_id')
+                ->map(static fn ($id) => (int) $id)
+                ->flip()
+            : collect();
 
-        $followedCreatorIds = UserFollow::query()
-            ->where('follower_id', $currentUserId)
-            ->whereIn('followed_id', $creatorIds)
-            ->pluck('followed_id')
-            ->map(static fn ($id) => (int) $id)
-            ->flip();
+        $followedCreatorIds = $currentUserId > 0
+            ? UserFollow::query()
+                ->where('follower_id', $currentUserId)
+                ->whereIn('followed_id', $creatorIds)
+                ->pluck('followed_id')
+                ->map(static fn ($id) => (int) $id)
+                ->flip()
+            : collect();
 
-        $subscribedCreatorIds = Subscription::query()
-            ->where('subscriber_id', $currentUserId)
-            ->where('status', 'active')
-            ->whereIn('creator_id', $creatorIds)
-            ->pluck('creator_id')
-            ->map(static fn ($id) => (int) $id)
-            ->flip();
+        $subscribedCreatorIds = $currentUserId > 0
+            ? Subscription::query()
+                ->where('subscriber_id', $currentUserId)
+                ->where('status', 'active')
+                ->whereIn('creator_id', $creatorIds)
+                ->pluck('creator_id')
+                ->map(static fn ($id) => (int) $id)
+                ->flip()
+            : collect();
 
         $videosById->each(function (Video $video) use ($likedVideoIds, $bookmarkedVideoIds, $followedCreatorIds, $subscribedCreatorIds): void {
             $video->setAttribute('is_liked', $likedVideoIds->has((int) $video->id));
@@ -215,39 +245,50 @@ class FeedController extends Controller
         return $validated;
     }
 
-    private function buildRecommendationContext(int $userId, ?string $searchQuery = null, array $interestTerms = []): array
+    private function buildRecommendationContext(?int $userId, array $viewer, ?string $searchQuery = null, array $interestTerms = []): array
     {
-        $onboardingVibes = $this->getOnboardingVibes($userId);
-        $followedCreatorIds = UserFollow::query()
+        $viewerState = $viewer['viewer_state'] ?? null;
+        $seenVideoIds = $this->normalizeIds($viewer['seen_video_ids'] ?? []);
+        $onboardingVibes = $userId ? $this->getOnboardingVibes($userId) : [];
+        $followedCreatorIds = $userId ? UserFollow::query()
             ->where('follower_id', $userId)
             ->pluck('followed_id')
             ->map(static fn ($id) => (int) $id)
             ->values()
-            ->all();
+            ->all() : [];
 
-        $subscribedCreatorIds = Subscription::query()
+        $subscribedCreatorIds = $userId ? Subscription::query()
             ->where('subscriber_id', $userId)
             ->where('status', 'active')
             ->pluck('creator_id')
             ->map(static fn ($id) => (int) $id)
             ->values()
-            ->all();
+            ->all() : [];
 
-        $likedVideoIds = VideoLike::query()
+        $likedVideoIds = $userId ? VideoLike::query()
             ->where('user_id', $userId)
             ->pluck('video_id')
             ->map(static fn ($id) => (int) $id)
             ->values()
-            ->all();
+            ->all() : [];
 
-        $bookmarkedVideoIds = VideoBookmark::query()
+        $bookmarkedVideoIds = $userId ? VideoBookmark::query()
             ->where('user_id', $userId)
             ->pluck('video_id')
             ->map(static fn ($id) => (int) $id)
             ->values()
-            ->all();
+            ->all() : [];
 
-        $engagedVideoIds = array_values(array_unique(array_merge($likedVideoIds, $bookmarkedVideoIds)));
+        $watchedVideoIds = $userId ? \App\Models\VideoView::query()
+            ->where('user_id', $userId)
+            ->orderByDesc('viewed_at')
+            ->limit(500)
+            ->pluck('video_id')
+            ->map(static fn ($id) => (int) $id)
+            ->values()
+            ->all() : [];
+
+        $engagedVideoIds = array_values(array_unique(array_merge($likedVideoIds, $bookmarkedVideoIds, $watchedVideoIds)));
         $engagedVideos = $engagedVideoIds === []
             ? collect()
             : Video::query()
@@ -285,11 +326,20 @@ class FeedController extends Controller
             $interestTerms
         )));
 
+        $blockedCreatorIds = $userId ? Subscription::query()
+            ->where('subscriber_id', $userId)
+            ->where('status', 'blocked')
+            ->pluck('creator_id')
+            ->map(static fn ($id) => (int) $id)
+            ->values()
+            ->all() : [];
+
         $peerStrength = min(1.0, ((count($followedCreatorIds) * 0.12) + (count($subscribedCreatorIds) * 0.18)) ?: 0.0);
         $hasEngagementHistory = $followedCreatorIds !== []
             || $subscribedCreatorIds !== []
             || $likedVideoIds !== []
-            || $bookmarkedVideoIds !== [];
+            || $bookmarkedVideoIds !== []
+            || $watchedVideoIds !== [];
         $isInitialFeed = ! $hasEngagementHistory && $onboardingVibes !== [];
         $seedTerms = $isInitialFeed
             ? array_values(array_unique(array_merge($normalizedInterestTerms, $onboardingVibes)))
@@ -297,6 +347,7 @@ class FeedController extends Controller
         $seedCategories = array_values(array_unique(array_merge($favoriteCategories, $onboardingVibes)));
 
         return [
+            'user_id' => $userId,
             'search_query' => $searchQuery,
             'interest_terms' => $seedTerms,
             'peer_strength' => $peerStrength,
@@ -304,11 +355,15 @@ class FeedController extends Controller
             'subscribed_creator_ids' => $subscribedCreatorIds,
             'liked_video_ids' => $likedVideoIds,
             'bookmarked_video_ids' => $bookmarkedVideoIds,
+            'watched_video_ids' => $watchedVideoIds,
+            'seen_video_ids' => $seenVideoIds,
+            'blocked_creator_ids' => $blockedCreatorIds,
             'favorite_categories' => $isInitialFeed ? $seedCategories : $favoriteCategories,
             'favorite_creator_ids' => $favoriteCreators,
             'vibe_terms' => $onboardingVibes,
             'initial_feed' => $isInitialFeed,
             'has_engagement_history' => $hasEngagementHistory,
+            'viewer_state_updated_at' => $viewer['viewer_state_updated_at'] ?? null,
         ];
     }
 
@@ -334,6 +389,18 @@ class FeedController extends Controller
             static fn ($vibe) => is_string($vibe) ? strtolower(trim($vibe)) : '',
             $vibes
         )));
+    }
+
+    /**
+     * @param  array<int, mixed>  $values
+     * @return array<int, int>
+     */
+    private function normalizeIds(array $values): array
+    {
+        return array_values(array_filter(array_map(
+            static fn ($value) => is_numeric($value) ? (int) $value : null,
+            $values
+        ), static fn ($value) => $value !== null));
     }
 }
 

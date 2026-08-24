@@ -36,12 +36,17 @@ Route::prefix('media')
     });
 
 Route::prefix('general')
-    ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
+    ->middleware(['optional.sanctum'])
     ->group(function () {
         Route::get('/feed', [FeedController::class, 'index']);
+        Route::get('/recommendations', [FeedController::class, 'recommendations']);
+    });
+
+Route::prefix('general')
+    ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
+    ->group(function () {
         Route::get('/discovery', [DiscoveryController::class, 'index'])->middleware('cache.api:60');
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
-        Route::get('/recommendations', [FeedController::class, 'recommendations']);
         Route::prefix('challenges')
             ->group(function () {
                 Route::get('/', [ChallengeController::class, 'index']);
@@ -174,6 +179,8 @@ Route::prefix('creator-fan')
     ->group(function () {
         Route::get('/creators/{creator}/subscription-plans', [SubscriptionController::class, 'showCreatorPlans']);
     });
+
+
 
 
 

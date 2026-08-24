@@ -44,5 +44,9 @@ class Kernel extends HttpKernel
         'auth.session' => \Illuminate\Session\Middleware\AuthenticateSession::class,
         'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         'role' => \App\Http\Middleware\RoleMiddleware::class,
+        'optional.sanctum' => \App\Http\Middleware\OptionalSanctumAuthentication::class,
     ];
 }
+
+
+

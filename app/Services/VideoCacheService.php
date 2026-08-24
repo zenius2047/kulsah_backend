@@ -59,12 +59,12 @@ class VideoCacheService
         $this->taggedCache([])->flush();
     }
 
-    public function viewerVersion(int $viewerId): int
+    public function viewerVersion(int|string $viewerId): int
     {
         return (int) $this->cacheStore()->get($this->viewerVersionKey($viewerId), 1);
     }
 
-    public function invalidateViewer(int $viewerId): int
+    public function invalidateViewer(int|string $viewerId): int
     {
         $version = $this->viewerVersion($viewerId) + 1;
 
@@ -73,7 +73,7 @@ class VideoCacheService
         return $version;
     }
 
-    public function flushViewerCaches(int $viewerId): void
+    public function flushViewerCaches(int|string $viewerId): void
     {
         $this->taggedCache($this->viewerTags($viewerId))->flush();
     }
@@ -118,7 +118,7 @@ class VideoCacheService
      * @param  Closure(): T  $resolver
      * @return T
      */
-    public function rememberViewer(int $viewerId, string $scope, array $context, Closure $resolver): mixed
+    public function rememberViewer(int|string $viewerId, string $scope, array $context, Closure $resolver): mixed
     {
         $cache = $this->taggedCache($this->viewerTags($viewerId));
         $key = $this->viewerCacheKey($viewerId, $scope, $context);
@@ -165,9 +165,9 @@ class VideoCacheService
     /**
      * @return array<int, string>
      */
-    private function viewerTags(int $viewerId): array
+    private function viewerTags(int|string $viewerId): array
     {
-        return ['videos:viewer', "videos:viewer:{$viewerId}"];
+        return ['videos:viewer', 'videos:viewer:'.(string) $viewerId];
     }
 
     /**
@@ -191,17 +191,17 @@ class VideoCacheService
         return self::CREATOR_VERSION_PREFIX.$creatorId;
     }
 
-    private function viewerCacheKey(int $viewerId, string $scope, array $context = []): string
+    private function viewerCacheKey(int|string $viewerId, string $scope, array $context = []): string
     {
         $version = $this->viewerVersion($viewerId);
         $contextHash = substr(sha1(json_encode($context)), 0, 12);
 
-        return "videos:viewer:{$viewerId}:v{$version}:{$scope}:{$contextHash}";
+        return 'videos:viewer:'.(string) $viewerId.":v{$version}:{$scope}:{$contextHash}";
     }
 
-    private function viewerVersionKey(int $viewerId): string
+    private function viewerVersionKey(int|string $viewerId): string
     {
-        return self::VIEWER_VERSION_PREFIX.$viewerId;
+        return self::VIEWER_VERSION_PREFIX.(string) $viewerId;
     }
 
     private function videoCacheKey(int $videoId, string $scope, array $context = []): string
@@ -217,3 +217,4 @@ class VideoCacheService
         return self::VIDEO_VERSION_PREFIX.$videoId;
     }
 }
+
