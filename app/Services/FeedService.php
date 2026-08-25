@@ -190,7 +190,9 @@ class FeedService
         }
 
         if ($candidateIds->isEmpty()) {
-            $candidateIds = $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $bucketSize);
+            $candidateIds = collect(
+                $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $bucketSize)
+            );
         }
 
         $candidateIds = $candidateIds
@@ -209,7 +211,9 @@ class FeedService
             ->values();
 
         if ($candidateIds->isEmpty() && $seenVideoIds !== []) {
-            $candidateIds = $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $bucketSize)
+            $candidateIds = collect(
+                $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $bucketSize)
+            )
                 ->filter()
                 ->map(static fn ($id) => (int) $id)
                 ->unique()

@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('conversation_key')->unique();
             $table->string('context_type')->nullable();
             $table->unsignedBigInteger('context_id')->nullable()->index();
-            $table->foreignId('last_message_id')->nullable()->constrained('conversation_messages')->nullOnDelete();
+            $table->unsignedBigInteger('last_message_id')->nullable()->index();
             $table->timestamp('last_message_at')->nullable()->index();
             $table->boolean('is_group')->default(false);
             $table->timestamps();
