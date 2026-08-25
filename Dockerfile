@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     git curl zip unzip libpq-dev ffmpeg
 
 # Install PHP extensions
-RUN docker-php-ext-install pdo pdo_pgsql
+RUN docker-php-ext-install pdo pdo_pgsql pcntl
 
 # Allow large video uploads to reach Laravel
 RUN { \
@@ -32,4 +32,5 @@ EXPOSE 9000
 # Passport refuses to read private keys that are group/world-writable.
 # The repo is bind-mounted in Docker, so we fix the mode on container start.
 CMD ["sh", "-lc", "if [ -f /var/www/storage/oauth-private.key ]; then chmod 600 /var/www/storage/oauth-private.key; fi; if [ -f /var/www/storage/oauth-public.key ]; then chmod 600 /var/www/storage/oauth-public.key; fi; exec php-fpm"]
+
 
