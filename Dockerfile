@@ -25,10 +25,11 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 COPY . .
 
 # Install dependencies
-RUN composer install
+RUN BROADCAST_CONNECTION=log composer install
 
 EXPOSE 9000
 
 # Passport refuses to read private keys that are group/world-writable.
 # The repo is bind-mounted in Docker, so we fix the mode on container start.
 CMD ["sh", "-lc", "if [ -f /var/www/storage/oauth-private.key ]; then chmod 600 /var/www/storage/oauth-private.key; fi; if [ -f /var/www/storage/oauth-public.key ]; then chmod 600 /var/www/storage/oauth-public.key; fi; exec php-fpm"]
+
