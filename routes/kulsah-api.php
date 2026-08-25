@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Auth\ProfileController;
 use App\Http\Controllers\Api\V1\Challenge\ChallengeController;
 use App\Http\Controllers\Api\V1\Cloudinary\CloudinaryWebhookController;
 use App\Http\Controllers\Api\V1\Community\CommunityPostController;
+use App\Http\Controllers\Api\V1\ConversationController;
 use App\Http\Controllers\Api\V1\Creator\CreatorDashboardController;
 use App\Http\Controllers\Api\V1\Discovery\DiscoveryController;
 use App\Http\Controllers\Api\V1\Event\EventController;
@@ -13,6 +14,7 @@ use App\Http\Controllers\Api\V1\Feed\SubscriptionController;
 use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
 use App\Http\Controllers\Api\V1\Kulscan\CreatorDashboardController as KulscanCreatorDashboardController;
 use App\Http\Controllers\Api\V1\Kulscan\CreatorEventsController;
+use App\Http\Controllers\Api\V1\Media\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 use Illuminate\Support\Facades\Route;
@@ -24,6 +26,9 @@ Route::pattern('entry', '[0-9]+');
 Route::pattern('invite', '[0-9]+');
 Route::pattern('integrityFlag', '[0-9]+');
 Route::pattern('allocation', '[0-9]+');
+Route::pattern('attachment', '[0-9]+');
+Route::pattern('conversation', '[0-9]+');
+Route::pattern('message', '[0-9]+');
 
 Route::post('/cloudinary/webhook', [CloudinaryWebhookController::class, 'store']);
 
@@ -33,6 +38,13 @@ Route::prefix('media')
         Route::post('/video-uploads', [VideoController::class, 'initFastUpload']);
         Route::post('/video-uploads/{video}/complete', [VideoController::class, 'completeFastUpload']);
         Route::post('/videos/{video}/retry-processing', [VideoController::class, 'retryProcessing']);
+    });
+
+Route::prefix('media')
+    ->middleware(['auth:sanctum'])
+    ->group(function () {
+        Route::post('/message-uploads', [MessageAttachmentController::class, 'init']);
+        Route::post('/message-uploads/{attachment}/complete', [MessageAttachmentController::class, 'complete']);
     });
 
 Route::prefix('general')
@@ -47,6 +59,16 @@ Route::prefix('general')
     ->group(function () {
         Route::get('/discovery', [DiscoveryController::class, 'index'])->middleware('cache.api:60');
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
+
+        Route::get('/conversations/unread-count', [ConversationController::class, 'unreadCount']);
+        Route::get('/conversations', [ConversationController::class, 'index']);
+        Route::post('/conversations', [ConversationController::class, 'store']);
+        Route::get('/conversations/{conversation}/messages', [ConversationController::class, 'messages']);
+        Route::post('/conversations/{conversation}/messages', [ConversationController::class, 'storeMessage']);
+        Route::post('/conversations/{conversation}/read', [ConversationController::class, 'read']);
+        Route::post('/conversations/{conversation}/typing/start', [ConversationController::class, 'typingStart']);
+        Route::post('/conversations/{conversation}/typing/stop', [ConversationController::class, 'typingStop']);
+
         Route::prefix('challenges')
             ->group(function () {
                 Route::get('/', [ChallengeController::class, 'index']);
@@ -54,6 +76,7 @@ Route::prefix('general')
                 Route::put('/{challenge}/ballot', [ChallengeController::class, 'ballot'])->middleware('throttle:challenge-ballots');
                 Route::get('/{challenge}/leaderboard', [ChallengeController::class, 'leaderboard']);
             });
+
         Route::get('/community/posts', [CommunityPostController::class, 'index'])->middleware('cache.api:30');
         Route::get('/community/history', [CommunityPostController::class, 'history']);
         Route::get('/community/posts/{communityPost}', [CommunityPostController::class, 'show'])->middleware('cache.api:30');
@@ -65,13 +88,16 @@ Route::prefix('general')
         Route::post('/community/posts/{communityPost}/share', [CommunityPostController::class, 'share']);
         Route::post('/community/posts/{communityPost}/gift', [CommunityPostController::class, 'gift']);
         Route::post('/community/posts/{communityPost}/poll/vote', [CommunityPostController::class, 'vote']);
+
         Route::get('/events', [EventController::class, 'index'])->middleware('cache.api:60');
         Route::get('/events/{event}', [EventController::class, 'show'])->middleware('cache.api:60');
         Route::post('/events/{event}/tickets/purchase', [EventController::class, 'purchaseTicket']);
         Route::post('/events/tickets/verify', [EventController::class, 'verifyTicket']);
+
         Route::get('/videos/watched', [VideoController::class, 'watched']);
         Route::post('/videos/{video}/view', [VideoController::class, 'view']);
         Route::get('/videos/{video}', [VideoController::class, 'show']);
+
         Route::get('/kulcoin/wallet', [KulCoinController::class, 'wallet']);
         Route::get('/kulcoin/ledger', [KulCoinController::class, 'ledger']);
         Route::get('/kulcoin/packages', [KulCoinController::class, 'packages'])->middleware('cache.api:300');
@@ -80,6 +106,7 @@ Route::prefix('general')
         Route::post('/kulcoin/gifts/send', [KulCoinController::class, 'sendGift']);
         Route::post('/kulcoin/votes', [KulCoinController::class, 'vote']);
         Route::post('/kulcoin/bonus', [KulCoinController::class, 'bonus']);
+
         Route::post('/videos/{video}/like', [SocialController::class, 'like']);
         Route::delete('/videos/{video}/like', [SocialController::class, 'unlike']);
         Route::post('/videos/{video}/bookmark', [SocialController::class, 'bookmark']);
@@ -91,9 +118,11 @@ Route::prefix('general')
         Route::delete('/videos/{video}/comments/{comment}/like', [SocialController::class, 'unlikeComment']);
         Route::post('/creators/{creator}/follow', [SocialController::class, 'follow']);
         Route::delete('/creators/{creator}/follow', [SocialController::class, 'unfollow']);
+
         Route::post('/upload-avatar', [ProfileController::class, 'uploadAvatar']);
         Route::post('/upload-banner', [ProfileController::class, 'uploadBanner']);
         Route::post('/update-profile', [ProfileController::class, 'updateProfile']);
+
         Route::get('/wallet', [WalletController::class, 'show']);
         Route::get('/wallet/transactions', [WalletController::class, 'transactions']);
         Route::get('/wallet/ledger', [WalletController::class, 'ledger']);
@@ -101,16 +130,14 @@ Route::prefix('general')
         Route::post('/wallet/top-up', [WalletController::class, 'topUp']);
     });
 
-// Fan and creator routes
 Route::prefix('fan')
     ->middleware(['auth:sanctum', 'role:creator|fan'])
     ->group(function () {
         Route::post('/subscription-plans/{subscriptionPlan}/subscribe', [SubscriptionController::class, 'subscribe']);
     });
 
-// Creator routes
 Route::prefix('creator')
-    ->middleware(['auth:sanctum', 'role:creator'])
+    ->middleware(['auth:sanctum', 'role:creator|admin'])
     ->group(function () {
         Route::prefix('kulscan')
             ->group(function () {
@@ -118,25 +145,7 @@ Route::prefix('creator')
                 Route::get('/events', [CreatorEventsController::class, 'index'])->middleware('cache.api:60');
                 Route::get('/events/{event}', [CreatorEventsController::class, 'show'])->middleware('cache.api:60');
             });
-        Route::prefix('challenges')
-            ->middleware(['role:creator|admin'])
-            ->group(function () {
-                Route::post('/draft', [ChallengeController::class, 'draft'])->middleware('throttle:challenge-create');
-                Route::post('/', [ChallengeController::class, 'store'])->middleware('throttle:challenge-create');
-                Route::patch('/{challenge}', [ChallengeController::class, 'update']);
-                Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);
-                Route::post('/{challenge}/finalize', [ChallengeController::class, 'finalize'])->middleware('throttle:challenge-finalize');
-                Route::post('/{challenge}/settle-creator-battle', [ChallengeController::class, 'settleCreatorBattle'])->middleware('throttle:challenge-finalize');
-                Route::post('/{challenge}/entries', [ChallengeController::class, 'submitEntry'])->middleware('throttle:challenge-entries');
-                Route::delete('/{challenge}/entries/{entry}', [ChallengeController::class, 'withdraw']);
-                Route::put('/{challenge}/entries/{entry}/jury-scores', [ChallengeController::class, 'juryScore'])->middleware('throttle:challenge-jury');
-                Route::post('/{challenge}/entries/{entry}/select-winner', [ChallengeController::class, 'selectWinner']);
-                Route::post('/{challenge}/invites', [ChallengeController::class, 'inviteParticipant']);
-                Route::post('/{challenge}/invites/{invite}/accept', [ChallengeController::class, 'acceptInvite']);
-                Route::post('/{challenge}/jury', [ChallengeController::class, 'inviteJury']);
-                Route::post('/{challenge}/integrity-flags/{integrityFlag}/resolve', [ChallengeController::class, 'resolveIntegrity']);
-                Route::post('/{challenge}/reward-allocations/{allocation}/process', [ChallengeController::class, 'processReward'])->middleware('throttle:challenge-finalize');
-            });
+
         Route::get('/dashboard', [CreatorDashboardController::class, 'show'])->middleware('cache.api:60');
         Route::get('/videos', [VideoController::class, 'index']);
         Route::get('/videos/analytics', [VideoController::class, 'analytics']);
@@ -161,11 +170,14 @@ Route::prefix('creator')
         Route::get('/videos/{video}', [VideoController::class, 'creatorShow']);
         Route::patch('/videos/{video}', [VideoController::class, 'update']);
         Route::get('/videos/{video}/progress', [VideoController::class, 'progress']);
+
         Route::post('/community/posts', [CommunityPostController::class, 'store']);
+
         Route::get('/events', [EventController::class, 'creatorIndex'])->middleware('cache.api:60');
         Route::post('/events', [EventController::class, 'store']);
         Route::get('/events/{event}', [EventController::class, 'creatorShow'])->middleware('cache.api:60');
         Route::patch('/events/{event}', [EventController::class, 'update']);
+
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
         Route::patch('/subscription-plans/{subscriptionPlan}', [SubscriptionController::class, 'update']);
@@ -173,16 +185,8 @@ Route::prefix('creator')
         Route::post('/subscriptions/{subscription}/block', [SubscriptionController::class, 'blockSubscriber']);
     });
 
-// Shared routes
 Route::prefix('creator-fan')
     ->middleware(['auth:sanctum', 'role:creator|fan'])
     ->group(function () {
         Route::get('/creators/{creator}/subscription-plans', [SubscriptionController::class, 'showCreatorPlans']);
     });
-
-
-
-
-
-
-

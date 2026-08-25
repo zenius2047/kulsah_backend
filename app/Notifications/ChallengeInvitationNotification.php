@@ -2,19 +2,20 @@
 
 namespace App\Notifications;
 
+use App\Models\Challenge;
 use App\Models\User;
-use App\Models\Video;
 use App\Notifications\Channels\FcmChannel;
 use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Notification;
 
-class VideoMentionedNotification extends Notification
+class ChallengeInvitationNotification extends Notification
 {
     public function __construct(
-        public readonly Video $video,
+        public readonly Challenge $challenge,
         public readonly User $actor,
-        public readonly array $mentions = [],
-        public readonly array $hashtags = [],
+        public readonly string $invitationType = 'challenge_participant',
+        public readonly ?int $inviteId = null,
+        public readonly string $role = 'challenger',
     ) {
     }
 
@@ -35,12 +36,16 @@ class VideoMentionedNotification extends Notification
 
     public function toFcm(object $notifiable): array
     {
+        $title = $this->invitationType === 'jury_invite'
+            ? 'You were invited to join the jury'
+            : 'You were invited to a creator battle';
+
         return [
-            'title' => 'You were mentioned in a video',
+            'title' => $title,
             'body' => sprintf(
-                '%s mentioned you in %s.',
+                '%s invited you to %s.',
                 $this->actor->name ?: $this->actor->username,
-                $this->video->title ?: 'a video'
+                $this->challenge->title
             ),
             'data' => $this->payload($notifiable),
         ];
@@ -48,24 +53,26 @@ class VideoMentionedNotification extends Notification
 
     public function broadcastType(): string
     {
-        return 'video.mentioned';
+        return 'challenge.invited';
     }
 
     public function payload(object $notifiable): array
     {
         return [
-            'type' => 'video.mentioned',
-            'video_id' => $this->video->id,
-            'video_title' => $this->video->title,
-            'caption' => $this->video->caption,
-            'content_type' => $this->video->content_type,
-            'mentioned_by' => [
+            'type' => 'challenge.invited',
+            'invitation_type' => $this->invitationType,
+            'challenge_id' => $this->challenge->id,
+            'challenge_title' => $this->challenge->title,
+            'challenge_slug' => $this->challenge->slug,
+            'challenge_mode' => $this->challenge->mode,
+            'challenge_status' => $this->challenge->status,
+            'invite_id' => $this->inviteId,
+            'role' => $this->role,
+            'invited_by' => [
                 'id' => $this->actor->id,
                 'name' => $this->actor->name,
                 'username' => $this->actor->username,
             ],
-            'mentions' => $this->mentions,
-            'hashtags' => $this->hashtags,
             'notified_user_id' => $notifiable->id ?? null,
             'created_at' => now()->toIso8601String(),
         ];

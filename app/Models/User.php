@@ -182,6 +182,23 @@ class User extends Authenticatable
         return $this->hasMany(VideoBookmark::class);
     }
 
+    public function conversationParticipants()
+    {
+        return $this->hasMany(ConversationParticipant::class);
+    }
+
+    public function conversations()
+    {
+        return $this->belongsToMany(Conversation::class, 'conversation_participants')
+            ->withPivot(['role', 'last_read_message_id', 'last_read_at', 'archived_at', 'unread_count'])
+            ->withTimestamps();
+    }
+
+    public function notificationDevices()
+    {
+        return $this->hasMany(NotificationDevice::class);
+    }
+
     public function follows()
     {
         return $this->hasMany(UserFollow::class, 'follower_id');
@@ -257,3 +274,5 @@ class User extends Authenticatable
             ->count();
     }
 }
+
+

@@ -6,6 +6,7 @@ use App\Models\Challenge;
 use App\Models\ChallengeAuditLog;
 use App\Models\ChallengeInvite;
 use App\Models\User;
+use App\Services\ChallengeInvitationNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -33,8 +34,37 @@ class InviteChallengeParticipant
                 }
             }
 
-            $invite = ChallengeInvite::updateOrCreate(['challenge_id' => $challenge->id, 'invited_user_id' => $participant->id], ['invited_by_user_id' => $actor->id, 'status' => 'pending', 'token' => hash('sha256', Str::random(64)), 'expires_at' => $expiresAt, 'accepted_at' => null, 'declined_at' => null]);
-            ChallengeAuditLog::create(['challenge_id' => $challenge->id, 'actor_user_id' => $actor->id, 'action' => 'participant.invited', 'subject_type' => ChallengeInvite::class, 'subject_id' => $invite->id, 'after' => ['invited_user_id' => $participant->id]]);
+            $invite = ChallengeInvite::updateOrCreate(
+                ['challenge_id' => $challenge->id, 'invited_user_id' => $participant->id],
+                [
+                    'invited_by_user_id' => $actor->id,
+                    'status' => 'pending',
+                    'token' => hash('sha256', Str::random(64)),
+                    'expires_at' => $expiresAt,
+                    'accepted_at' => null,
+                    'declined_at' => null,
+                ]
+            );
+
+            ChallengeAuditLog::create([
+                'challenge_id' => $challenge->id,
+                'actor_user_id' => $actor->id,
+                'action' => 'participant.invited',
+                'subject_type' => ChallengeInvite::class,
+                'subject_id' => $invite->id,
+                'after' => ['invited_user_id' => $participant->id],
+            ]);
+
+            DB::afterCommit(function () use ($challenge, $participant, $actor, $invite): void {
+                app(ChallengeInvitationNotificationService::class)->send(
+                    $participant,
+                    $challenge->fresh(),
+                    $actor,
+                    'challenge_participant',
+                    $invite->id,
+                    'challenger',
+                );
+            });
 
             return $invite;
         });

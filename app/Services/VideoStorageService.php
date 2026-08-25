@@ -157,20 +157,30 @@ class VideoStorageService
 
     public function createTemporaryUpload(int $userId, ?string $originalName = null, ?string $mimeType = null): array
     {
-        [$disk, $path] = $this->buildUploadTarget($userId, $originalName, config('video.upload_directory', 'videos/originals'));
+        return $this->createTemporaryUploadInDirectory(
+            userId: $userId,
+            originalName: $originalName,
+            mimeType: $mimeType,
+            directory: config('video.upload_directory', 'videos/originals')
+        );
+    }
+
+    public function createTemporaryUploadInDirectory(int $userId, ?string $originalName = null, ?string $mimeType = null, ?string $directory = null, string $visibility = 'private'): array
+    {
+        [$disk, $path] = $this->buildUploadTarget($userId, $originalName, $directory);
         $ttlMinutes = max(1, (int) config('video.direct_upload_ttl_minutes', 15));
 
         $upload = Storage::disk($disk)->temporaryUploadUrl(
             $path,
             now()->addMinutes($ttlMinutes),
             array_filter([
-                'ACL' => 'private',
+                'ACL' => $visibility === 'public' ? 'public-read' : 'private',
                 'ContentType' => $mimeType ?: null,
             ])
         );
 
         if (! is_array($upload) || ! isset($upload['url'], $upload['headers'])) {
-            throw new RuntimeException('Unable to generate a temporary video upload URL.');
+            throw new RuntimeException('Unable to generate a temporary upload URL.');
         }
 
         return [
@@ -220,3 +230,4 @@ class VideoStorageService
         return [$disk, $path];
     }
 }
+
