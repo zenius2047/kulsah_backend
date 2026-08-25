@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\ConversationMessageRequest;
+use App\Notifications\Channels\FcmChannel;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Notification;
@@ -17,7 +18,7 @@ class ConversationMessageRequestNotification extends Notification
 
     public function via($notifiable): array
     {
-        return ['database', 'broadcast'];
+        return ['database', 'broadcast', FcmChannel::class];
     }
 
     public function toArray($notifiable): array
@@ -28,6 +29,15 @@ class ConversationMessageRequestNotification extends Notification
     public function toBroadcast($notifiable): BroadcastMessage
     {
         return new BroadcastMessage($this->payload());
+    }
+
+    public function toFcm(object $notifiable): array
+    {
+        return [
+            'title' => $this->messageRequest->sender?->name ?: $this->messageRequest->sender?->username ?: 'New message request',
+            'body' => (string) ($this->messageRequest->intro_body ?: 'You have a new message request.'),
+            'data' => $this->payload($notifiable),
+        ];
     }
 
     public function broadcastType(): string

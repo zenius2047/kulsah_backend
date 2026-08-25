@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Challenge;
 use App\Models\User;
 use App\Notifications\ChallengeInvitationNotification;
+use App\Services\NotificationDeliveryService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Notification;
 
@@ -41,3 +42,4 @@ class ChallengeInvitationNotificationService
         );
     }
 }
+

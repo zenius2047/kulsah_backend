@@ -32,6 +32,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/switch-role', [AuthController::class, 'switchRole']);
     Route::post('/update-vibe', [AuthController::class, 'updateVibe']);
     Route::post('/notification-devices', [NotificationDeviceController::class, 'store']);
+    Route::delete('/notification-devices/{notificationDevice}', [NotificationDeviceController::class, 'destroy']);
 
     // Backward compatibility for clients that accidentally append a trailing
     // space to the me endpoint, which arrives as /me%20 in the browser.

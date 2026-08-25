@@ -2,17 +2,16 @@
 
 namespace App\Notifications\Channels;
 
+use App\Jobs\SendFcmNotificationJob;
 use App\Models\NotificationDevice;
-use App\Services\FirebaseMessagingService;
+use App\Services\RealtimePresenceService;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Log;
-use Kreait\Firebase\Messaging\CloudMessage;
-use Kreait\Firebase\Messaging\Notification as FcmNotification;
 
 class FcmChannel
 {
     public function __construct(
-        private readonly FirebaseMessagingService $firebaseMessagingService,
+        private readonly RealtimePresenceService $presenceService,
     ) {
     }
 
@@ -25,29 +24,33 @@ class FcmChannel
         $payload = $notification->toFcm($notifiable);
         $tokens = $this->resolveTokens($notifiable);
 
-        if ($tokens === []) {
+        if ($tokens === [] || ! property_exists($notifiable, 'id')) {
             return;
         }
 
-        $title = (string) ($payload['title'] ?? 'Notification');
-        $body = (string) ($payload['body'] ?? 'You have a new notification.');
-        $data = $this->stringifyData($payload['data'] ?? []);
+        $conversationId = (int) ($payload['data']['conversation_id'] ?? 0) ?: null;
+        if ($notifiable instanceof \App\Models\User && $this->presenceService->shouldSuppressPush($notifiable, $conversationId)) {
+            Log::debug('FCM notification skipped because recipient is active in-app.', [
+                'notification' => $notification::class,
+                'recipient_id' => $notifiable->id,
+                'conversation_id' => $conversationId,
+            ]);
 
-        $message = CloudMessage::new()
-            ->withNotification(FcmNotification::create($title, $body))
-            ->withData($data);
-
-        if (count($tokens) === 1) {
-            $this->firebaseMessagingService->messaging()->send(
-                $message->withToken($tokens[0])
-            );
-        } else {
-            $this->firebaseMessagingService->messaging()->sendMulticast($message, $tokens);
+            return;
         }
 
-        Log::debug('FCM notification dispatched.', [
+        SendFcmNotificationJob::dispatch(
+            userId: (int) $notifiable->id,
+            notificationClass: $notification::class,
+            title: (string) ($payload['title'] ?? 'Notification'),
+            body: (string) ($payload['body'] ?? 'You have a new notification.'),
+            data: $payload['data'] ?? [],
+            tokens: $tokens,
+        );
+
+        Log::debug('FCM notification queued.', [
             'notification' => $notification::class,
-            'recipient_id' => $this->recipientId($notifiable),
+            'recipient_id' => $notifiable->id,
             'token_count' => count($tokens),
         ]);
     }
@@ -68,23 +71,5 @@ class FcmChannel
             ->unique()
             ->values()
             ->all();
-    }
-
-    private function stringifyData(array $data): array
-    {
-        return collect($data)
-            ->mapWithKeys(function ($value, $key): array {
-                if (is_array($value) || is_object($value)) {
-                    $value = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                }
-
-                return [(string) $key => (string) ($value ?? '')];
-            })
-            ->all();
-    }
-
-    private function recipientId(object $notifiable): ?int
-    {
-        return property_exists($notifiable, 'id') ? (int) $notifiable->id : null;
     }
 }

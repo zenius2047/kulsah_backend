@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\NotificationDevice;
 use App\Models\Onboarding;
 use App\Services\FirebaseAuthService;
+use App\Services\RealtimePresenceService;
 use App\Models\PasswordResetOtp;
 use App\Http\Resources\UserResource;
 use Laravel\Socialite\Socialite;
@@ -899,3 +901,4 @@ public function login(Request $request)
 
 
 }
+
