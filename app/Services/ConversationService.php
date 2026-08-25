@@ -125,7 +125,10 @@ class ConversationService
             $conversation->load(['participants.user', 'lastMessage.sender', 'lastMessage.attachments', 'lastMessage.reactions']);
 
             $initialMessage = $data['initial_message'] ?? null;
-            if (is_array($initialMessage) && ! empty($initialMessage)) {
+            $shouldSendInitialMessage = is_array($initialMessage) && ! empty($initialMessage)
+                && ($conversation->wasRecentlyCreated || ! $conversation->messages()->exists());
+
+            if ($shouldSendInitialMessage) {
                 $this->sendMessage($conversation, $actor, [
                     'client_message_id' => $initialMessage['client_message_id'] ?? (string) Str::uuid(),
                     'type' => $initialMessage['type'] ?? 'text',
@@ -449,4 +452,6 @@ class ConversationService
         return $participant;
     }
 }
+
+
 

@@ -3,17 +3,23 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\ConversationMessageRequestResource;
 use App\Http\Resources\ConversationMessageResource;
 use App\Http\Resources\ConversationResource;
+use App\Http\Resources\UserResource;
 use App\Models\Conversation;
+use App\Models\ConversationMessage;
+use App\Models\ConversationMessageRequest;
+use App\Models\User;
 use App\Services\ConversationService;
+use App\Services\SignalMessagingService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 
 class ConversationController extends Controller
 {
     public function __construct(
         private readonly ConversationService $conversationService,
+        private readonly SignalMessagingService $signalMessagingService,
     ) {
     }
 
@@ -43,6 +49,52 @@ class ConversationController extends Controller
         ]);
     }
 
+    public function requests(Request $request)
+    {
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $paginator = $this->signalMessagingService->incomingRequests($request->user(), (int) ($validated['per_page'] ?? 30));
+
+        return response()->json([
+            'data' => ConversationMessageRequestResource::collection($paginator->items())->resolve($request),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+        ]);
+    }
+
+    public function search(Request $request)
+    {
+        $validated = $request->validate([
+            'q' => ['sometimes', 'string', 'max:255'],
+            'search' => ['sometimes', 'string', 'max:255'],
+            'limit' => ['sometimes', 'integer', 'min:1', 'max:50'],
+        ]);
+
+        $searchQuery = trim((string) ($validated['q'] ?? $validated['search'] ?? ''));
+
+        if ($searchQuery === '') {
+            return response()->json([
+                'data' => [
+                    'users' => [],
+                ],
+            ]);
+        }
+
+        $users = $this->signalMessagingService->searchUsers($request->user(), $searchQuery, (int) ($validated['limit'] ?? 20));
+
+        return response()->json([
+            'data' => [
+                'users' => UserResource::collection(collect($users))->resolve($request),
+            ],
+        ]);
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -60,6 +112,22 @@ class ConversationController extends Controller
             'initial_message.metadata' => ['nullable', 'array'],
             'initial_message.idempotency_key' => ['nullable', 'string', 'max:255'],
         ]);
+
+        if (count($validated['participant_ids']) === 1) {
+            $receiver = User::query()->findOrFail((int) $validated['participant_ids'][0]);
+            $result = $this->signalMessagingService->startConversationOrRequest($request->user(), $receiver, $validated);
+
+            if ($result['decision'] === 'request') {
+                return response()->json([
+                    'message' => 'Message request sent.',
+                    'data' => new ConversationMessageRequestResource($result['request']),
+                ], 202);
+            }
+
+            return response()->json([
+                'data' => new ConversationResource($result['conversation']->fresh(['participants.user', 'lastMessage.sender', 'lastMessage.attachments', 'lastMessage.reactions'])),
+            ], 201);
+        }
 
         $conversation = $this->conversationService->createConversation($request->user(), $validated);
 
@@ -133,6 +201,69 @@ class ConversationController extends Controller
                 'unread_count' => (int) $participant->unread_count,
             ],
         ]);
+    }
+
+    public function acceptRequest(Request $request, ConversationMessageRequest $messageRequest)
+    {
+        $conversation = $this->signalMessagingService->acceptRequest($request->user(), $messageRequest);
+
+        return response()->json([
+            'message' => 'Message request accepted.',
+            'data' => new ConversationResource($conversation->fresh(['participants.user', 'lastMessage.sender', 'lastMessage.attachments', 'lastMessage.reactions'])),
+        ]);
+    }
+
+    public function declineRequest(Request $request, ConversationMessageRequest $messageRequest)
+    {
+        $requestModel = $this->signalMessagingService->declineRequest($request->user(), $messageRequest);
+
+        return response()->json([
+            'message' => 'Message request declined.',
+            'data' => new ConversationMessageRequestResource($requestModel),
+        ]);
+    }
+
+    public function blockRequest(Request $request, ConversationMessageRequest $messageRequest)
+    {
+        $requestModel = $this->signalMessagingService->blockRequest($request->user(), $messageRequest);
+
+        return response()->json([
+            'message' => 'Sender blocked successfully.',
+            'data' => new ConversationMessageRequestResource($requestModel),
+        ]);
+    }
+
+    public function cancelRequest(Request $request, ConversationMessageRequest $messageRequest)
+    {
+        $requestModel = $this->signalMessagingService->cancelRequest($request->user(), $messageRequest);
+
+        return response()->json([
+            'message' => 'Message request cancelled.',
+            'data' => new ConversationMessageRequestResource($requestModel),
+        ]);
+    }
+
+    public function report(Request $request)
+    {
+        $validated = $request->validate([
+            'type' => ['required', 'string', 'in:user,message,request,conversation'],
+            'id' => ['required', 'integer', 'min:1'],
+            'reason' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $report = $this->signalMessagingService->report(
+            $request->user(),
+            $validated['type'],
+            (int) $validated['id'],
+            $validated['reason'] ?? null,
+        );
+
+        return response()->json([
+            'message' => 'Report submitted.',
+            'data' => [
+                'report' => $report,
+            ],
+        ], 201);
     }
 
     public function unreadCount(Request $request)

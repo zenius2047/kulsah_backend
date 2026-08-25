@@ -199,6 +199,11 @@ class User extends Authenticatable
         return $this->hasMany(NotificationDevice::class);
     }
 
+    public function notificationPreference()
+    {
+        return $this->hasOne(NotificationPreference::class);
+    }
+
     public function follows()
     {
         return $this->hasMany(UserFollow::class, 'follower_id');
@@ -207,6 +212,75 @@ class User extends Authenticatable
     public function followers()
     {
         return $this->hasMany(UserFollow::class, 'followed_id');
+    }
+
+    public function blocks()
+    {
+        return $this->hasMany(UserBlock::class, 'blocker_id');
+    }
+
+    public function blockedBy()
+    {
+        return $this->hasMany(UserBlock::class, 'blocked_id');
+    }
+
+    public function isFanOf(User $other): bool
+    {
+        return UserFollow::query()
+            ->where('follower_id', $this->id)
+            ->where('followed_id', $other->id)
+            ->exists();
+    }
+
+    public function areMutualFans(User $other): bool
+    {
+        return $this->isFanOf($other) && $other->isFanOf($this);
+    }
+
+    public function hasActiveSubscriptionTo(User $creator): bool
+    {
+        return Subscription::query()
+            ->where('subscriber_id', $this->id)
+            ->where('creator_id', $creator->id)
+            ->where('status', 'active')
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->exists();
+    }
+
+    public function isBlockedBy(User $other): bool
+    {
+        return UserBlock::query()
+            ->where('blocker_id', $other->id)
+            ->where('blocked_id', $this->id)
+            ->exists();
+    }
+
+    public function isBlocking(User $other): bool
+    {
+        return UserBlock::query()
+            ->where('blocker_id', $this->id)
+            ->where('blocked_id', $other->id)
+            ->exists();
+    }
+
+    public function signalPreference(): NotificationPreference
+    {
+        return $this->notificationPreference()->firstOrCreate([
+            'user_id' => $this->id,
+        ], [
+            'messages' => true,
+            'challenge_updates' => true,
+            'live_events' => true,
+            'commerce' => true,
+            'marketing' => false,
+            'quiet_hours' => null,
+            'signal_message_policy' => 'people_i_may_know',
+            'signal_allow_contact_sync' => true,
+            'signal_discoverable_by_phone' => true,
+            'signal_discoverable_by_search' => true,
+        ]);
     }
 
     public function receivesBroadcastNotificationsOn(): string
@@ -274,5 +348,7 @@ class User extends Authenticatable
             ->count();
     }
 }
+
+
 
 

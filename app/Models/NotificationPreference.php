@@ -17,6 +17,9 @@ class NotificationPreference extends Model
             'commerce' => 'boolean',
             'marketing' => 'boolean',
             'quiet_hours' => 'array',
+            'signal_allow_contact_sync' => 'boolean',
+            'signal_discoverable_by_phone' => 'boolean',
+            'signal_discoverable_by_search' => 'boolean',
         ];
     }
 

@@ -61,6 +61,13 @@ Route::prefix('general')
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
 
         Route::get('/conversations/unread-count', [ConversationController::class, 'unreadCount']);
+        Route::get('/conversations/requests', [ConversationController::class, 'requests']);
+        Route::get('/conversations/search', [ConversationController::class, 'search']);
+        Route::post('/conversations/reports', [ConversationController::class, 'report']);
+        Route::post('/conversations/{messageRequest}/accept', [ConversationController::class, 'acceptRequest']);
+        Route::post('/conversations/{messageRequest}/decline', [ConversationController::class, 'declineRequest']);
+        Route::post('/conversations/{messageRequest}/block', [ConversationController::class, 'blockRequest']);
+        Route::post('/conversations/{messageRequest}/cancel', [ConversationController::class, 'cancelRequest']);
         Route::get('/conversations', [ConversationController::class, 'index']);
         Route::post('/conversations', [ConversationController::class, 'store']);
         Route::get('/conversations/{conversation}/messages', [ConversationController::class, 'messages']);
@@ -190,3 +197,5 @@ Route::prefix('creator-fan')
     ->group(function () {
         Route::get('/creators/{creator}/subscription-plans', [SubscriptionController::class, 'showCreatorPlans']);
     });
+
+
