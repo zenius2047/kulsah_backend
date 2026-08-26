@@ -93,3 +93,4 @@ class RealtimeNotificationArchitectureTest extends TestCase
         Bus::assertNothingDispatched();
     }
 }
+

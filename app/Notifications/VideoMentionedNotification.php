@@ -53,7 +53,11 @@ class VideoMentionedNotification extends Notification
 
     public function payload(object $notifiable): array
     {
+        $recipientId = (int) ($notifiable->id ?? 0);
+
         return [
+            'schema_version' => 1,
+            'notification_id' => sprintf('video.mentioned:%d:%d', (int) $this->video->id, $recipientId),
             'type' => 'video.mentioned',
             'video_id' => $this->video->id,
             'video_title' => $this->video->title,
@@ -66,7 +70,6 @@ class VideoMentionedNotification extends Notification
             ],
             'mentions' => $this->mentions,
             'hashtags' => $this->hashtags,
-            'notified_user_id' => $notifiable->id ?? null,
             'created_at' => now()->toIso8601String(),
         ];
     }

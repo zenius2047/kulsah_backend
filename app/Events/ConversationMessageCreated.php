@@ -37,12 +37,12 @@ class ConversationMessageCreated implements ShouldBroadcastNow
     public function broadcastWith(): array
     {
         return [
+            'type' => $this->broadcastAs(),
             'event_id' => $this->eventId,
             'occurred_at' => $this->occurredAt,
             'user_id' => $this->userId,
+            'conversation_id' => $this->message->conversation_id,
             'message' => (new ConversationMessageResource($this->message))->toArray(request()),
         ];
     }
 }
-
-

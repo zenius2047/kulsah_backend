@@ -10,6 +10,13 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Kreait\Firebase\Exception\Messaging\InvalidMessage;
+use Kreait\Firebase\Exception\Messaging\NotFound;
+use Kreait\Firebase\Exception\Messaging\QuotaExceeded;
+use Kreait\Firebase\Exception\Messaging\SenderIdMismatch;
+use Kreait\Firebase\Exception\Messaging\ServerError;
+use Kreait\Firebase\Exception\Messaging\ServerUnavailable;
+use Kreait\Firebase\Exception\MessagingException;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification as FcmNotification;
 use Throwable;
@@ -21,6 +28,8 @@ class SendFcmNotificationJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
+    public int $tries = 5;
+
     public function __construct(
         public readonly int $userId,
         public readonly string $notificationClass,
@@ -29,7 +38,13 @@ class SendFcmNotificationJob implements ShouldQueue
         public readonly array $data,
         public readonly array $tokens,
     ) {
-        $this->onQueue(config('queue.default', 'redis'));
+        $this->onConnection('redis');
+        $this->onQueue('notifications');
+    }
+
+    public function backoff(): array
+    {
+        return [10, 60, 300];
     }
 
     public function handle(FirebaseMessagingService $firebaseMessagingService): void
@@ -51,42 +66,81 @@ class SendFcmNotificationJob implements ShouldQueue
         foreach ($tokens as $token) {
             try {
                 $firebaseMessagingService->messaging()->send($message->withToken($token));
+            } catch (NotFound|SenderIdMismatch $throwable) {
+                $this->removeInvalidToken($token, $throwable);
+            } catch (InvalidMessage $throwable) {
+                $this->reportInvalidMessage($throwable);
+                throw $throwable;
+            } catch (ServerUnavailable|ServerError|QuotaExceeded $throwable) {
+                $this->reportTransientFailure($token, $throwable);
+                throw $throwable;
+            } catch (MessagingException $throwable) {
+                $this->reportUnexpectedMessagingFailure($token, $throwable);
+                throw $throwable;
             } catch (Throwable $throwable) {
-                $this->handleFailedToken($token, $throwable);
+                Log::error('FCM notification delivery failed with an unexpected exception.', [
+                    'notification' => $this->notificationClass,
+                    'recipient_id' => $this->userId,
+                    'token_hash' => $this->fingerprintToken($token),
+                    'exception' => get_class($throwable),
+                    'error' => $throwable->getMessage(),
+                ]);
+
+                throw $throwable;
             }
         }
 
         Log::debug('FCM notification job processed.', [
             'notification' => $this->notificationClass,
+            'notification_id' => (string) ($this->data['notification_id'] ?? ''),
+            'type' => (string) ($this->data['type'] ?? $this->notificationClass),
             'recipient_id' => $this->userId,
             'token_count' => $tokens->count(),
         ]);
     }
 
-    private function handleFailedToken(string $token, Throwable $throwable): void
+    private function removeInvalidToken(string $token, Throwable $throwable): void
     {
-        $message = strtolower($throwable->getMessage());
+        NotificationDevice::query()->where('token', $token)->delete();
 
-        if (str_contains($message, 'not registered')
-            || str_contains($message, 'registration token')
-            || str_contains($message, 'requested entity was not found')
-            || str_contains($message, 'invalid registration')
-        ) {
-            NotificationDevice::query()->where('token', $token)->delete();
+        Log::info('Invalid FCM token removed.', [
+            'user_id' => $this->userId,
+            'token_hash' => $this->fingerprintToken($token),
+            'notification' => $this->notificationClass,
+            'exception' => get_class($throwable),
+        ]);
+    }
 
-            Log::warning('Invalid FCM token removed.', [
-                'user_id' => $this->userId,
-                'token' => $token,
-                'notification' => $this->notificationClass,
-            ]);
-
-            return;
-        }
-
-        Log::warning('FCM notification delivery failed.', [
+    private function reportInvalidMessage(InvalidMessage $throwable): void
+    {
+        Log::error('FCM notification payload was rejected as invalid.', [
             'notification' => $this->notificationClass,
             'recipient_id' => $this->userId,
-            'token' => $token,
+            'error' => $throwable->getMessage(),
+            'errors' => method_exists($throwable, 'errors') ? $throwable->errors() : [],
+        ]);
+    }
+
+    private function reportTransientFailure(string $token, Throwable $throwable): void
+    {
+        Log::warning('FCM notification delivery will be retried.', [
+            'notification' => $this->notificationClass,
+            'recipient_id' => $this->userId,
+            'token_hash' => $this->fingerprintToken($token),
+            'exception' => get_class($throwable),
+            'error' => $throwable->getMessage(),
+        ]);
+    }
+
+    private function reportUnexpectedMessagingFailure(string $token, MessagingException $throwable): void
+    {
+        report($throwable);
+
+        Log::error('FCM notification delivery failed.', [
+            'notification' => $this->notificationClass,
+            'recipient_id' => $this->userId,
+            'token_hash' => $this->fingerprintToken($token),
+            'exception' => get_class($throwable),
             'error' => $throwable->getMessage(),
         ]);
     }
@@ -102,5 +156,10 @@ class SendFcmNotificationJob implements ShouldQueue
                 return [(string) $key => (string) ($value ?? '')];
             })
             ->all();
+    }
+
+    private function fingerprintToken(string $token): string
+    {
+        return substr(hash('sha256', $token), 0, 12);
     }
 }

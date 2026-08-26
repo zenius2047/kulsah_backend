@@ -6,6 +6,7 @@ services:
     container_name: kulsah-laravel
     volumes:
       - ./:/var/www
+      - ./storage/firebase:/var/www/storage/firebase:ro
     depends_on:
       - postgres
       - redis
@@ -25,6 +26,38 @@ services:
       REVERB_HOST: reverb
       REVERB_PORT: 8080
       REVERB_SCHEME: http
+      GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/firebase-service-account.json
+
+  queue:
+    build:
+      context: .
+    container_name: kulsah-queue
+    volumes:
+      - ./:/var/www
+      - ./storage/firebase:/var/www/storage/firebase:ro
+    command: php artisan queue:work redis --queue=notifications --tries=5 --timeout=30
+    depends_on:
+      - postgres
+      - redis
+      - laravel
+    restart: always
+    environment:
+      DB_HOST: postgres
+      DB_DATABASE: kulsah
+      DB_USERNAME: postgres
+      DB_PASSWORD: password
+      REDIS_HOST: redis
+      FASTAPI_URL: http://fastapi:8000
+      FASTAPI_SHARED_SECRET: ${FASTAPI_SHARED_SECRET}
+      FASTAPI_SIGNATURE_TTL_SECONDS: ${FASTAPI_SIGNATURE_TTL_SECONDS:-300}
+      BROADCAST_CONNECTION: reverb
+      REVERB_APP_ID: ${REVERB_APP_ID:-local}
+      REVERB_APP_KEY: ${REVERB_APP_KEY:-local}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET:-local}
+      REVERB_HOST: reverb
+      REVERB_PORT: 8080
+      REVERB_SCHEME: http
+      GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/firebase-service-account.json
 
   reverb:
     build:

@@ -99,6 +99,20 @@ return [
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
+        'testing' => [
+            'driver' => 'pgsql',
+            'host' => 'postgres',
+            'port' => '5432',
+            'database' => 'kulsah_testing',
+            'username' => 'postgres',
+            'password' => 'password',
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => 'prefer',
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),
@@ -186,3 +200,4 @@ return [
     ],
 
 ];
+

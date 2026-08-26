@@ -2,11 +2,11 @@
 
 namespace App\Events;
 
-use Illuminate\Broadcasting\Channel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Broadcasting\PrivateChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
 
-class ChallengeLeaderboardChanged implements ShouldBroadcast
+class ChallengeLeaderboardChanged implements ShouldBroadcastNow
 {
     use Dispatchable;
 
@@ -16,11 +16,20 @@ class ChallengeLeaderboardChanged implements ShouldBroadcast
 
     public function broadcastOn(): array
     {
-        return [new Channel('challenges.'.$this->challengeId.'.leaderboard')];
+        return [new PrivateChannel('challenges.'.$this->challengeId.'.leaderboard')];
     }
 
     public function broadcastAs(): string
     {
         return 'challenge.leaderboard.updated';
+    }
+
+    public function broadcastWith(): array
+    {
+        return [
+            'type' => $this->broadcastAs(),
+            'challenge_id' => $this->challengeId,
+            'refreshed_at' => now()->toIso8601String(),
+        ];
     }
 }

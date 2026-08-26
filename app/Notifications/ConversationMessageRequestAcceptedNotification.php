@@ -23,12 +23,12 @@ class ConversationMessageRequestAcceptedNotification extends Notification
 
     public function toArray($notifiable): array
     {
-        return $this->payload();
+        return $this->payload($notifiable);
     }
 
     public function toBroadcast($notifiable): BroadcastMessage
     {
-        return new BroadcastMessage($this->payload());
+        return new BroadcastMessage($this->payload($notifiable));
     }
 
     public function toFcm(object $notifiable): array
@@ -45,9 +45,13 @@ class ConversationMessageRequestAcceptedNotification extends Notification
         return 'signal.message_request.accepted';
     }
 
-    private function payload(): array
+    private function payload(object $notifiable): array
     {
+        $recipientId = (int) ($notifiable->id ?? 0);
+
         return [
+            'schema_version' => 1,
+            'notification_id' => sprintf('signal.message_request.accepted:%d:%d', (int) $this->messageRequest->id, $recipientId),
             'type' => $this->broadcastType(),
             'request_id' => $this->messageRequest->id,
             'sender_id' => $this->messageRequest->sender_id,

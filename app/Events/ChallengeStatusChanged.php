@@ -4,13 +4,12 @@ namespace App\Events;
 
 use App\Models\Challenge;
 use Illuminate\Broadcasting\PrivateChannel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
-use Illuminate\Queue\SerializesModels;
 
-class ChallengeStatusChanged implements ShouldBroadcast
+class ChallengeStatusChanged implements ShouldBroadcastNow
 {
-    use Dispatchable, SerializesModels;
+    use Dispatchable;
 
     public bool $afterCommit = true;
 
@@ -28,6 +27,11 @@ class ChallengeStatusChanged implements ShouldBroadcast
 
     public function broadcastWith(): array
     {
-        return ['challenge_id' => $this->challenge->id, 'status' => $this->challenge->status->value];
+        return [
+            'type' => $this->broadcastAs(),
+            'challenge_id' => $this->challenge->id,
+            'status' => $this->challenge->status->value,
+            'updated_at' => optional($this->challenge->updated_at)?->toIso8601String(),
+        ];
     }
 }

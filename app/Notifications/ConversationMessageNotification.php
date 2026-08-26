@@ -13,7 +13,7 @@ class ConversationMessageNotification extends Notification
     public function __construct(
         public readonly ConversationMessage $message,
         public readonly User $sender,
-        public readonly array $conversationSummary = [],
+        public readonly array $recipientUnreadCounts = [],
     ) {
     }
 
@@ -48,7 +48,11 @@ class ConversationMessageNotification extends Notification
 
     private function payload(object $notifiable): array
     {
+        $recipientId = (int) ($notifiable->id ?? 0);
+
         return [
+            'schema_version' => 1,
+            'notification_id' => sprintf('conversation.message.created:%d:%d', (int) $this->message->id, $recipientId),
             'type' => 'conversation.message.created',
             'conversation_id' => $this->message->conversation_id,
             'message_id' => $this->message->id,
@@ -61,8 +65,7 @@ class ConversationMessageNotification extends Notification
             ],
             'body' => $this->message->body,
             'message_type' => $this->message->type,
-            'conversation' => $this->conversationSummary,
-            'notified_user_id' => $notifiable->id ?? null,
+            'unread_count' => (int) ($this->recipientUnreadCounts[$recipientId] ?? 0),
             'created_at' => now()->toIso8601String(),
         ];
     }

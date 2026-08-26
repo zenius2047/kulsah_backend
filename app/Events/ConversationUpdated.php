@@ -38,6 +38,7 @@ class ConversationUpdated implements ShouldBroadcastNow
     public function broadcastWith(): array
     {
         return [
+            'type' => $this->broadcastAs(),
             'event_id' => $this->eventId,
             'occurred_at' => $this->occurredAt,
             'user_id' => $this->userId,

@@ -35,16 +35,15 @@ return [
         ],
     ],
 
-    'google'=>[
-        'client_id'=>env('GOOGLE_CLIENT_ID'),
-        'client_secret'=> env('GOOGLE_CLIENT_SECRET'),
-        'redirect' =>env('GOOGLE_REDIRECT_URI'),
-
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
 
     'firebase' => [
-    'credentials' => env('FIREBASE_CREDENTIALS'),
-],
+        'credentials' => env('GOOGLE_APPLICATION_CREDENTIALS', env('FIREBASE_CREDENTIALS', 'storage/firebase/firebase-service-account.json')),
+    ],
 
     'cloudinary' => [
         'cloud_name' => env('CLOUDINARY_CLOUD_NAME'),

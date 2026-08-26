@@ -278,23 +278,27 @@ class ConversationService
                 }
 
                 $recipients = User::query()->whereIn('id', $recipientIds->all())->get();
-                $summary = $this->conversationSummary($conversation);
+                $recipientUnreadCounts = ConversationParticipant::query()
+                    ->where('conversation_id', $conversation->id)
+                    ->whereIn('user_id', $recipientIds->all())
+                    ->pluck('unread_count', 'user_id')
+                    ->map(fn ($count) => (int) $count)
+                    ->all();
 
                 Notification::sendNow(
                     $recipients,
                     new ConversationMessageNotification(
                         message: $message->fresh(['sender', 'attachments', 'replyTo.sender', 'reactions']),
                         sender: $user,
-                        conversationSummary: $summary,
+                        recipientUnreadCounts: $recipientUnreadCounts,
                     )
                 );
 
                 foreach ($recipientIds as $recipientId) {
-                    $participant = $conversation->participants->firstWhere('user_id', (int) $recipientId);
                     event(new ConversationUnreadCountUpdated(
                         conversation: $conversation,
                         userId: (int) $recipientId,
-                        unreadCount: (int) ($participant?->unread_count ?? 0),
+                        unreadCount: (int) ($recipientUnreadCounts[(int) $recipientId] ?? 0),
                         eventId: (string) Str::uuid(),
                         occurredAt: now()->toIso8601String(),
                     ));
@@ -453,6 +457,7 @@ class ConversationService
         return $participant;
     }
 }
+
 
 
 

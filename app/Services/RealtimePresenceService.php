@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\User;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Redis;
 
 class RealtimePresenceService
@@ -73,11 +74,7 @@ class RealtimePresenceService
             return false;
         }
 
-        if (($state['status'] ?? null) !== 'online') {
-            return false;
-        }
-
-        return true;
+        return ($state['status'] ?? null) === 'online';
     }
 
     public function isConversationActive(User|int $user, ?int $conversationId): bool
@@ -92,7 +89,7 @@ class RealtimePresenceService
 
     public function shouldSuppressPush(User $user, ?int $conversationId = null): bool
     {
-        return $this->isOnline($user) || $this->isConversationActive($user, $conversationId);
+        return $conversationId !== null && $this->isConversationActive($user, $conversationId);
     }
 
     private function persistLastSeenIfNeeded(User $user): void

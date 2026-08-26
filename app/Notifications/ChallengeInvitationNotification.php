@@ -58,14 +58,18 @@ class ChallengeInvitationNotification extends Notification
 
     public function payload(object $notifiable): array
     {
+        $recipientId = (int) ($notifiable->id ?? 0);
+
         return [
+            'schema_version' => 1,
+            'notification_id' => sprintf('challenge.invited:%d:%d', (int) $this->challenge->id, $recipientId),
             'type' => 'challenge.invited',
             'invitation_type' => $this->invitationType,
             'challenge_id' => $this->challenge->id,
             'challenge_title' => $this->challenge->title,
             'challenge_slug' => $this->challenge->slug,
-            'challenge_mode' => $this->challenge->mode,
-            'challenge_status' => $this->challenge->status,
+            'challenge_mode' => $this->challenge->mode?->value ?? $this->challenge->mode,
+            'challenge_status' => $this->challenge->status?->value ?? $this->challenge->status,
             'invite_id' => $this->inviteId,
             'role' => $this->role,
             'invited_by' => [
@@ -73,7 +77,6 @@ class ChallengeInvitationNotification extends Notification
                 'name' => $this->actor->name,
                 'username' => $this->actor->username,
             ],
-            'notified_user_id' => $notifiable->id ?? null,
             'created_at' => now()->toIso8601String(),
         ];
     }

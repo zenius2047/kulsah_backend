@@ -15,6 +15,11 @@ Schedule::command('wallets:settle-pending-funds')
     ->withoutOverlapping()
     ->onOneServer();
 
+Schedule::command('notification-devices:prune-stale')
+    ->dailyAt('03:15')
+    ->withoutOverlapping()
+    ->onOneServer();
+
 Schedule::call(function (): void {
     Challenge::query()
         ->whereIn('status', ['scheduled', 'active', 'submissions_closed', 'voting_closed', 'judging', 'integrity_review'])
@@ -22,3 +27,6 @@ Schedule::call(function (): void {
         ->pluck('id')
         ->each(fn (int $id) => SyncChallengeLifecycle::dispatch($id));
 })->everyMinute()->name('challenges:sync-lifecycle')->withoutOverlapping()->onOneServer();
+
+
+
