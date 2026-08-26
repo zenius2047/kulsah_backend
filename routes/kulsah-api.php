@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\V1\Kulscan\CreatorEventsController;
 use App\Http\Controllers\Api\V1\Media\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
+use App\Http\Controllers\Api\V1\PaymentController;
 use Illuminate\Support\Facades\Route;
 
 Route::pattern('video', '[0-9]+');
@@ -135,6 +136,9 @@ Route::prefix('general')
         Route::get('/wallet/ledger', [WalletController::class, 'ledger']);
         Route::post('/wallet/transfer', [WalletController::class, 'transfer']);
         Route::post('/wallet/top-up', [WalletController::class, 'topUp']);
+        Route::post('/payments/paystack/initialize', [PaymentController::class, 'initialize'])->middleware('throttle:payments');
+        Route::get('/payments/{payment}', [PaymentController::class, 'show']);
+        Route::post('/payments/{payment}/verify', [PaymentController::class, 'verify'])->middleware('throttle:payments');
     });
 
 Route::prefix('fan')

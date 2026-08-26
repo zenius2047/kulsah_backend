@@ -3,6 +3,9 @@
 use App\Services\RealtimePresenceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\PaystackWebhookController;
+
+Route::post('/webhooks/paystack', PaystackWebhookController::class);
 
 Route::get('/heartbeat', function (Request $request, RealtimePresenceService $presenceService) {
     if ($request->user()) {

@@ -20,3 +20,7 @@ Broadcast::channel('challenges.{challenge}.leaderboard', $canAccessChallenge);
 Broadcast::channel('conversations.{conversation}', function (User $user, Conversation $conversation): bool {
     return $conversation->participants()->where('user_id', $user->id)->exists();
 });
+
+Broadcast::channel('users.{userId}.payments', function (User $user, int $userId): bool {
+    return (int) $user->id === $userId;
+});

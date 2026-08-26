@@ -43,6 +43,7 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('challenge-ballots', fn (Request $request) => Limit::perMinute(20)->by($request->user()?->id ?: $request->ip()));
         RateLimiter::for('challenge-jury', fn (Request $request) => Limit::perMinute(60)->by($request->user()?->id ?: $request->ip()));
         RateLimiter::for('challenge-finalize', fn (Request $request) => Limit::perMinute(2)->by($request->user()?->id ?: $request->ip()));
+        RateLimiter::for('payments', fn (Request $request) => Limit::perMinute(10)->by($request->user()?->id ?: $request->ip()));
 
         Event::listen(VideoUploaded::class, function (VideoUploaded $event): void {
             app(FeedService::class)->invalidateFeedCaches();
