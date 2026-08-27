@@ -8,6 +8,8 @@ return [
     'issuer_account_key' => env('KULCOIN_ISSUER_ACCOUNT_KEY', 'kulcoin_issuer'),
     'promo_account_key' => env('KULCOIN_PROMO_ACCOUNT_KEY', 'kulcoin_promo_pool'),
     'treasury_account_key' => env('KULCOIN_TREASURY_ACCOUNT_KEY', 'kulcoin_treasury'),
-    'default_package_currency' => env('KULCOIN_DEFAULT_PACKAGE_CURRENCY', 'USD'),
+    // GHS is the current product currency; keep this configurable for future markets.
+    'default_package_currency' => strtoupper(env('KULCOIN_DEFAULT_PACKAGE_CURRENCY', 'GHS')),
     'wallet_status' => env('KULCOIN_WALLET_STATUS', 'active'),
 ];
+
