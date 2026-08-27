@@ -14,6 +14,7 @@ class CommunityPostComment extends Model
         'user_id',
         'parent_id',
         'body',
+        'sticker_id',
     ];
 
     public function post()
@@ -36,3 +37,4 @@ class CommunityPostComment extends Model
         return $this->hasMany(self::class, 'parent_id');
     }
 }
+

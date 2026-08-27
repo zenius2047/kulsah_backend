@@ -238,7 +238,8 @@ class CommunityPostController extends Controller
         $this->authorizeView($request, $post);
 
         $validated = $request->validate([
-            'body' => ['required', 'string', 'min:1', 'max:5000'],
+            'body' => ['nullable', 'string', 'required_without:sticker_id', 'min:1', 'max:5000'],
+            'sticker_id' => ['nullable', 'integer'],
             'parent_id' => ['nullable', 'integer', 'exists:community_post_comments,id'],
         ]);
 
@@ -612,3 +613,4 @@ class CommunityPostController extends Controller
         return CommunityPost::query()->with(['user.roles:id,name', 'media', 'pollVotes'])->findOrFail($communityPost);
     }
 }
+

@@ -40,8 +40,13 @@ class ConversationMessage extends Model
         return $this->hasMany(ConversationMessageAttachment::class);
     }
 
+    public function sticker() { return $this->belongsTo(Sticker::class); }
+
     public function reactions()
     {
         return $this->hasMany(ConversationMessageReaction::class);
     }
 }
+
+
+

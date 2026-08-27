@@ -164,6 +164,7 @@ class ConversationController extends Controller
         $validated = $request->validate([
             'client_message_id' => ['nullable', 'string', 'max:255'],
             'type' => ['required', 'string', 'max:50'],
+            'sticker_id' => ['nullable', 'integer', 'required_if:type,sticker'],
             'body' => ['nullable', 'string'],
             'attachment_ids' => ['nullable', 'array'],
             'attachment_ids.*' => ['integer'],
@@ -175,7 +176,7 @@ class ConversationController extends Controller
         $message = $this->conversationService->sendMessage($conversation, $request->user(), $validated);
 
         return response()->json([
-            'data' => new ConversationMessageResource($message->fresh(['sender', 'attachments', 'replyTo.sender', 'reactions'])),
+            'data' => new ConversationMessageResource($message->fresh(['sender', 'attachments', 'replyTo.sender', 'reactions', 'sticker'])),
         ], 201);
     }
 
@@ -289,3 +290,5 @@ class ConversationController extends Controller
         return response()->json(['message' => 'Typing event sent.']);
     }
 }
+
+

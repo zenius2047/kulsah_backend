@@ -229,6 +229,12 @@ class ConversationService
                 }
             }
 
+            $sticker = null;
+            if (($data['type'] ?? 'text') === 'sticker') {
+                $sticker = app(\App\Services\StickerService::class)->findUsable($user, (int) ($data['sticker_id'] ?? 0));
+                app(\App\Services\StickerService::class)->recordUse($user, $sticker);
+            }
+
             $message = ConversationMessage::create([
                 'conversation_id' => $conversation->id,
                 'sender_id' => $user->id,
@@ -457,6 +463,7 @@ class ConversationService
         return $participant;
     }
 }
+
 
 
 

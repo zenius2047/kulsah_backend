@@ -60,3 +60,4 @@ class VideoCommentResource extends JsonResource
         ];
     }
 }
+

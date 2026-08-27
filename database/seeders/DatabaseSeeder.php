@@ -20,6 +20,8 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             KulCoinCatalogSeeder::class,
             GhsKulCoinCatalogSeeder::class,
+            StickerSeeder::class,
         ]);
     }
 }
+

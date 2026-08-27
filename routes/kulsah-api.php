@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\Media\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 use App\Http\Controllers\Api\V1\PaymentController;
+use App\Http\Controllers\Api\V1\StickerController;
 use Illuminate\Support\Facades\Route;
 
 Route::pattern('video', '[0-9]+');
@@ -62,6 +63,17 @@ Route::prefix('general')
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
 
         Route::get('/conversations/unread-count', [ConversationController::class, 'unreadCount']);
+        Route::prefix('stickers')->group(function () {
+            Route::get('/', [StickerController::class, 'index']);
+            Route::get('/search', [StickerController::class, 'search']);
+            Route::get('/recent', [StickerController::class, 'recent']);
+            Route::get('/favorites', [StickerController::class, 'favorites']);
+            Route::post('/', [StickerController::class, 'store']);
+            Route::get('/packs/{stickerPack}', [StickerController::class, 'pack']);
+            Route::post('/{sticker}/favorite', [StickerController::class, 'favorite']);
+            Route::post('/{sticker}/use', [StickerController::class, 'use']);
+            Route::delete('/{sticker}', [StickerController::class, 'destroy']);
+        });
         Route::get('/conversations/requests', [ConversationController::class, 'requests']);
         Route::get('/conversations/search', [ConversationController::class, 'search']);
         Route::post('/conversations/reports', [ConversationController::class, 'report']);
@@ -201,5 +213,6 @@ Route::prefix('creator-fan')
     ->group(function () {
         Route::get('/creators/{creator}/subscription-plans', [SubscriptionController::class, 'showCreatorPlans']);
     });
+
 
 
