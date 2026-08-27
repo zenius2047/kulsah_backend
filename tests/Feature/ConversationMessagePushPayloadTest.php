@@ -10,9 +10,12 @@ use App\Models\NotificationDevice;
 use App\Models\User;
 use App\Notifications\Channels\FcmChannel;
 use App\Notifications\ConversationMessageNotification;
+use App\Services\RealtimePresenceService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Str;
+use Kreait\Firebase\Messaging\CloudMessage;
+use Mockery;
 use Tests\TestCase;
 
 class ConversationMessagePushPayloadTest extends TestCase
@@ -23,6 +26,10 @@ class ConversationMessagePushPayloadTest extends TestCase
     {
         config(['broadcasting.default' => 'null']);
         Bus::fake();
+
+        $presenceService = Mockery::mock(RealtimePresenceService::class);
+        $presenceService->shouldReceive('shouldSuppressPush')->once()->andReturn(false);
+        $this->app->instance(RealtimePresenceService::class, $presenceService);
 
         $sender = User::factory()->create([
             'name' => 'Sender One',
@@ -41,6 +48,26 @@ class ConversationMessagePushPayloadTest extends TestCase
             'provider' => 'fcm',
             'app_version' => '1.0.0',
             'last_seen_at' => now(),
+        ]);
+
+        NotificationDevice::query()->create([
+            'user_id' => $receiver->id,
+            'token' => 'receiver-apns-token',
+            'platform' => 'ios',
+            'device_name' => 'iPhone',
+            'provider' => 'apns',
+            'app_version' => '1.0.0',
+            'last_seen_at' => now(),
+        ]);
+
+        NotificationDevice::query()->create([
+            'user_id' => $receiver->id,
+            'token' => 'receiver-old-fcm-token',
+            'platform' => 'android',
+            'device_name' => 'Old Pixel',
+            'provider' => 'fcm',
+            'app_version' => '0.9.0',
+            'last_seen_at' => now()->subDay(),
         ]);
 
         $conversation = Conversation::query()->create([
@@ -80,13 +107,31 @@ class ConversationMessagePushPayloadTest extends TestCase
         ));
 
         Bus::assertDispatched(SendFcmNotificationJob::class, function (SendFcmNotificationJob $job) use ($receiver, $message): bool {
+            CloudMessage::new()->withData($this->stringifyData($job->data));
+
             return $job->userId === $receiver->id
                 && $job->notificationClass === ConversationMessageNotification::class
+                && $job->tokens === ['receiver-token', 'receiver-old-fcm-token']
                 && $job->data['schema_version'] === 1
                 && $job->data['type'] === 'conversation.message.created'
                 && $job->data['notification_id'] === 'conversation.message.created:'.$message->id.':'.$receiver->id
                 && $job->data['unread_count'] === 3
+                && $job->data['content_type'] === 'text'
+                && ! array_key_exists('message_type', $job->data)
                 && ! array_key_exists('conversation', $job->data);
         });
+    }
+
+    private function stringifyData(array $data): array
+    {
+        return collect($data)
+            ->mapWithKeys(function ($value, $key): array {
+                if (is_array($value) || is_object($value)) {
+                    $value = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+
+                return [(string) $key => (string) ($value ?? '')];
+            })
+            ->all();
     }
 }

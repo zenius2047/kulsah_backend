@@ -6,6 +6,7 @@ services:
     container_name: kulsah-laravel
     volumes:
       - ./:/var/www
+      - /var/www/vendor
       - ./storage/firebase:/var/www/storage/firebase:ro
     depends_on:
       - postgres
@@ -26,7 +27,7 @@ services:
       REVERB_HOST: reverb
       REVERB_PORT: 8080
       REVERB_SCHEME: http
-      GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/firebase-service-account.json
+      GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/service-account.json
 
   queue:
     build:
@@ -34,8 +35,9 @@ services:
     container_name: kulsah-queue
     volumes:
       - ./:/var/www
+      - /var/www/vendor
       - ./storage/firebase:/var/www/storage/firebase:ro
-    command: php artisan queue:work redis --queue=notifications --tries=5 --timeout=30
+    command: php artisan queue:work redis --queue=notifications,default --tries=5 --timeout=30
     depends_on:
       - postgres
       - redis
@@ -57,7 +59,7 @@ services:
       REVERB_HOST: reverb
       REVERB_PORT: 8080
       REVERB_SCHEME: http
-      GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/firebase-service-account.json
+      GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/service-account.json
 
   reverb:
     build:
@@ -65,6 +67,7 @@ services:
     container_name: kulsah-reverb
     volumes:
       - ./:/var/www
+      - /var/www/vendor
     command: php artisan reverb:start --host=0.0.0.0 --port=8080
     depends_on:
       - postgres

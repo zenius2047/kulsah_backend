@@ -14,8 +14,7 @@ class ConversationMessageNotification extends Notification
         public readonly ConversationMessage $message,
         public readonly User $sender,
         public readonly array $recipientUnreadCounts = [],
-    ) {
-    }
+    ) {}
 
     public function via(object $notifiable): array
     {
@@ -34,10 +33,14 @@ class ConversationMessageNotification extends Notification
 
     public function toFcm(object $notifiable): array
     {
+        $data = $this->payload($notifiable);
+        $data['content_type'] = (string) $this->message->type;
+        unset($data['message_type']);
+
         return [
             'title' => $this->sender->name ?: $this->sender->username,
             'body' => (string) ($this->message->body ?: 'Sent you a message.'),
-            'data' => $this->payload($notifiable),
+            'data' => $data,
         ];
     }
 

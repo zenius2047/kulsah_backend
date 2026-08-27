@@ -7,16 +7,17 @@ use App\Models\NotificationDevice;
 use App\Models\NotificationPreference;
 use App\Models\User;
 use App\Services\RealtimePresenceService;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class FcmChannel
 {
     public function __construct(
         private readonly RealtimePresenceService $presenceService,
-    ) {
-    }
+    ) {}
 
     public function send(object $notifiable, Notification $notification): void
     {
@@ -26,8 +27,9 @@ class FcmChannel
 
         $payload = $notification->toFcm($notifiable);
         $tokens = $this->resolveTokens($notifiable);
+        $userId = $this->resolveNotifiableId($notifiable);
 
-        if ($tokens === [] || ! property_exists($notifiable, 'id')) {
+        if ($tokens === [] || $userId === null) {
             return;
         }
 
@@ -37,7 +39,7 @@ class FcmChannel
         if ($notifiable instanceof User && ! $this->canSendToUser($notifiable, $data, $conversationId)) {
             Log::debug('FCM notification skipped because the recipient is filtering it.', [
                 'notification' => $notification::class,
-                'recipient_id' => $notifiable->id,
+                'recipient_id' => $userId,
                 'conversation_id' => $conversationId,
                 'type' => $data['type'] ?? null,
             ]);
@@ -46,7 +48,7 @@ class FcmChannel
         }
 
         SendFcmNotificationJob::dispatch(
-            userId: (int) $notifiable->id,
+            userId: $userId,
             notificationClass: $notification::class,
             title: (string) ($payload['title'] ?? 'Notification'),
             body: (string) ($payload['body'] ?? 'You have a new notification.'),
@@ -56,7 +58,7 @@ class FcmChannel
 
         Log::debug('FCM notification queued.', [
             'notification' => $notification::class,
-            'recipient_id' => $notifiable->id,
+            'recipient_id' => $userId,
             'notification_id' => $data['notification_id'] ?? null,
             'type' => $data['type'] ?? null,
             'token_count' => count($tokens),
@@ -67,18 +69,33 @@ class FcmChannel
     {
         if (method_exists($notifiable, 'notificationDevices')) {
             $devices = $notifiable->notificationDevices()->get();
-        } elseif (isset($notifiable->notificationDevices) && $notifiable->notificationDevices instanceof \Illuminate\Support\Collection) {
+        } elseif (isset($notifiable->notificationDevices) && $notifiable->notificationDevices instanceof Collection) {
             $devices = $notifiable->notificationDevices;
         } else {
             $devices = collect();
         }
 
         return $devices
+            ->filter(fn (NotificationDevice $device): bool => strtolower(trim((string) $device->provider)) === 'fcm')
+            ->sortByDesc(fn (NotificationDevice $device): int => $device->last_seen_at?->getTimestamp() ?? 0)
             ->map(fn (NotificationDevice $device) => trim((string) $device->token))
             ->filter()
             ->unique()
             ->values()
             ->all();
+    }
+
+    private function resolveNotifiableId(object $notifiable): ?int
+    {
+        $id = $notifiable instanceof Model
+            ? $notifiable->getKey()
+            : ($notifiable->id ?? null);
+
+        if (! is_numeric($id) || (int) $id <= 0) {
+            return null;
+        }
+
+        return (int) $id;
     }
 
     private function canSendToUser(User $user, array $data, ?int $conversationId): bool
@@ -168,5 +185,3 @@ class FcmChannel
         return $now->greaterThanOrEqualTo($startAt) || $now->lessThanOrEqualTo($endAt);
     }
 }
-
-

@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
+use Kreait\Firebase\Contract\Messaging;
 use Kreait\Firebase\Factory;
-use Kreait\Firebase\Messaging\Messaging;
 use RuntimeException;
 
 class FirebaseMessagingService
@@ -26,7 +26,7 @@ class FirebaseMessagingService
 
         if (! is_array($credentials) || ! isset($credentials['type'], $credentials['project_id'], $credentials['client_email'], $credentials['private_key'])) {
             throw new RuntimeException(
-                "Firebase credentials at [{$credentialsPath}] must be a Firebase service-account JSON file. " .
+                "Firebase credentials at [{$credentialsPath}] must be a Firebase service-account JSON file. ".
                 'The current file looks like a client config or is incomplete.'
             );
         }

@@ -3,15 +3,16 @@
 namespace Tests\Feature;
 
 use App\Jobs\SendFcmNotificationJob;
+use App\Models\Conversation;
 use App\Models\ConversationMessageRequest;
 use App\Models\NotificationDevice;
 use App\Models\User;
+use App\Notifications\Channels\FcmChannel;
 use App\Notifications\ConversationMessageRequestNotification;
 use App\Services\RealtimePresenceService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Str;
 use Mockery;
 use Tests\TestCase;
 
@@ -21,7 +22,7 @@ class RealtimeNotificationArchitectureTest extends TestCase
 
     public function test_message_request_queues_fcm_push_for_offline_user(): void
     {
-        Broadcast::fake();
+        config(['broadcasting.default' => 'null']);
         Bus::fake();
 
         $sender = User::factory()->create();
@@ -32,7 +33,7 @@ class RealtimeNotificationArchitectureTest extends TestCase
             'token' => 'fcm-token-1',
             'platform' => 'android',
             'device_name' => 'Pixel',
-            'provider' => 'firebase',
+            'provider' => 'fcm',
             'app_version' => '1.0.0',
             'last_seen_at' => now(),
         ]);
@@ -47,7 +48,7 @@ class RealtimeNotificationArchitectureTest extends TestCase
             'intro_metadata' => [],
         ])->load(['sender', 'receiver']);
 
-        Notification::sendNow($receiver, new ConversationMessageRequestNotification($request));
+        app(FcmChannel::class)->send($receiver, new ConversationMessageRequestNotification($request));
 
         Bus::assertDispatched(SendFcmNotificationJob::class, function (SendFcmNotificationJob $job) use ($receiver): bool {
             return $job->userId === $receiver->id
@@ -58,7 +59,7 @@ class RealtimeNotificationArchitectureTest extends TestCase
 
     public function test_message_request_skips_fcm_when_user_is_active_in_app(): void
     {
-        Broadcast::fake();
+        config(['broadcasting.default' => 'null']);
         Bus::fake();
 
         $presenceService = Mockery::mock(RealtimePresenceService::class);
@@ -68,12 +69,18 @@ class RealtimeNotificationArchitectureTest extends TestCase
         $sender = User::factory()->create();
         $receiver = User::factory()->create();
 
+        $conversation = Conversation::query()->create([
+            'created_by_user_id' => $sender->id,
+            'conversation_key' => 'conversation:'.Str::uuid(),
+            'is_group' => false,
+        ]);
+
         NotificationDevice::query()->create([
             'user_id' => $receiver->id,
             'token' => 'fcm-token-2',
             'platform' => 'ios',
             'device_name' => 'iPhone',
-            'provider' => 'firebase',
+            'provider' => 'fcm',
             'app_version' => '1.0.0',
             'last_seen_at' => now(),
         ]);
@@ -81,6 +88,7 @@ class RealtimeNotificationArchitectureTest extends TestCase
         $request = ConversationMessageRequest::query()->create([
             'sender_id' => $sender->id,
             'receiver_id' => $receiver->id,
+            'conversation_id' => $conversation->id,
             'status' => 'pending',
             'intro_client_message_id' => 'intro-2',
             'intro_type' => 'text',
@@ -88,9 +96,8 @@ class RealtimeNotificationArchitectureTest extends TestCase
             'intro_metadata' => [],
         ])->load(['sender', 'receiver']);
 
-        Notification::sendNow($receiver, new ConversationMessageRequestNotification($request));
+        app(FcmChannel::class)->send($receiver, new ConversationMessageRequestNotification($request));
 
-        Bus::assertNothingDispatched();
+        Bus::assertNotDispatched(SendFcmNotificationJob::class);
     }
 }
-

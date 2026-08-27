@@ -10,10 +10,10 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Kreait\Firebase\Exception\Messaging\AuthenticationError;
 use Kreait\Firebase\Exception\Messaging\InvalidMessage;
 use Kreait\Firebase\Exception\Messaging\NotFound;
 use Kreait\Firebase\Exception\Messaging\QuotaExceeded;
-use Kreait\Firebase\Exception\Messaging\SenderIdMismatch;
 use Kreait\Firebase\Exception\Messaging\ServerError;
 use Kreait\Firebase\Exception\Messaging\ServerUnavailable;
 use Kreait\Firebase\Exception\MessagingException;
@@ -66,8 +66,17 @@ class SendFcmNotificationJob implements ShouldQueue
         foreach ($tokens as $token) {
             try {
                 $firebaseMessagingService->messaging()->send($message->withToken($token));
-            } catch (NotFound|SenderIdMismatch $throwable) {
+            } catch (NotFound $throwable) {
                 $this->removeInvalidToken($token, $throwable);
+            } catch (AuthenticationError $throwable) {
+                if ($this->isSenderIdMismatch($throwable)) {
+                    $this->removeInvalidToken($token, $throwable);
+
+                    continue;
+                }
+
+                $this->reportUnexpectedMessagingFailure($token, $throwable);
+                throw $throwable;
             } catch (InvalidMessage $throwable) {
                 $this->reportInvalidMessage($throwable);
                 throw $throwable;
@@ -161,5 +170,12 @@ class SendFcmNotificationJob implements ShouldQueue
     private function fingerprintToken(string $token): string
     {
         return substr(hash('sha256', $token), 0, 12);
+    }
+
+    private function isSenderIdMismatch(AuthenticationError $throwable): bool
+    {
+        $normalizedMessage = str_replace([' ', '_', '-'], '', strtolower($throwable->getMessage()));
+
+        return str_contains($normalizedMessage, 'senderidmismatch');
     }
 }
