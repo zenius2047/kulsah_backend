@@ -129,7 +129,12 @@ class LiveSession extends Model
 
     public function scopeActive(Builder $query): Builder
     {
-        return $query->whereIn('status', [LiveStatus::STARTING, LiveStatus::LIVE, LiveStatus::RECONNECTING]);
+        return $query->whereIn('status', [
+            LiveStatus::STARTING,
+            LiveStatus::LIVE,
+            LiveStatus::RECONNECTING,
+            LiveStatus::ENDING,
+        ]);
     }
 
     public function isActive(): bool

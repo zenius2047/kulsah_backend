@@ -25,7 +25,7 @@ class LiveAuthorizationService
 
         $hasActiveLive = LiveSession::query()
             ->where('creator_id', $user->id)
-            ->whereIn('status', [LiveStatus::SCHEDULED, LiveStatus::CREATED, LiveStatus::STARTING, LiveStatus::LIVE, LiveStatus::RECONNECTING, LiveStatus::ENDING])
+            ->active()
             ->exists();
 
         if ($hasActiveLive) {
