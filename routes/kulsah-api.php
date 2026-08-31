@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
 use App\Http\Controllers\Api\V1\Challenge\ChallengeController;
@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\V1\Kulscan\CreatorEventsController;
 use App\Http\Controllers\Api\V1\Media\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
+use App\Http\Controllers\Api\V1\Live\LiveController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\StickerController;
 use Illuminate\Support\Facades\Route;
@@ -31,6 +32,10 @@ Route::pattern('allocation', '[0-9]+');
 Route::pattern('attachment', '[0-9]+');
 Route::pattern('conversation', '[0-9]+');
 Route::pattern('message', '[0-9]+');
+Route::pattern('liveSession', '[0-9a-fA-F-]{36}');
+Route::pattern('cohostRequest', '[0-9]+');
+Route::pattern('battle', '[0-9]+');
+Route::pattern('user', '[0-9]+');
 
 Route::post('/cloudinary/webhook', [CloudinaryWebhookController::class, 'store']);
 
@@ -212,6 +217,49 @@ Route::prefix('creator-fan')
     ->middleware(['auth:sanctum', 'role:creator|fan'])
     ->group(function () {
         Route::get('/creators/{creator}/subscription-plans', [SubscriptionController::class, 'showCreatorPlans']);
+    });
+
+
+
+
+Route::prefix('general')
+    ->middleware(['optional.sanctum'])
+    ->group(function () {
+        Route::get('/live', [LiveController::class, 'index']);
+        Route::get('/live/{liveSession}', [LiveController::class, 'show']);
+    });
+
+Route::prefix('general')
+    ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
+    ->group(function () {
+        Route::post('/live/{liveSession}/join', [LiveController::class, 'join']);
+        Route::post('/live/{liveSession}/leave', [LiveController::class, 'leave']);
+        Route::post('/live/{liveSession}/comments', [LiveController::class, 'comment']);
+        Route::post('/live/{liveSession}/likes', [LiveController::class, 'like']);
+        Route::post('/live/{liveSession}/gifts', [LiveController::class, 'gift']);
+        Route::post('/live/{liveSession}/reports', [LiveController::class, 'report']);
+        Route::post('/live/{liveSession}/cohost-requests', [LiveController::class, 'requestCohost']);
+        Route::post('/live/cohost-requests/{cohostRequest}/accept', [LiveController::class, 'acceptCohost']);
+        Route::post('/live/cohost-requests/{cohostRequest}/decline', [LiveController::class, 'declineCohost']);
+        Route::post('/live/battles/{battle}/accept', [LiveController::class, 'acceptBattle']);
+        Route::post('/live/battles/{battle}/score', [LiveController::class, 'scoreBattle']);
+        Route::post('/live/battles/{battle}/end', [LiveController::class, 'endBattle']);
+    });
+
+Route::prefix('creator')
+    ->middleware(['auth:sanctum', 'role:creator|admin'])
+    ->group(function () {
+        Route::post('/live', [LiveController::class, 'store'])->middleware('throttle:live-create');
+        Route::post('/live/{liveSession}/start', [LiveController::class, 'start'])->middleware('throttle:live-token');
+        Route::post('/live/{liveSession}/confirm', [LiveController::class, 'confirm'])->middleware('throttle:live-token');
+        Route::post('/live/{liveSession}/reconnect', [LiveController::class, 'reconnect'])->middleware('throttle:live-token');
+        Route::post('/live/{liveSession}/heartbeat', [LiveController::class, 'heartbeat']);
+        Route::post('/live/{liveSession}/end', [LiveController::class, 'end']);
+        Route::post('/live/{liveSession}/moderate', [LiveController::class, 'moderate'])->middleware('throttle:live-moderation');
+        Route::post('/live/{liveSession}/cohosts/invite', [LiveController::class, 'inviteCohost'])->middleware('throttle:live-token');
+        Route::delete('/live/{liveSession}/cohosts/{user}', [LiveController::class, 'removeCohost'])->middleware('throttle:live-moderation');
+        Route::post('/live/{liveSession}/battles/invite', [LiveController::class, 'inviteBattle'])->middleware('throttle:live-token');
+        Route::get('/live/{liveSession}/analytics', [LiveController::class, 'analytics']);
     });
 
 

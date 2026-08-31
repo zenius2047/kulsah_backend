@@ -347,9 +347,50 @@ class User extends Authenticatable
             ->where('videos.user_id', $this->id)
             ->count();
     }
+
+    public function liveSessions()
+    {
+        return $this->hasMany(LiveSession::class, 'creator_id');
+    }
+
+    public function liveViewerSessions()
+    {
+        return $this->hasMany(LiveViewerSession::class);
+    }
+
+    public function liveCohostRequests()
+    {
+        return $this->hasMany(LiveCohostRequest::class, 'requester_id');
+    }
+
+    public function liveCohosts()
+    {
+        return $this->hasMany(LiveCohost::class);
+    }
+
+    public function liveModerators()
+    {
+        return $this->hasMany(LiveModerator::class);
+    }
+
+    public function liveModerationActions()
+    {
+        return $this->hasMany(LiveModerationAction::class, 'actor_id');
+    }
+
+    public function liveProviderIdentity()
+    {
+        return $this->hasOne(LiveProviderIdentity::class);
+    }
+
+    public function liveBattlesAsCreator()
+    {
+        return $this->hasMany(LiveBattle::class, 'creator_id');
+    }
+
+    public function liveBattlesAsOpponent()
+    {
+        return $this->hasMany(LiveBattle::class, 'opponent_id');
+    }
 }
-
-
-
-
 
