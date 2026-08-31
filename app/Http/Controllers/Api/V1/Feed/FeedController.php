@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Feed;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\FeedCardResource;
+use App\Http\Resources\LiveSessionResource;
 use App\Models\Onboarding;
 use App\Models\Subscription;
 use App\Models\UserFollow;
@@ -12,6 +13,7 @@ use App\Models\VideoBookmark;
 use App\Models\VideoLike;
 use App\Services\FeedService;
 use App\Services\FeedViewerContextService;
+use App\Services\LiveDiscoveryService;
 use App\Services\VideoCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -22,6 +24,7 @@ class FeedController extends Controller
         private readonly FeedService $feedService,
         private readonly VideoCacheService $videoCacheService,
         private readonly FeedViewerContextService $feedViewerContextService,
+        private readonly LiveDiscoveryService $liveDiscoveryService,
     ) {
     }
 
@@ -75,6 +78,13 @@ class FeedController extends Controller
                 ];
             }
         );
+
+        $liveStreams = $this->liveDiscoveryService->discover(
+            $request->user(),
+            min($limit, 20)
+        )->getCollection();
+
+        $payload['live_streams'] = LiveSessionResource::collection($liveStreams)->resolve($request);
 
         $this->feedViewerContextService->recordServedVideos(
             $viewerKey,
@@ -135,6 +145,7 @@ class FeedController extends Controller
                 ];
             }
         );
+
 
         $this->feedViewerContextService->recordServedVideos(
             $viewerKey,
