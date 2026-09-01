@@ -2,10 +2,11 @@
 
 namespace App\Services;
 
+use App\Jobs\VideoUploaded;
 use App\Models\CloudinaryWebhookEvent;
 use App\Models\Video;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -13,8 +14,7 @@ class CloudinaryWebhookService
 {
     public function __construct(
         private readonly CloudinaryService $cloudinaryService,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array{status: string, event: CloudinaryWebhookEvent, video?: Video|null}
@@ -112,6 +112,9 @@ class CloudinaryWebhookService
                 'processed_at' => now(),
             ])->save();
         });
+        if (! $isFailure) {
+            event(new VideoUploaded($video->fresh()));
+        }
 
         return [
             'status' => $isFailure ? 'failed' : 'processed',
@@ -313,6 +316,13 @@ class CloudinaryWebhookService
         return array_filter([
             'status' => 'ready',
             'render_status' => 'ready',
+            'processing_status' => 'ready',
+            'processing_error' => null,
+            'playback_type' => 'hls',
+            'hls_url' => $streamingUrl,
+            'fallback_mp4_url' => $renderedUrl,
+            'processed_at' => now(),
+            'failed_at' => null,
             'progress_percentage' => 100,
             'rendered_url' => $renderedUrl,
             'streaming_url' => $streamingUrl,
@@ -339,6 +349,9 @@ class CloudinaryWebhookService
         return array_filter([
             'status' => 'failed',
             'render_status' => 'failed',
+            'processing_status' => 'processing_failed',
+            'processing_error' => data_get($payload, 'error.message') ?: data_get($payload, 'error') ?: 'Cloudinary processing failed.',
+            'failed_at' => now(),
             'metadata' => array_merge($metadata, [
                 'cloudinary_webhook_event' => $payload,
                 'cloudinary_webhook_event_type' => $this->resolveEventType($payload),

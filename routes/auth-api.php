@@ -1,7 +1,8 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
+use App\Http\Controllers\Api\V1\NotificationDeviceController;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,12 +26,13 @@ Route::post('/check-username', [AuthController::class, 'existUsername']);
 
 // Authenticated users
 Route::middleware(['auth:sanctum'])->group(function () {
-
     Route::post('/activate', [AuthController::class, 'activateAccount']);
     Route::post('/resend', [AuthController::class, 'resendOtp']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/switch-role', [AuthController::class, 'switchRole']);
     Route::post('/update-vibe', [AuthController::class, 'updateVibe']);
+    Route::post('/notification-devices', [NotificationDeviceController::class, 'store']);
+    Route::delete('/notification-devices/{notificationDevice}', [NotificationDeviceController::class, 'destroy']);
 
     // Backward compatibility for clients that accidentally append a trailing
     // space to the me endpoint, which arrives as /me%20 in the browser.

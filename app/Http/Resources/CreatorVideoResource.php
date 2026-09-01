@@ -30,6 +30,9 @@ class CreatorVideoResource extends JsonResource
             'likes' => $this->formatCount($video->likes_count ?? data_get($metadata, 'likes', data_get($metadata, 'likes_count', 0))),
             'premium' => $video->visibility === 'premium',
             'draft' => $video->status !== 'ready',
+            'allowDuet' => (bool) ($video->allow_duet ?? false),
+            'isDuet' => (bool) ($video->duet_source_video_id ?? data_get($metadata, 'duet_source_video_id')),
+            'duetSourceVideoId' => $video->duet_source_video_id ? (int) $video->duet_source_video_id : data_get($metadata, 'duet_source_video_id'),
         ];
     }
 

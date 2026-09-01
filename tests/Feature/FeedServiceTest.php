@@ -21,9 +21,12 @@ class FeedServiceTest extends TestCase
         $user = User::factory()->create([
             'username' => 'feed_user',
         ]);
+        $creator = User::factory()->create([
+            'username' => 'feed_creator',
+        ]);
 
         Video::create([
-            'user_id' => $user->id,
+            'user_id' => $creator->id,
             'title' => 'Video 1',
             'caption' => 'First clip',
             'source_url' => 'https://example.com/1.mp4',
@@ -32,11 +35,15 @@ class FeedServiceTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/1.jpg',
             'duration' => 10,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/1.m3u8',
             'metadata' => ['topic' => 'music'],
         ]);
 
         Video::create([
-            'user_id' => $user->id,
+            'user_id' => $creator->id,
             'title' => 'Video 2',
             'caption' => 'Second clip',
             'source_url' => 'https://example.com/2.mp4',
@@ -45,6 +52,10 @@ class FeedServiceTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/2.jpg',
             'duration' => 11,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/2.m3u8',
             'metadata' => ['topic' => 'dance'],
         ]);
 

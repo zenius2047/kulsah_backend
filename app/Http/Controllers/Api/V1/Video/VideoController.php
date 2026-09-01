@@ -4,22 +4,23 @@ namespace App\Http\Controllers\Api\V1\Video;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Video\VideoRenderRequest;
-use App\Http\Resources\CreatorVideoResource;
 use App\Http\Resources\CreatorVideoDetailResource;
+use App\Http\Resources\CreatorVideoResource;
 use App\Http\Resources\VideoPlaylistResource;
 use App\Http\Resources\VideoResource;
 use App\Models\Video;
 use App\Models\VideoPlaylist;
 use App\Models\VideoView;
-use App\Services\VideoService;
 use App\Services\VideoCacheService;
 use App\Services\VideoEditService;
+use App\Services\VideoService;
 use App\Services\VideoStorageService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -30,8 +31,7 @@ class VideoController extends Controller
         private readonly VideoCacheService $videoCacheService,
         private readonly VideoStorageService $videoStorageService,
         private readonly VideoEditService $videoEditService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request)
     {
@@ -208,6 +208,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
         ]);
 
         try {
@@ -260,6 +261,11 @@ class VideoController extends Controller
 
     public function initFastUpload(Request $request)
     {
+        $request->merge([
+            'original_name' => $request->input('original_name', $request->input('filename')),
+            'mime_type' => $request->input('mime_type', $request->input('mimeType')),
+            'size' => $request->input('size', $request->input('fileSize')),
+        ]);
         $this->normalizeContentTypes($request);
 
         $validated = $request->validate([
@@ -268,10 +274,13 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
             'thumbnail' => $this->thumbnailValidationRules(),
-            'original_name' => ['nullable', 'string', 'max:255'],
-            'mime_type' => ['nullable', 'string', 'max:120'],
-            'size' => ['nullable', 'integer', 'min:0'],
+            'original_name' => ['required', 'string', 'max:255'],
+            'mime_type' => ['required', 'string', Rule::in(config('video.allowed_mimetypes', []))],
+            'size' => ['required', 'integer', 'min:1', 'max:'.((int) config('video.max_upload_kb', 102400) * 1024)],
+            'purpose' => ['sometimes', Rule::in(['post_video', 'challenge_video', 'challenge_instruction_video', 'challenge_entry', 'message_video', 'other'])],
+            'requires_editing' => ['sometimes', 'boolean'],
         ]);
 
         $contentTypes = $this->resolveContentTypes($request);
@@ -287,6 +296,8 @@ class VideoController extends Controller
                     'original_name' => $request->input('original_name'),
                     'mime_type' => $request->input('mime_type'),
                     'size' => $request->input('size'),
+                    'purpose' => $request->input('purpose', 'post_video'),
+                    'requires_editing' => $request->boolean('requires_editing'),
                 ],
                 userId: (int) $request->user()->id,
                 thumbnailFile: $request->file('thumbnail'),
@@ -312,8 +323,16 @@ class VideoController extends Controller
         return response()->json([
             'message' => 'Direct upload session created successfully.',
             'data' => [
+                'videoId' => $session['video']->id,
+                'status' => $session['video']->upload_status->value,
                 'video' => new VideoResource($session['video']),
-                'upload' => $session['upload'],
+                'upload' => [
+                    'method' => 'PUT',
+                    'url' => $session['upload']['upload_url'],
+                    'headers' => $session['upload']['upload_headers'],
+                    'expiresAt' => $session['upload']['expires_at'],
+                    'expiresIn' => (int) config('video.direct_upload_ttl_minutes', 15) * 60,
+                ],
             ],
         ], 201);
     }
@@ -349,10 +368,26 @@ class VideoController extends Controller
 
         $this->invalidateCreatorCaches((int) $request->user()->id);
 
+        $requiresEditing = (bool) data_get($video->metadata, 'requires_editing', false);
+
         return response()->json([
-            'message' => 'Direct upload completed successfully and processing has started.',
+            'message' => $requiresEditing
+                ? 'Direct upload completed successfully and is ready for editing.'
+                : 'Direct upload completed successfully and processing has started.',
             'data' => new VideoResource($video),
         ], 201);
+    }
+
+    public function retryProcessing(Request $request, Video $video)
+    {
+        abort_unless((int) $video->user_id === (int) $request->user()->id, 403);
+
+        $video = $this->videoService->retryProcessing($video, (int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Video processing has been queued for retry.',
+            'data' => new VideoResource($video),
+        ], 202);
     }
 
     public function storePlaylist(Request $request)
@@ -592,6 +627,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
             'thumbnail' => $this->thumbnailValidationRules(),
         ]);
 
@@ -626,6 +662,42 @@ class VideoController extends Controller
         return response()->json([
             'message' => 'Video draft created successfully.',
             'data' => new VideoResource($video),
+        ], 201);
+    }
+
+    public function duetDraft(Request $request, Video $video)
+    {
+        $this->ensureDuetSourceIsAvailable($video, (int) $request->user()->id);
+
+        $validated = $request->validate([
+            'title' => ['nullable', 'string', 'max:255'],
+            'caption' => ['nullable', 'string', 'max:5000'],
+            'content_type' => ['sometimes', 'array', 'min:1'],
+            'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
+            'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
+        ]);
+
+        $contentTypes = $this->resolveContentTypes($request);
+
+        $duet = $this->videoService->createDraftVideo(
+            data: [
+                'title' => $validated['title'] ?? null,
+                'caption' => $validated['caption'] ?? null,
+                'content_type' => $contentTypes[0] ?? null,
+                'content_types' => $contentTypes,
+                'visibility' => $validated['visibility'] ?? 'public',
+                'purpose' => 'post_video',
+            ],
+            userId: (int) $request->user()->id,
+        );
+
+        $duet = $this->attachDuetSourceToVideo($duet, $video);
+        $this->invalidateCreatorCaches((int) $request->user()->id);
+
+        return response()->json([
+            'message' => 'Duet draft created successfully.',
+            'data' => new VideoResource($duet),
         ], 201);
     }
 
@@ -699,6 +771,7 @@ class VideoController extends Controller
             'content_type' => ['sometimes', 'array', 'min:1'],
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
+            'allow_duet' => ['sometimes', 'boolean'],
         ]);
 
         try {
@@ -775,7 +848,11 @@ class VideoController extends Controller
                     'data' => [
                         'video_id' => $video->id,
                         'status' => $video->status,
+                        'render_status' => $video->render_status,
                         'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+                        'requires_editing' => (bool) data_get($video->metadata, 'requires_editing', false),
+                        'upload_state' => data_get($video->metadata, 'upload_state'),
+                        'processing_state' => data_get($video->metadata, 'processing_state'),
                     ],
                 ];
             }
@@ -808,7 +885,11 @@ class VideoController extends Controller
             'data' => [
                 'video_id' => $video->id,
                 'status' => $video->status,
+                'render_status' => $video->render_status,
                 'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+                'requires_editing' => (bool) data_get($video->metadata, 'requires_editing', false),
+                'upload_state' => data_get($video->metadata, 'upload_state'),
+                'processing_state' => data_get($video->metadata, 'processing_state'),
             ],
         ]);
     }
@@ -833,10 +914,15 @@ class VideoController extends Controller
         $rawGlobalAudioTracks = $request->input('globalAudioTracks');
         $rawGlobalEffects = $request->input('globalEffects');
         $rawGuides = $request->input('guides');
+        $rawLayers = $request->input('layers', []);
         $editAssetUploads = $this->storeEditAssetUploads($request->file('asset_files', []), (int) $request->user()->id);
 
         if (is_array($rawAssets) && $rawAssets !== []) {
             $rawAssets = $this->applyEditAssetUploadsToAssets($rawAssets, $editAssetUploads, (int) $request->user()->id);
+        }
+
+        if (is_array($rawLayers) && $rawLayers !== []) {
+            $rawLayers = $this->applyEditAssetUploadsToMediaLayers($rawLayers, $editAssetUploads, (int) $request->user()->id);
         }
 
         try {
@@ -853,6 +939,7 @@ class VideoController extends Controller
                 'globalAudioTracks' => is_array($rawGlobalAudioTracks) ? $rawGlobalAudioTracks : [],
                 'globalEffects' => is_array($rawGlobalEffects) ? $rawGlobalEffects : [],
                 'guides' => is_array($rawGuides) ? $rawGuides : [],
+                'layers' => is_array($rawLayers) ? $rawLayers : [],
                 'filters' => is_array($rawFilters) ? $rawFilters : [],
                 'audio' => is_array($rawAudio) ? $rawAudio : [],
                 'trim' => is_array($rawTrim) ? $rawTrim : [],
@@ -958,6 +1045,46 @@ class VideoController extends Controller
         );
 
         return response()->json($payload);
+    }
+
+    private function ensureDuetSourceIsAvailable(Video $video, int $userId): void
+    {
+        $video->refresh();
+
+        if ($video->status !== 'ready' || $video->processing_status?->value !== 'ready') {
+            throw ValidationException::withMessages([
+                'video' => 'This video is not ready for dueting yet.',
+            ]);
+        }
+
+        if ((int) $video->user_id !== $userId && ! (bool) $video->allow_duet) {
+            throw ValidationException::withMessages([
+                'video' => 'The creator has not allowed duets on this video.',
+            ]);
+        }
+
+        if ((int) $video->user_id !== $userId && $video->visibility !== 'public') {
+            throw ValidationException::withMessages([
+                'video' => 'Only public videos can be dueted.',
+            ]);
+        }
+    }
+
+    private function attachDuetSourceToVideo(Video $video, Video $sourceVideo): Video
+    {
+        $metadata = is_array($video->metadata) ? $video->metadata : [];
+
+        $video->update([
+            'duet_source_video_id' => $sourceVideo->id,
+            'metadata' => array_merge($metadata, [
+                'is_duet' => true,
+                'duet_source_video_id' => $sourceVideo->id,
+                'duet_source_user_id' => $sourceVideo->user_id,
+                'duet_source_title' => $sourceVideo->title,
+            ]),
+        ]);
+
+        return $video->fresh();
     }
 
     private function normalizeContentTypes(Request $request): void

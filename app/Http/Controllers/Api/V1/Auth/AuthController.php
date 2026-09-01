@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\NotificationDevice;
 use App\Models\Onboarding;
 use App\Services\FirebaseAuthService;
+use App\Services\RealtimePresenceService;
 use App\Models\PasswordResetOtp;
 use App\Http\Resources\UserResource;
 use Laravel\Socialite\Socialite;
@@ -47,12 +49,25 @@ class AuthController extends Controller
     // get country from country code
     private function getLocationFromCountryCode($countryCode)
     {
-        $countries = config('countries');
-        foreach ($countries as $country) {
-            if ($country['code'] === $countryCode) {
-                return $country['name'];
+        $country = $this->resolveCountryFromCode($countryCode);
+
+        return $country['name'] ?? null;
+    }
+
+    private function resolveCountryFromCode($countryCode): ?array
+    {
+        $normalized = strtoupper(trim((string) $countryCode));
+        $normalizedDial = preg_replace('/\s+/', '', $normalized);
+
+        foreach (config('countries') as $country) {
+            $countryCodeValue = strtoupper(trim((string) ($country['code'] ?? '')));
+            $dialCodeValue = preg_replace('/\s+/', '', strtoupper(trim((string) ($country['dial_code'] ?? ''))));
+
+            if ($normalized === $countryCodeValue || $normalizedDial === $dialCodeValue) {
+                return $country;
             }
         }
+
         return null;
     }
 
@@ -171,6 +186,10 @@ public function updateVibe(Request $request)
     public function register(Request $request)
     {
        // register with email or phone number
+        $request->merge([
+            'country_code' => strtoupper(trim((string) $request->input('country_code'))),
+        ]);
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'username' => 'required|string|max:255|unique:users,username',
@@ -180,7 +199,7 @@ public function updateVibe(Request $request)
             'dob' => 'nullable|date',
             'gender' => 'nullable|string|in:male,female',
             'location' => 'nullable|string|max:255',
-            'country_code' => 'nullable|string|max:255',
+            'country_code' => ['required', 'string', 'max:10'],
             'onboarding' => 'nullable|array',
             'onboarding.vibe' => 'nullable|array',
         ]);
@@ -189,19 +208,16 @@ public function updateVibe(Request $request)
             return response()->json($validator->errors(), 422);
         }
 
-        $user = DB::transaction(function () use ($request) {
-            // determine if user is registering with email or phone number
-            $isEmailRegistration = $request->filled('email');
-            $isPhoneRegistration = $request->filled('phone');
+        $country = $this->resolveCountryFromCode($request->country_code);
 
-            // if is email, get country as location from user's IP address and or session, if is phone number, get country from country code
-            if ($isEmailRegistration) {
-                $location = $this->getLocationFromIp($request->ip());
-            } elseif ($isPhoneRegistration) {
-                $location = $this->getLocationFromCountryCode($request->country_code);
-            } else {
-                $location = null;
-            }
+        if (! $country) {
+            return response()->json([
+                'country_code' => ['The selected country code is invalid.'],
+            ], 422);
+        }
+
+        $user = DB::transaction(function () use ($request, $country) {
+            $location = $request->filled('location') ? $request->location : $country['name'];
 
             $user = User::create([
                 'name' => $request->name,
@@ -211,7 +227,10 @@ public function updateVibe(Request $request)
                 'gender' => $request->gender,
                 'phone' => $request->phone,
                 'password' => Hash::make($request->password),
-                'location' =>$location,
+                'location' => $location,
+                'country_code' => $request->country_code,
+                'country' => $country['name'],
+                'currency' => $country['currency'] ?? null,
             ]);
 
             // assign default role to user
@@ -525,7 +544,7 @@ public function login(Request $request)
                 'password' => Hash::make(Str::random(16)),
                 'location' => $location,
 
-                // 🔥 CLEAN SOCIAL LOGIN STRUCTURE
+                // ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â¥ CLEAN SOCIAL LOGIN STRUCTURE
                 'provider' => $provider,
                 'provider_id' => $providerId,
                 'avatar' => $avatar,
@@ -882,3 +901,4 @@ public function login(Request $request)
 
 
 }
+

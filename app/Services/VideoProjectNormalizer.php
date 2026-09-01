@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -19,9 +20,9 @@ class VideoProjectNormalizer
      */
     public function normalize(array $payload, int $userId): array
     {
-        if ($this->extractSchemaVersion($payload['schemaVersion'] ?? $payload['schema_version'] ?? $payload['version'] ?? null) < 3) {
+        if ($this->extractSchemaVersion($payload['schemaVersion'] ?? $payload['schema_version'] ?? $payload['version'] ?? null) !== 3) {
             throw ValidationException::withMessages([
-                'schemaVersion' => 'Only the v3 editor payload is supported.',
+                'schemaVersion' => 'Only schemaVersion 3.x editor projects are supported.',
             ]);
         }
 
@@ -40,23 +41,35 @@ class VideoProjectNormalizer
         $schemaVersionLabel = (string) ($payload['schemaVersion'] ?? $payload['schema_version'] ?? $payload['version'] ?? '3.0.0');
         $schemaVersion = $this->extractSchemaVersion($schemaVersionLabel);
 
-        if ($schemaVersion < 3) {
+        if ($schemaVersion !== 3) {
             throw ValidationException::withMessages([
-                'schemaVersion' => 'The v3 project schema version must be 3.0.0 or higher.',
+                'schemaVersion' => 'The editor project schema version must be 3.x.',
             ]);
         }
 
         $metadata = $this->normalizeProjectMetadata(is_array($payload['metadata'] ?? null) ? $payload['metadata'] : []);
         $canvas = $this->normalizeV3Canvas(is_array($payload['canvas'] ?? null) ? $payload['canvas'] : []);
         $output = $this->normalizeV3Output(is_array($payload['output'] ?? null) ? $payload['output'] : []);
-        $assets = $this->normalizeAssetReferences(is_array($payload['assets'] ?? null) ? $payload['assets'] : []);
+        $assets = $this->normalizeAssetReferences(
+            is_array($payload['assets'] ?? null) ? $payload['assets'] : [],
+            $userId,
+            isset($payload['video_id']) ? (int) $payload['video_id'] : null,
+        );
         $assetIndex = $this->indexAssetsById($assets);
         $projectDuration = $this->resolveV3ProjectDuration($payload, $metadata, $canvas, $payload['scenes'] ?? []);
 
         $scenes = [];
         $tracks = [];
         $renderLayers = [];
-        $sceneInput = is_array($payload['scenes'] ?? null) ? $payload['scenes'] : [];
+        $sceneInput = is_array($payload['scenes'] ?? null) ? array_values($payload['scenes']) : [];
+
+        usort($sceneInput, static function (mixed $left, mixed $right): int {
+            $leftOrder = is_array($left) && is_numeric($left['order'] ?? null) ? (int) $left['order'] : PHP_INT_MAX;
+            $rightOrder = is_array($right) && is_numeric($right['order'] ?? null) ? (int) $right['order'] : PHP_INT_MAX;
+
+            return ($leftOrder <=> $rightOrder)
+                ?: strcmp((string) (is_array($left) ? ($left['id'] ?? '') : ''), (string) (is_array($right) ? ($right['id'] ?? '') : ''));
+        });
 
         foreach (array_values($sceneInput) as $sceneIndex => $scene) {
             if (! is_array($scene)) {
@@ -71,11 +84,26 @@ class VideoProjectNormalizer
             foreach ($normalizedScene['tracks'] as $normalizedTrack) {
                 $tracks[] = $normalizedTrack['track'];
 
-                if ($normalizedTrack['render_layer'] !== null) {
+                if (($normalizedScene['scene']['enabled'] ?? true) && $normalizedTrack['render_layer'] !== null) {
                     $renderLayers[] = $normalizedTrack['render_layer'];
                 }
             }
         }
+
+        $legacyLayers = is_array($payload['layers'] ?? null) ? array_values($payload['layers']) : [];
+        foreach ($legacyLayers as $layerIndex => $layer) {
+            if (! is_array($layer)) {
+                throw ValidationException::withMessages([
+                    'layers.'.$layerIndex => 'Each layer must be an array.',
+                ]);
+            }
+
+            $normalizedLayer = $this->normalizeLegacyLayer($layer, $layerIndex, $userId);
+            $tracks[] = $normalizedLayer['track'];
+            $renderLayers[] = $normalizedLayer['render_layer'];
+        }
+
+        $renderLayers = $this->normalizeRenderPlanTransforms($renderLayers, $canvas, $output);
 
         $globalAudioTracks = $this->normalizeV3GlobalAudioTracks(is_array($payload['globalAudioTracks'] ?? null) ? $payload['globalAudioTracks'] : []);
         $globalEffects = $this->normalizeV3GlobalEffects(is_array($payload['globalEffects'] ?? null) ? $payload['globalEffects'] : []);
@@ -127,9 +155,6 @@ class VideoProjectNormalizer
         ];
     }
 
-    /**
-     * @param  mixed  $schemaVersion
-     */
     private function extractSchemaVersion(mixed $schemaVersion): int
     {
         if (is_int($schemaVersion)) {
@@ -153,7 +178,6 @@ class VideoProjectNormalizer
      * @param  array<string, mixed>  $payload
      * @param  array<string, mixed>  $metadata
      * @param  array<string, mixed>  $canvas
-     * @param  mixed  $scenes
      */
     private function resolveV3ProjectDuration(array $payload, array $metadata, array $canvas, mixed $scenes): ?float
     {
@@ -197,9 +221,17 @@ class VideoProjectNormalizer
         $timeline = is_array($scene['timeline'] ?? null) ? $scene['timeline'] : [];
         $sceneStart = isset($timeline['start']) && is_numeric($timeline['start']) ? max(0.0, (float) $timeline['start']) : 0.0;
         $sceneDuration = isset($timeline['duration']) && is_numeric($timeline['duration']) ? max(0.0, (float) $timeline['duration']) : null;
-        $sceneTracksInput = is_array($scene['tracks'] ?? null) ? $scene['tracks'] : [];
+        $sceneTracksInput = is_array($scene['tracks'] ?? null) ? array_values($scene['tracks']) : [];
         $tracks = [];
         $sceneRenderEnd = $sceneDuration !== null ? $sceneStart + $sceneDuration : null;
+
+        usort($sceneTracksInput, static function (mixed $left, mixed $right): int {
+            $leftLayer = is_array($left) && is_numeric($left['layer'] ?? null) ? (int) $left['layer'] : 0;
+            $rightLayer = is_array($right) && is_numeric($right['layer'] ?? null) ? (int) $right['layer'] : 0;
+
+            return ($leftLayer <=> $rightLayer)
+                ?: strcmp((string) (is_array($left) ? ($left['id'] ?? '') : ''), (string) (is_array($right) ? ($right['id'] ?? '') : ''));
+        });
 
         foreach (array_values($sceneTracksInput) as $trackIndex => $track) {
             if (! is_array($track)) {
@@ -259,6 +291,12 @@ class VideoProjectNormalizer
             $shadow = is_array($textStyle['shadow'] ?? null) ? $textStyle['shadow'] : [];
             $transform = $legacyTrack['transform'] ?? [];
             $text = trim((string) ($content['text'] ?? ''));
+            $renderSource = is_array($track['renderSource'] ?? null) ? $track['renderSource'] : [];
+            $rasterAsset = strtolower((string) ($renderSource['type'] ?? '')) === 'raster'
+                ? $this->resolveV3AssetSource([
+                    'assetId' => $renderSource['assetId'] ?? $renderSource['asset_id'] ?? null,
+                ], $assetIndex)
+                : [];
 
             if ($text === '') {
                 throw ValidationException::withMessages([
@@ -266,7 +304,25 @@ class VideoProjectNormalizer
                 ]);
             }
 
+            if ($rasterAsset !== []) {
+                return [
+                    'track' => array_merge($legacyTrack, [
+                        'content' => $content,
+                        'text_style' => $textStyle,
+                        'text_box' => $textBox,
+                        'render_source' => $renderSource,
+                    ]),
+                    'render_layer' => $this->buildRasterRenderLayer($rasterAsset, $legacyTrack, $track, $sceneIndex, $trackIndex),
+                ];
+            }
+
+            $this->assertFallbackTextTrackSupported($track, $sceneIndex, $trackIndex);
+            $trackOpacity = (float) ($transform['opacity'] ?? 1.0);
+            $textOpacity = (float) ($textStyle['opacity'] ?? 1.0);
+            $fillOpacity = (float) data_get($textStyle, 'fill.opacity', 1.0);
+
             $renderLayer = array_filter([
+                'id' => $legacyTrack['id'] ?? null,
                 'type' => 'text',
                 'text' => mb_substr($text, 0, 500),
                 'font' => (string) ($textStyle['fontFamily'] ?? $legacyTrack['font'] ?? 'Arial'),
@@ -276,7 +332,7 @@ class VideoProjectNormalizer
                 'font_style' => isset($textStyle['fontStyle']) ? (string) $textStyle['fontStyle'] : null,
                 'size' => isset($textStyle['fontSize']) ? (int) $textStyle['fontSize'] : ($legacyTrack['size'] ?? 42),
                 'color' => isset($textStyle['fill']['color']) ? (string) $textStyle['fill']['color'] : ($legacyTrack['color'] ?? '#FFFFFF'),
-                'opacity' => isset($textStyle['opacity']) ? (float) $textStyle['opacity'] : ($legacyTrack['opacity'] ?? 1.0),
+                'opacity' => max(0.0, min(1.0, $trackOpacity * $textOpacity * $fillOpacity)),
                 'alignment' => isset($textStyle['alignment']) ? (string) $textStyle['alignment'] : null,
                 'line_height' => isset($textStyle['lineHeight']) ? (float) $textStyle['lineHeight'] : null,
                 'letter_spacing' => isset($textStyle['letterSpacing']) ? (float) $textStyle['letterSpacing'] : null,
@@ -295,6 +351,8 @@ class VideoProjectNormalizer
                 'rotation' => $transform['rotation'] ?? null,
                 'scale_x' => $transform['scale_x'] ?? null,
                 'scale_y' => $transform['scale_y'] ?? null,
+                'anchor_x' => $transform['anchor_x'] ?? null,
+                'anchor_y' => $transform['anchor_y'] ?? null,
                 'margin_x' => $transform['margin_x'] ?? null,
                 'margin_y' => $transform['margin_y'] ?? null,
                 'padding_x' => $textBox['padding']['left'] ?? null,
@@ -302,6 +360,7 @@ class VideoProjectNormalizer
                 'start' => $legacyTrack['start'],
                 'end' => $legacyTrack['end'],
                 'enabled' => $legacyTrack['enabled'] ?? true,
+                'visible' => $legacyTrack['visible'] ?? true,
                 'z_index' => $legacyTrack['z_index'] ?? $trackIndex,
                 'stroke' => $stroke,
                 'shadow' => $shadow,
@@ -339,16 +398,20 @@ class VideoProjectNormalizer
 
         if (in_array($type, ['video', 'image', 'sticker', 'drawing'], true)) {
             $source = is_array($track['source'] ?? null) ? $track['source'] : [];
-            $asset = $this->resolveV3AssetSource($source, $assetIndex);
+            $renderSource = is_array($track['renderSource'] ?? null) ? $track['renderSource'] : [];
+            $asset = strtolower((string) ($renderSource['type'] ?? '')) === 'raster'
+                ? $this->resolveV3AssetSource(['assetId' => $renderSource['assetId'] ?? $renderSource['asset_id'] ?? null], $assetIndex)
+                : $this->resolveV3AssetSource($source, $assetIndex);
             $transform = $legacyTrack['transform'] ?? [];
 
-            if (($asset['asset_url'] ?? '') === '' && ($asset['public_id'] ?? '') === '' && ($asset['asset_key'] ?? '') === '') {
+            if (($asset['public_id'] ?? '') === '' && ($asset['asset_key'] ?? '') === '') {
                 throw ValidationException::withMessages([
-                    "scenes.{$sceneIndex}.tracks.{$trackIndex}.source" => 'Media tracks require a source assetId, fallbackUrl, storageKey, or Cloudinary public_id.',
+                    "scenes.{$sceneIndex}.tracks.{$trackIndex}.source" => 'Media tracks require an assetId that resolves to managed storage or Cloudinary.',
                 ]);
             }
 
             $renderLayer = array_filter([
+                'id' => $legacyTrack['id'] ?? null,
                 'type' => $type,
                 'public_id' => $asset['public_id'] ?? null,
                 'asset_public_id' => $asset['asset_public_id'] ?? null,
@@ -363,11 +426,23 @@ class VideoProjectNormalizer
                 'opacity' => $transform['opacity'] ?? null,
                 'scale_x' => $transform['scale_x'] ?? null,
                 'scale_y' => $transform['scale_y'] ?? null,
+                'anchor_x' => $transform['anchor_x'] ?? null,
+                'anchor_y' => $transform['anchor_y'] ?? null,
+                'fit' => $transform['fit'] ?? ($track['fit'] ?? null),
+                'flip_horizontal' => $transform['flip_horizontal'] ?? false,
+                'flip_vertical' => $transform['flip_vertical'] ?? false,
+                'trim_start' => data_get($legacyTrack, 'timeline.trimStart'),
+                'trim_end' => data_get($legacyTrack, 'timeline.trimEnd'),
+                'playback_rate' => data_get($legacyTrack, 'timeline.playbackRate', 1.0),
+                'reverse' => data_get($legacyTrack, 'timeline.reverse', false),
+                'loop' => data_get($legacyTrack, 'timeline.loop', false),
+                'freeze_at_end' => data_get($legacyTrack, 'timeline.freezeAtEnd', false),
                 'margin_x' => $transform['margin_x'] ?? null,
                 'margin_y' => $transform['margin_y'] ?? null,
                 'start' => $legacyTrack['start'],
                 'end' => $legacyTrack['end'],
                 'enabled' => $legacyTrack['enabled'] ?? true,
+                'visible' => $legacyTrack['visible'] ?? true,
                 'z_index' => $legacyTrack['z_index'] ?? $trackIndex,
                 'blend_mode' => $legacyTrack['blend_mode'] ?? [],
                 'border' => $legacyTrack['border'] ?? [],
@@ -377,6 +452,7 @@ class VideoProjectNormalizer
             ], static fn ($value) => $value !== null && $value !== '');
 
             $legacyTrack['source'] = $source;
+            $legacyTrack['render_source'] = $renderSource;
             $legacyTrack['asset'] = $asset;
             $legacyTrack['metadata'] = [
                 'source' => 'v3',
@@ -462,6 +538,7 @@ class VideoProjectNormalizer
             'enabled' => filter_var($track['enabled'] ?? true, FILTER_VALIDATE_BOOLEAN),
             'locked' => filter_var($track['locked'] ?? false, FILTER_VALIDATE_BOOLEAN),
             'muted' => filter_var($track['muted'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            'visible' => array_key_exists('visible', $track) ? filter_var($track['visible'], FILTER_VALIDATE_BOOLEAN) : true,
             'selected' => filter_var($track['selected'] ?? false, FILTER_VALIDATE_BOOLEAN),
             'group_id' => isset($track['groupId']) ? (string) $track['groupId'] : (isset($track['group_id']) ? (string) $track['group_id'] : null),
             'parent_composition_id' => isset($track['parentCompositionId']) ? (string) $track['parentCompositionId'] : null,
@@ -477,8 +554,8 @@ class VideoProjectNormalizer
             ], static fn ($value) => $value !== null && $value !== ''),
             'transform' => array_filter([
                 'coordinate_system' => isset($transform['coordinate_system']) ? (string) $transform['coordinate_system'] : 'canvas',
-                'anchor_x' => isset($transform['anchor']['x']) ? (float) $transform['anchor']['x'] : (isset($transform['anchor_x']) ? (float) $transform['anchor_x'] : 0.5),
-                'anchor_y' => isset($transform['anchor']['y']) ? (float) $transform['anchor']['y'] : (isset($transform['anchor_y']) ? (float) $transform['anchor_y'] : 0.5),
+                'anchor_x' => $this->resolveV3AnchorCoordinate($transform, 'x'),
+                'anchor_y' => $this->resolveV3AnchorCoordinate($transform, 'y'),
                 'x' => isset($position['x']) ? (int) round((float) $position['x']) : (isset($track['x']) ? (int) round((float) $track['x']) : 0),
                 'y' => isset($position['y']) ? (int) round((float) $position['y']) : (isset($track['y']) ? (int) round((float) $track['y']) : 0),
                 'width' => isset($size['width']) ? max(1, (int) $size['width']) : (isset($track['width']) ? max(1, (int) $track['width']) : null),
@@ -532,6 +609,39 @@ class VideoProjectNormalizer
     }
 
     /**
+     * @param  array<string, mixed>  $transform
+     */
+    private function resolveV3AnchorCoordinate(array $transform, string $axis): float
+    {
+        if (isset($transform['anchor'][$axis]) && is_numeric($transform['anchor'][$axis])) {
+            return max(0.0, min(1.0, (float) $transform['anchor'][$axis]));
+        }
+
+        if (isset($transform['anchor_'.$axis]) && is_numeric($transform['anchor_'.$axis])) {
+            return max(0.0, min(1.0, (float) $transform['anchor_'.$axis]));
+        }
+
+        $preset = strtolower(str_replace(['-', ' '], '_', (string) data_get($transform, 'anchor.preset', 'center')));
+        $coordinates = [
+            'top_left' => [0.0, 0.0],
+            'top' => [0.5, 0.0],
+            'top_center' => [0.5, 0.0],
+            'top_right' => [1.0, 0.0],
+            'left' => [0.0, 0.5],
+            'center_left' => [0.0, 0.5],
+            'center' => [0.5, 0.5],
+            'right' => [1.0, 0.5],
+            'center_right' => [1.0, 0.5],
+            'bottom_left' => [0.0, 1.0],
+            'bottom' => [0.5, 1.0],
+            'bottom_center' => [0.5, 1.0],
+            'bottom_right' => [1.0, 1.0],
+        ];
+
+        return ($coordinates[$preset] ?? $coordinates['center'])[$axis === 'x' ? 0 : 1];
+    }
+
+    /**
      * @param  array<string, mixed>  $source
      * @param  array<string, array<string, mixed>>  $assetIndex
      * @return array<string, mixed>
@@ -539,22 +649,16 @@ class VideoProjectNormalizer
     private function resolveV3AssetSource(array $source, array $assetIndex): array
     {
         $assetId = isset($source['assetId']) ? (string) $source['assetId'] : (isset($source['asset_id']) ? (string) $source['asset_id'] : '');
-        $fallbackUrl = isset($source['fallbackUrl']) ? (string) $source['fallbackUrl'] : (isset($source['fallback_url']) ? (string) $source['fallback_url'] : '');
         $asset = $assetId !== '' && isset($assetIndex[$assetId]) ? $assetIndex[$assetId] : [];
 
-        $assetUrl = (string) ($asset['url'] ?? '');
-        if ($assetUrl === '' && $fallbackUrl !== '') {
-            $assetUrl = $fallbackUrl;
-        }
+        $assetUrl = '';
         $storageProvider = (string) ($asset['storage_provider'] ?? '');
         $storageKey = (string) ($asset['storage_key'] ?? '');
         $publicId = (string) ($asset['public_id'] ?? '');
 
-        if ($assetUrl === '' && $storageProvider !== '' && $storageKey !== '') {
+        if ($storageProvider !== '' && $storageKey !== '') {
             if ($storageProvider === 'cloudinary') {
                 $publicId = $publicId !== '' ? $publicId : $storageKey;
-            } else {
-                $assetUrl = $storageKey;
             }
         }
 
@@ -569,10 +673,156 @@ class VideoProjectNormalizer
     }
 
     /**
+     * Reject rich text effects that the drawtext fallback cannot reproduce.
+     * The frontend can make these tracks render-safe by supplying renderSource.
+     *
+     * @param  array<string, mixed>  $track
+     */
+    private function assertFallbackTextTrackSupported(array $track, int $sceneIndex, int $trackIndex): void
+    {
+        $unsupported = abs((float) data_get($track, 'transform.rotation', 0)) > 0.000001
+            || filter_var(data_get($track, 'textStyle.glow.enabled', false), FILTER_VALIDATE_BOOLEAN)
+            || (string) data_get($track, 'textStyle.fill.type', 'solid') !== 'solid'
+            || (filter_var(data_get($track, 'textStyle.shadow.enabled', false), FILTER_VALIDATE_BOOLEAN)
+                && (float) data_get($track, 'textStyle.shadow.blur', 0) > 0)
+            || collect((array) data_get($track, 'textBox.radius', []))->contains(fn (mixed $radius): bool => (float) $radius > 0)
+            || (filter_var(data_get($track, 'textBox.background.enabled', false), FILTER_VALIDATE_BOOLEAN)
+                && (string) data_get($track, 'textBox.background.type', 'solid') !== 'solid');
+
+        if ($unsupported) {
+            throw ValidationException::withMessages([
+                "scenes.{$sceneIndex}.tracks.{$trackIndex}.renderSource" => 'This rich text track requires a frontend-generated raster renderSource.',
+            ]);
+        }
+    }
+
+    /**
+     * Prefer a frontend-rasterized representation while preserving the editable
+     * text/drawing model in the project document.
+     *
+     * @param  array<string, mixed>  $asset
+     * @param  array<string, mixed>  $track
+     * @param  array<string, mixed>  $rawTrack
+     * @return array<string, mixed>
+     */
+    private function buildRasterRenderLayer(array $asset, array $track, array $rawTrack, int $sceneIndex, int $trackIndex): array
+    {
+        $transform = is_array($track['transform'] ?? null) ? $track['transform'] : [];
+
+        if (($asset['public_id'] ?? '') === '' && ($asset['asset_key'] ?? '') === '') {
+            throw ValidationException::withMessages([
+                "scenes.{$sceneIndex}.tracks.{$trackIndex}.renderSource" => 'Raster render sources must reference a managed storage or Cloudinary asset.',
+            ]);
+        }
+
+        return array_filter([
+            'id' => $track['id'] ?? null,
+            'type' => 'image',
+            'source_track_type' => $track['type'] ?? null,
+            'public_id' => $asset['public_id'] ?? null,
+            'asset_public_id' => $asset['asset_public_id'] ?? null,
+            'asset_disk' => $asset['asset_disk'] ?? null,
+            'asset_key' => $asset['asset_key'] ?? null,
+            'x' => $transform['x'] ?? null,
+            'y' => $transform['y'] ?? null,
+            'width' => $transform['width'] ?? null,
+            'height' => $transform['height'] ?? null,
+            'scale_x' => $transform['scale_x'] ?? null,
+            'scale_y' => $transform['scale_y'] ?? null,
+            'anchor_x' => $transform['anchor_x'] ?? null,
+            'anchor_y' => $transform['anchor_y'] ?? null,
+            'rotation' => $transform['rotation'] ?? null,
+            'opacity' => $transform['opacity'] ?? null,
+            'flip_horizontal' => $transform['flip_horizontal'] ?? false,
+            'flip_vertical' => $transform['flip_vertical'] ?? false,
+            'trim_start' => data_get($track, 'timeline.trimStart'),
+            'trim_end' => data_get($track, 'timeline.trimEnd'),
+            'playback_rate' => data_get($track, 'timeline.playbackRate', 1.0),
+            'reverse' => data_get($track, 'timeline.reverse', false),
+            'loop' => data_get($track, 'timeline.loop', false),
+            'freeze_at_end' => data_get($track, 'timeline.freezeAtEnd', false),
+            'start' => $track['start'] ?? null,
+            'end' => $track['end'] ?? null,
+            'enabled' => $track['enabled'] ?? true,
+            'visible' => $track['visible'] ?? true,
+            'z_index' => $track['z_index'] ?? $trackIndex,
+            'raw' => $rawTrack,
+        ], static fn ($value) => $value !== null && $value !== '');
+    }
+
+    /**
+     * Convert editor anchor coordinates into FFmpeg top-left coordinates once,
+     * after applying canvas-to-output scaling.
+     *
+     * @param  array<int, array<string, mixed>>  $layers
+     * @param  array<string, mixed>  $canvas
+     * @param  array<string, mixed>  $output
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalizeRenderPlanTransforms(array $layers, array $canvas, array $output): array
+    {
+        $canvasWidth = max(1.0, (float) ($canvas['width'] ?? 1080));
+        $canvasHeight = max(1.0, (float) ($canvas['height'] ?? 1920));
+        $outputWidth = max(1.0, (float) ($output['width'] ?? $canvasWidth));
+        $outputHeight = max(1.0, (float) ($output['height'] ?? $canvasHeight));
+        $canvasScaleX = $outputWidth / $canvasWidth;
+        $canvasScaleY = $outputHeight / $canvasHeight;
+        $normalized = [];
+
+        foreach ($layers as $layer) {
+            if (! is_array($layer)
+                || ! filter_var($layer['enabled'] ?? true, FILTER_VALIDATE_BOOLEAN)
+                || (array_key_exists('visible', $layer) && ! filter_var($layer['visible'], FILTER_VALIDATE_BOOLEAN))) {
+                continue;
+            }
+
+            $scaleX = abs((float) ($layer['scale_x'] ?? 1.0));
+            $scaleY = abs((float) ($layer['scale_y'] ?? 1.0));
+            $width = isset($layer['width']) ? max(1.0, (float) $layer['width']) : null;
+            $height = isset($layer['height']) ? max(1.0, (float) $layer['height']) : null;
+            $effectiveWidth = $width !== null ? $width * max(0.001, $scaleX) : null;
+            $effectiveHeight = $height !== null ? $height * max(0.001, $scaleY) : null;
+            $anchorX = max(0.0, min(1.0, (float) ($layer['anchor_x'] ?? 0.5)));
+            $anchorY = max(0.0, min(1.0, (float) ($layer['anchor_y'] ?? 0.5)));
+            $positionX = (float) ($layer['x'] ?? 0);
+            $positionY = (float) ($layer['y'] ?? 0);
+            $fit = strtolower((string) ($layer['fit'] ?? 'contain'));
+
+            if (! in_array($fit, ['contain', 'cover', 'fill', 'none'], true)) {
+                throw ValidationException::withMessages([
+                    'scenes.tracks.fit' => "Fit mode [{$fit}] is not supported.",
+                ]);
+            }
+
+            $layer['x'] = (int) round(($positionX - (($effectiveWidth ?? 0.0) * $anchorX)) * $canvasScaleX);
+            $layer['y'] = (int) round(($positionY - (($effectiveHeight ?? 0.0) * $anchorY)) * $canvasScaleY);
+            $layer['width'] = $effectiveWidth !== null ? max(1, (int) round($effectiveWidth * $canvasScaleX)) : null;
+            $layer['height'] = $effectiveHeight !== null ? max(1, (int) round($effectiveHeight * $canvasScaleY)) : null;
+            $layer['rotation_degrees'] = (float) ($layer['rotation'] ?? 0.0);
+            $layer['rotation_radians'] = deg2rad($layer['rotation_degrees']);
+            $layer['opacity'] = max(0.0, min(1.0, (float) ($layer['opacity'] ?? 1.0)));
+            if (isset($layer['size'])) {
+                $layer['size'] = max(1, (int) round((float) $layer['size'] * $canvasScaleY));
+            }
+            $layer['fit'] = $fit;
+            $layer['canvas_scale_x'] = $canvasScaleX;
+            $layer['canvas_scale_y'] = $canvasScaleY;
+            $normalized[] = array_filter($layer, static fn ($value) => $value !== null && $value !== '');
+        }
+
+        usort($normalized, static function (array $left, array $right): int {
+            return (((int) ($left['z_index'] ?? 0)) <=> ((int) ($right['z_index'] ?? 0)))
+                ?: strcmp((string) ($left['id'] ?? ''), (string) ($right['id'] ?? ''));
+        });
+
+        return $normalized;
+    }
+
+    /**
      * @param  array<int, array<string, mixed>>  $assets
      * @return array<int, array<string, mixed>>
      */
-    private function normalizeAssetReferences(array $assets): array
+    private function normalizeAssetReferences(array $assets, int $userId, ?int $videoId): array
     {
         $normalized = [];
 
@@ -583,10 +833,117 @@ class VideoProjectNormalizer
                 ]);
             }
 
-            $normalized[] = $this->normalizeAssetReference($asset, $index);
+            $reference = $this->normalizeAssetReference($asset, $index);
+            $this->validateManagedAssetReference($reference, $index, $userId, $videoId);
+            $normalized[] = $reference;
         }
 
         return $normalized;
+    }
+
+    /**
+     * @param  array<string, mixed>  $asset
+     */
+    private function validateManagedAssetReference(array $asset, int $index, int $userId, ?int $videoId): void
+    {
+        $type = strtolower((string) ($asset['type'] ?? ''));
+        $mimeType = strtolower((string) ($asset['mime_type'] ?? ''));
+        $provider = (string) ($asset['storage_provider'] ?? '');
+        $storageKey = ltrim((string) ($asset['storage_key'] ?? ''), '/');
+        $publicId = trim((string) ($asset['public_id'] ?? ''), '/');
+
+        if (! in_array($type, ['video', 'image', 'audio', 'font', 'sticker', 'drawing', 'lut', 'mask'], true)) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.type" => "Asset type [{$type}] is not supported.",
+            ]);
+        }
+
+        if ($mimeType !== '' && preg_match('#^(video|image|audio|font)/[a-z0-9.+-]+$#', $mimeType) !== 1) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.mimeType" => 'The asset MIME type is not allowed.',
+            ]);
+        }
+
+        $mimePrefixByType = [
+            'video' => 'video/',
+            'image' => 'image/',
+            'sticker' => 'image/',
+            'drawing' => 'image/',
+            'mask' => 'image/',
+            'audio' => 'audio/',
+            'font' => 'font/',
+        ];
+
+        if ($mimeType !== '' && isset($mimePrefixByType[$type]) && ! str_starts_with($mimeType, $mimePrefixByType[$type])) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.mimeType" => 'The asset MIME type does not match its declared type.',
+            ]);
+        }
+
+        if (isset($asset['file_size']) && (int) $asset['file_size'] > 100 * 1024 * 1024) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.fileSize" => 'Project assets may not exceed 100 MB.',
+            ]);
+        }
+
+        if ($publicId !== '' && $provider !== 'cloudinary') {
+            throw ValidationException::withMessages([
+                "assets.{$index}.storageProvider" => 'Cloudinary public IDs must declare Cloudinary as their storage provider.',
+            ]);
+        }
+
+        if ($provider === 'cloudinary') {
+            if ($storageKey === '' && $publicId === '') {
+                throw ValidationException::withMessages([
+                    "assets.{$index}.storageKey" => 'Cloudinary assets require a managed public ID.',
+                ]);
+            }
+
+            return;
+        }
+
+        if ($provider === '' || $storageKey === '') {
+            return;
+        }
+
+        $editAssetPrefix = trim((string) config('video.edit_asset_directory', 'videos/edit-assets'), '/')."/{$userId}/";
+        $videoAssetPrefix = $videoId !== null ? "videos/{$videoId}/assets/" : null;
+        $belongsToProject = str_starts_with($storageKey, $editAssetPrefix)
+            || ($videoAssetPrefix !== null && str_starts_with($storageKey, $videoAssetPrefix));
+
+        if (! $belongsToProject) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.storageKey" => 'The asset does not belong to this user or video project.',
+            ]);
+        }
+
+        if (! array_key_exists($provider, (array) config('filesystems.disks', []))) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.storageKey" => 'The managed project asset could not be found.',
+            ]);
+        }
+
+        $disk = Storage::disk($provider);
+
+        if (! $disk->exists($storageKey)) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.storageKey" => 'The managed project asset could not be found.',
+            ]);
+        }
+
+        $actualSize = $disk->size($storageKey);
+        if ($actualSize > 100 * 1024 * 1024) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.storageKey" => 'The managed project asset exceeds 100 MB.',
+            ]);
+        }
+
+        $actualMimeType = strtolower((string) $disk->mimeType($storageKey));
+        if ($actualMimeType !== '' && isset($mimePrefixByType[$type]) && ! str_starts_with($actualMimeType, $mimePrefixByType[$type])) {
+            throw ValidationException::withMessages([
+                "assets.{$index}.storageKey" => 'The stored asset content does not match its declared type.',
+            ]);
+        }
     }
 
     /**
@@ -610,6 +967,7 @@ class VideoProjectNormalizer
             'fps' => isset($asset['fps']) ? (float) $asset['fps'] : null,
             'has_audio' => array_key_exists('hasAudio', $asset) ? filter_var($asset['hasAudio'], FILTER_VALIDATE_BOOLEAN) : (array_key_exists('has_audio', $asset) ? filter_var($asset['has_audio'], FILTER_VALIDATE_BOOLEAN) : null),
             'checksum' => isset($asset['checksum']) ? (string) $asset['checksum'] : null,
+            'public_id' => isset($asset['publicId']) ? (string) $asset['publicId'] : (isset($asset['public_id']) ? (string) $asset['public_id'] : null),
         ], static fn ($value) => $value !== null && $value !== '');
     }
 
@@ -699,6 +1057,47 @@ class VideoProjectNormalizer
      */
     private function normalizeV3Output(array $output): array
     {
+        $allowed = [
+            'format' => [['format'], ['mp4']],
+            'videoCodec' => [['videoCodec', 'video_codec'], ['h264']],
+            'audioCodec' => [['audioCodec', 'audio_codec'], ['aac']],
+            'pixelFormat' => [['pixelFormat', 'pixel_format'], ['yuv420p']],
+            'encoderPreset' => [['encoderPreset', 'preset'], ['veryfast', 'faster', 'fast', 'medium']],
+        ];
+
+        foreach ($allowed as $field => [$aliases, $values]) {
+            $sourceField = collect($aliases)->first(fn (string $alias): bool => isset($output[$alias]) && $output[$alias] !== '');
+
+            if ($sourceField === null) {
+                continue;
+            }
+
+            $value = strtolower(trim((string) $output[$sourceField]));
+            if (! in_array($value, $values, true)) {
+                throw ValidationException::withMessages([
+                    "output.{$field}" => "The selected {$field} is not supported.",
+                ]);
+            }
+
+            $output[$sourceField] = $value;
+        }
+
+        if (isset($output['width'])) {
+            $output['width'] = max(16, min(3840, (int) $output['width']));
+        }
+
+        if (isset($output['height'])) {
+            $output['height'] = max(16, min(3840, (int) $output['height']));
+        }
+
+        if (isset($output['fps'])) {
+            $output['fps'] = max(1, min(60, (int) $output['fps']));
+        }
+
+        if (isset($output['crf'])) {
+            $output['crf'] = max(0, min(51, (int) $output['crf']));
+        }
+
         $mapped = [
             'format' => $output['format'] ?? null,
             'quality' => $output['quality'] ?? null,
@@ -1086,15 +1485,15 @@ class VideoProjectNormalizer
                     (int) ($background['padding_y'] ?? 0),
                     (int) ($layer['box_border_width'] ?? 0)
                 ),
-            'x' => $transform['x'] ?? null,
-            'y' => $transform['y'] ?? null,
-            'width' => $transform['width'] ?? null,
-            'height' => $transform['height'] ?? null,
-            'rotation' => $transform['rotation'] ?? null,
-            'scale_x' => $transform['scale_x'] ?? null,
-            'scale_y' => $transform['scale_y'] ?? null,
-            'margin_x' => $transform['margin_x'] ?? null,
-            'margin_y' => $transform['margin_y'] ?? null,
+                'x' => $transform['x'] ?? null,
+                'y' => $transform['y'] ?? null,
+                'width' => $transform['width'] ?? null,
+                'height' => $transform['height'] ?? null,
+                'rotation' => $transform['rotation'] ?? null,
+                'scale_x' => $transform['scale_x'] ?? null,
+                'scale_y' => $transform['scale_y'] ?? null,
+                'margin_x' => $transform['margin_x'] ?? null,
+                'margin_y' => $transform['margin_y'] ?? null,
                 'padding_x' => $background['padding_x'] ?? null,
                 'padding_y' => $background['padding_y'] ?? null,
                 'start' => $baseTrack['start'],
@@ -1386,7 +1785,6 @@ class VideoProjectNormalizer
     }
 
     /**
-     * @param  mixed  $payload
      * @return array<string, mixed>
      */
     private function normalizeFilters(mixed $payload): array
@@ -1413,7 +1811,6 @@ class VideoProjectNormalizer
     }
 
     /**
-     * @param  mixed  $payload
      * @return array<string, mixed>
      */
     private function normalizeAudio(mixed $payload): array
@@ -1426,7 +1823,6 @@ class VideoProjectNormalizer
     }
 
     /**
-     * @param  mixed  $payload
      * @return array<string, mixed>
      */
     private function normalizeTrim(mixed $payload): array

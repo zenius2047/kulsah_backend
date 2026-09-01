@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Http\Resources\VideoResource;
 use App\Models\Video;
-use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -13,19 +13,21 @@ use Illuminate\Support\Facades\Log;
 class FeedService
 {
     private const ROOT_TAG = 'feed';
+
     private const CACHE_VERSION_KEY = 'feed:version';
-    private const FEED_RULES_VERSION = 2;
+
+    private const FEED_RULES_VERSION = 3;
 
     public function __construct(
         private readonly FastApiRecommendationService $fastApiRecommendationService,
     ) {
     }
 
-    public function getFeed(int $userId, int $limit = 20, int $page = 1, array $context = []): array
+    public function getFeed(int|string $viewerKey, int $limit = 20, int $page = 1, array $context = []): array
     {
-        $cache = $this->taggedCache($this->feedTags($userId));
+        $cache = $this->taggedCache($this->feedTags($viewerKey));
         $version = $this->feedCacheVersion();
-        $cacheKey = $this->cacheKey($userId, $limit, $page, $version, $context);
+        $cacheKey = $this->cacheKey($viewerKey, $limit, $page, $version, $context);
 
         if ($cache->has($cacheKey)) {
             return [
@@ -36,16 +38,16 @@ class FeedService
             ];
         }
 
-        $query = Video::query()
-            ->ready()
-            ->where('user_id', '!=', $userId)
-            ->with(['user:id,name,username,avatar,banner'])
-            ->withCount(['likes', 'comments', 'bookmarks'])
-            ->latest()
-            ->take(max($limit * $page, $limit));
+        $candidateLimit = max(80, ($limit * max(4, $page * 2)));
+        $candidateVideos = $this->buildCandidatePool($limit, $page, $candidateLimit, $context);
 
-        $videos = $this->filterInitialVibeVideos($query->get(), $context);
-        $rankedVideos = $this->rankVideosForUser($videos, $userId, $context);
+        if ($candidateVideos->isEmpty()) {
+            $candidateVideos = $this->fallbackRecentVideos($candidateLimit, $context);
+        }
+
+        $candidateVideos = $this->filterInitialVibeVideos($candidateVideos, $context);
+        $rankedVideos = $this->rankVideosForUser($candidateVideos, (int) ($context['user_id'] ?? 0), $context);
+        $rankedVideos = $this->applyDiversification($rankedVideos);
         $total = $rankedVideos->count();
         $pagedVideos = $rankedVideos->forPage($page, $limit)->values();
 
@@ -124,6 +126,221 @@ class FeedService
             ->pluck('video');
     }
 
+    private function buildCandidatePool(int $limit, int $page, int $candidateLimit, array $context = []): Collection
+    {
+        $base = $this->eligibleVideoQuery($context);
+        $seenVideoIds = array_map('intval', $context['seen_video_ids'] ?? []);
+        $blockedCreatorIds = array_map('intval', $context['blocked_creator_ids'] ?? []);
+        $followedCreatorIds = array_map('intval', $context['followed_creator_ids'] ?? []);
+        $subscribedCreatorIds = array_map('intval', $context['subscribed_creator_ids'] ?? []);
+        $favoriteCreatorIds = array_map('intval', $context['favorite_creator_ids'] ?? []);
+        $interestTerms = array_values(array_filter(array_map(
+            static fn ($term) => is_string($term) ? strtolower(trim($term)) : '',
+            $context['interest_terms'] ?? []
+        )));
+        $vibeTerms = array_values(array_filter(array_map(
+            static fn ($term) => is_string($term) ? strtolower(trim($term)) : '',
+            $context['vibe_terms'] ?? []
+        )));
+
+        $candidateIds = collect();
+        $bucketSize = max($candidateLimit, $limit * 6);
+
+        $candidateIds = $candidateIds->merge($this->collectCandidateIds(
+            (clone $base)->latest('created_at')->latest('id'),
+            $bucketSize
+        ));
+
+        $candidateIds = $candidateIds->merge($this->collectCandidateIds(
+            (clone $base)->orderByDesc('views_count')->orderByDesc('likes_count')->orderByDesc('created_at')->orderByDesc('id'),
+            $bucketSize
+        ));
+
+        if ($followedCreatorIds !== []) {
+            $candidateIds = $candidateIds->merge($this->collectCandidateIds(
+                (clone $base)->whereIn('user_id', $followedCreatorIds)->latest('created_at')->latest('id'),
+                $bucketSize
+            ));
+        }
+
+        if ($subscribedCreatorIds !== []) {
+            $candidateIds = $candidateIds->merge($this->collectCandidateIds(
+                (clone $base)->whereIn('user_id', $subscribedCreatorIds)->latest('created_at')->latest('id'),
+                $bucketSize
+            ));
+        }
+
+        if ($interestTerms !== []) {
+            $candidateIds = $candidateIds->merge($this->collectCandidateIds(
+                $this->interestQuery(clone $base, $interestTerms, $vibeTerms),
+                $bucketSize
+            ));
+        }
+
+        $candidateIds = $candidateIds->merge($this->collectCandidateIds(
+            (clone $base)->whereIn('purpose', ['challenge_video', 'challenge_instruction_video', 'challenge_entry'])->latest('created_at')->latest('id'),
+            $bucketSize
+        ));
+
+        if ($favoriteCreatorIds !== []) {
+            $candidateIds = $candidateIds->merge($this->collectCandidateIds(
+                (clone $base)->whereNotIn('user_id', $favoriteCreatorIds)->latest('created_at')->latest('id'),
+                $bucketSize
+            ));
+        }
+
+        if ($candidateIds->isEmpty()) {
+            $candidateIds = collect(
+                $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $bucketSize)
+            );
+        }
+
+        $candidateIds = $candidateIds
+            ->filter()
+            ->map(static fn ($id) => (int) $id)
+            ->when($seenVideoIds !== [], fn (Collection $collection) => $collection->reject(fn (int $id) => in_array($id, $seenVideoIds, true)))
+            ->when($blockedCreatorIds !== [], function (Collection $collection) use ($blockedCreatorIds): Collection {
+                return $collection->filter(function (int $id) use ($blockedCreatorIds): bool {
+                    $creatorId = Video::query()->whereKey($id)->value('user_id');
+
+                    return ! in_array((int) $creatorId, $blockedCreatorIds, true);
+                });
+            })
+            ->unique()
+            ->take($candidateLimit)
+            ->values();
+
+        if ($candidateIds->isEmpty() && $seenVideoIds !== []) {
+            $candidateIds = collect(
+                $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $bucketSize)
+            )
+                ->filter()
+                ->map(static fn ($id) => (int) $id)
+                ->unique()
+                ->take($candidateLimit)
+                ->values();
+        }
+
+        if ($candidateIds->isEmpty()) {
+            return collect();
+        }
+
+        $videos = Video::query()
+            ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user'])
+            ->withCount(['likes', 'comments', 'bookmarks'])
+            ->withExists(['challengeEntries'])
+            ->whereIn('id', $candidateIds->all())
+            ->get()
+            ->keyBy('id');
+
+        return $candidateIds
+            ->map(static fn (int $id) => $videos->get($id))
+            ->filter()
+            ->values();
+    }
+
+    private function eligibleVideoQuery(array $context = []): Builder
+    {
+        $query = Video::query()
+            ->ready()
+            ->where('visibility', 'public')
+            ->with(['user:id,name,username,avatar,banner'])
+            ->withCount(['likes', 'comments', 'bookmarks'])
+            ->withExists(['challengeEntries']);
+
+        $userId = (int) ($context['user_id'] ?? 0);
+        if ($userId > 0) {
+            $query->where('user_id', '!=', $userId);
+        }
+
+        $blockedCreatorIds = array_map('intval', $context['blocked_creator_ids'] ?? []);
+        if ($blockedCreatorIds !== []) {
+            $query->whereNotIn('user_id', $blockedCreatorIds);
+        }
+
+        $seenVideoIds = array_map('intval', $context['seen_video_ids'] ?? []);
+        if ($seenVideoIds !== []) {
+            $query->whereNotIn('id', $seenVideoIds);
+        }
+
+        return $query;
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function collectCandidateIds(Builder $query, int $limit): array
+    {
+        return $query
+            ->limit($limit)
+            ->pluck('id')
+            ->map(static fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    private function interestQuery(Builder $query, array $interestTerms, array $vibeTerms): Builder
+    {
+        $terms = array_values(array_unique(array_merge($interestTerms, $vibeTerms)));
+
+        return $query->where(function (Builder $search) use ($terms): void {
+            foreach ($terms as $index => $term) {
+                $search->{$index === 0 ? 'where' : 'orWhere'}('title', 'like', '%'.$term.'%')
+                    ->orWhere('caption', 'like', '%'.$term.'%')
+                    ->orWhere('content_type', 'like', '%'.$term.'%');
+            }
+        });
+    }
+
+    private function fallbackRecentVideos(int $candidateLimit, array $context = []): Collection
+    {
+        $base = $this->eligibleVideoQuery($context);
+
+        return Video::query()
+            ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user'])
+            ->withCount(['likes', 'comments', 'bookmarks'])
+            ->withExists(['challengeEntries'])
+            ->whereIn('id', $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $candidateLimit))
+            ->get();
+    }
+
+    private function applyDiversification(Collection $ranked): Collection
+    {
+        if ($ranked->isEmpty()) {
+            return $ranked;
+        }
+
+        $window = max(4, (int) config('video.feed_diversity_window', 8));
+        $creatorMaximum = max(1, (int) config('video.feed_max_same_creator_per_window', 2));
+        $challengeMaximum = max(1, (int) config('video.feed_max_same_challenge_per_window', 2));
+        $typeMaximum = max(1, (int) config('video.feed_max_same_type_per_window', 3));
+        $selected = collect();
+        $deferred = collect();
+
+        foreach ($ranked as $video) {
+            $recent = $selected->take(-$window);
+            $creatorCount = $recent->where('user_id', $video->user_id)->count();
+            $challengeCount = $recent->filter(fn (Video $candidate) => (bool) data_get($candidate, 'challengeEntries_exists', false) && (bool) data_get($video, 'challengeEntries_exists', false))->count();
+            $typeCount = $recent->where('content_type', $video->content_type)->count();
+
+            if ($creatorCount >= $creatorMaximum || $challengeCount >= $challengeMaximum || $typeCount >= $typeMaximum) {
+                $deferred->push($video);
+            } else {
+                $selected->push($video);
+            }
+        }
+
+        if ($selected->isEmpty()) {
+            return $ranked->values();
+        }
+
+        if ($selected->count() < $ranked->count()) {
+            $selected = $selected->concat($deferred);
+        }
+
+        return $selected->values();
+    }
+
     private function filterInitialVibeVideos(EloquentCollection|Collection $videos, array $context = []): Collection
     {
         $isInitialFeed = (bool) ($context['initial_feed'] ?? false);
@@ -189,13 +406,16 @@ class FeedService
     public function scoreVideoForUser(Video $video, int $userId, array $context = []): float
     {
         $recencyScore = $this->recencyScore($video);
-        $personalizationScore = 0.0;
+        $score = $recencyScore * 0.4;
 
         $followedCreatorIds = array_map('intval', $context['followed_creator_ids'] ?? []);
-        if ($video->user_id && in_array((int) $video->user_id, $followedCreatorIds, true)) {
-            $personalizationScore += 0.25;
-        }
-
+        $subscribedCreatorIds = array_map('intval', $context['subscribed_creator_ids'] ?? []);
+        $favoriteCreatorIds = array_map('intval', $context['favorite_creator_ids'] ?? []);
+        $likedVideoIds = array_map('intval', $context['liked_video_ids'] ?? []);
+        $bookmarkedVideoIds = array_map('intval', $context['bookmarked_video_ids'] ?? []);
+        $watchedVideoIds = array_map('intval', $context['watched_video_ids'] ?? []);
+        $seenVideoIds = array_map('intval', $context['seen_video_ids'] ?? []);
+        $blockedCreatorIds = array_map('intval', $context['blocked_creator_ids'] ?? []);
         $interestTerms = array_filter(array_map('strtolower', $context['interest_terms'] ?? []));
         $text = strtolower(trim(implode(' ', array_filter([
             $video->title,
@@ -206,20 +426,64 @@ class FeedService
             data_get($video->metadata, 'category'),
         ]))));
 
-        if ($interestTerms && $text !== '') {
+        if (in_array((int) $video->user_id, $blockedCreatorIds, true)) {
+            return 0.0;
+        }
+
+        if (in_array((int) $video->user_id, $followedCreatorIds, true)) {
+            $score += 0.18;
+        }
+
+        if (in_array((int) $video->user_id, $subscribedCreatorIds, true)) {
+            $score += 0.16;
+        }
+
+        if (in_array((int) $video->user_id, $favoriteCreatorIds, true)) {
+            $score += 0.12;
+        }
+
+        if (in_array((int) $video->id, $likedVideoIds, true)) {
+            $score += 0.20;
+        }
+
+        if (in_array((int) $video->id, $bookmarkedVideoIds, true)) {
+            $score += 0.18;
+        }
+
+        if (in_array((int) $video->id, $watchedVideoIds, true)) {
+            $score += 0.22;
+        }
+
+        if (in_array((int) $video->id, $seenVideoIds, true)) {
+            $score -= 0.15;
+        }
+
+        if ($interestTerms !== [] && $text !== '') {
             foreach ($interestTerms as $term) {
                 if ($term !== '' && str_contains($text, $term)) {
-                    $personalizationScore += 0.1;
+                    $score += 0.08;
                 }
             }
         }
 
-        $searchQuery = strtolower((string) ($context['search_query'] ?? ''));
-        if ($searchQuery !== '' && str_contains($text, $searchQuery)) {
-            $personalizationScore += 0.15;
+        if ((bool) data_get($video, 'challengeEntries_exists', false)) {
+            $score += 0.06;
         }
 
-        return round(min(1.0, ($recencyScore * 0.7) + $personalizationScore), 4);
+        $engagement = (
+            ((int) ($video->likes_count ?? 0) * 2)
+            + ((int) ($video->comments_count ?? 0) * 3)
+            + ((int) ($video->bookmarks_count ?? 0) * 4)
+            + ((int) ($video->views_count ?? 0) * 0.02)
+        ) / 100;
+
+        $score += min(0.2, $engagement);
+
+        if ($context['initial_feed'] ?? false) {
+            $score += 0.04;
+        }
+
+        return round(min(1.0, max(0.0, $score)), 4);
     }
 
     private function recencyScore(Video $video): float
@@ -233,7 +497,7 @@ class FeedService
         return round(exp(-($ageHours / 48)), 4);
     }
 
-    private function cacheStore(): CacheRepository
+    private function cacheStore()
     {
         return Cache::store(config('cache.default'));
     }
@@ -241,7 +505,7 @@ class FeedService
     /**
      * @param  array<int, string>  $tags
      */
-    private function taggedCache(array $tags): CacheRepository
+    private function taggedCache(array $tags)
     {
         $cache = $this->cacheStore();
 
@@ -254,28 +518,37 @@ class FeedService
 
     private function feedCacheVersion(): int
     {
-        return (int) $this->cacheStore()->get(self::CACHE_VERSION_KEY, 1);
+        return (int) $this->taggedCache(['feed'])->get(self::CACHE_VERSION_KEY, 1);
     }
 
-    private function cacheKey(int $userId, int $limit, int $page, int $version, array $context = []): string
+    private function cacheKey(int|string $viewerKey, int $limit, int $page, int $version, array $context = []): string
     {
         $hash = substr(sha1(json_encode([
             'feed_rules_version' => self::FEED_RULES_VERSION,
+            'viewer_key' => (string) $viewerKey,
             'followed_creator_ids' => array_values(array_map('intval', $context['followed_creator_ids'] ?? [])),
+            'subscribed_creator_ids' => array_values(array_map('intval', $context['subscribed_creator_ids'] ?? [])),
+            'liked_video_ids' => array_values(array_map('intval', $context['liked_video_ids'] ?? [])),
+            'bookmarked_video_ids' => array_values(array_map('intval', $context['bookmarked_video_ids'] ?? [])),
+            'watched_video_ids' => array_values(array_map('intval', $context['watched_video_ids'] ?? [])),
+            'seen_video_ids' => array_values(array_map('intval', $context['seen_video_ids'] ?? [])),
+            'blocked_creator_ids' => array_values(array_map('intval', $context['blocked_creator_ids'] ?? [])),
             'interest_terms' => array_values(array_map('strtolower', $context['interest_terms'] ?? [])),
             'search_query' => strtolower((string) ($context['search_query'] ?? '')),
             'initial_feed' => (bool) ($context['initial_feed'] ?? false),
             'vibe_terms' => array_values(array_map('strtolower', $context['vibe_terms'] ?? [])),
+            'viewer_state_updated_at' => $context['viewer_state_updated_at'] ?? null,
         ])), 0, 12);
 
-        return "feed:user:{$userId}:limit:{$limit}:page:{$page}:v{$version}:{$hash}";
+        return 'feed:viewer:'.(string) $viewerKey.":limit:{$limit}:page:{$page}:v{$version}:{$hash}";
     }
 
     /**
      * @return array<int, string>
      */
-    private function feedTags(int $userId): array
+    private function feedTags(int|string $viewerKey): array
     {
-        return ['feed:user', "feed:user:{$userId}"];
+        return ['feed:user', 'feed:user:'.(string) $viewerKey];
     }
 }
+

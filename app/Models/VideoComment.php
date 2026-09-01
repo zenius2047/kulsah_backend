@@ -15,6 +15,7 @@ class VideoComment extends Model
         'user_id',
         'parent_id',
         'body',
+        'sticker_id',
     ];
 
     protected static function booted(): void
@@ -53,3 +54,4 @@ class VideoComment extends Model
         return $this->hasMany(VideoCommentLike::class, 'video_comment_id');
     }
 }
+

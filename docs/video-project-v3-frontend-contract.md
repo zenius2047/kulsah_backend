@@ -2,6 +2,54 @@
 
 This document describes the exact project payload the Laravel backend accepts for the v3 editor contract.
 
+`schemaVersion: "3.0.0"` is the canonical Kulsah editor project format. The backend preserves this editable document and separately derives an internal render plan; clients must not convert it to a simplified `layers[]` payload.
+
+Render pipeline:
+
+```text
+EditorProjectV3 -> validation -> managed asset resolution -> ordered scene/track normalization
+-> anchor-aware RenderPlan -> FFmpeg filter graph -> output validation -> Cloudinary publication
+```
+
+## Edit-First Upload Flow
+
+When the frontend knows that a newly uploaded video must be edited, initialize the direct upload with `requires_editing: true`:
+
+```http
+POST /api/v1/creator/videos/uploads/init
+Content-Type: application/json
+
+{
+  "title": "Video to edit",
+  "original_name": "source.mp4",
+  "mime_type": "video/mp4",
+  "size": 10485760,
+  "requires_editing": true
+}
+```
+
+The frontend then uploads the source file to the returned `data.upload.upload_url` and calls:
+
+```http
+POST /api/v1/creator/videos/{video}/upload/complete
+```
+
+For `requires_editing: true`, upload completion verifies that the object exists in primary storage but does **not** queue the original for Cloudinary. The video response has:
+
+```json
+{
+  "status": "draft",
+  "render_status": "awaiting_edit",
+  "progress_percentage": 100,
+  "requires_editing": true,
+  "upload_state": "uploaded"
+}
+```
+
+The frontend may now submit the v3 project to `POST /api/v1/creator/videos/{video}/edits`. The renderer reads the source from primary storage and publishes only the edited result to Cloudinary. An edit submitted before `/upload/complete` returns HTTP 422.
+
+When `requires_editing` is false or omitted, `/upload/complete` retains the existing behavior and immediately queues the original video for Cloudinary processing.
+
 Source of truth in backend:
 - `app/Http/Controllers/Api/V1/Video/VideoController.php`
 - `app/Http/Requests/Api/V1/Video/VideoRenderRequest.php`
@@ -154,7 +202,7 @@ Each asset entry is an object with these fields:
 | `type` | string | no | Example: `video`, `image`, `audio`, `font`, `sticker`, `drawing`, `lut`, `mask`. |
 | `storageProvider` | string | no | Example: `s3`, `spaces`, `local`, `cloudinary`. |
 | `storageKey` | string | no | Storage key or Cloudinary public id depending on provider. |
-| `url` | string | no | Fallback URL. |
+| `url` | string | no | Metadata only. Arbitrary URLs are never passed to FFmpeg. |
 | `mimeType` | string | no | MIME type. |
 | `fileName` | string | no | File name. |
 | `fileSize` | number | no | File size in bytes. |
@@ -189,6 +237,8 @@ asset_files[0]=<binary image file>
 ```
 
 If a track references an asset by `source.assetId`, keep that `assetId` aligned with the matching entry in `assets[]`.
+
+Renderable assets must resolve to Kulsah-managed storage (`storageProvider` + `storageKey`) or a trusted Cloudinary public ID. Storage assets are checked for ownership and existence. `source.fallbackUrl` and asset `url` are preserved as project metadata but are not render inputs.
 
 ## `scenes`
 
@@ -248,6 +298,8 @@ The backend flattens scenes into a track array for rendering. Every track may in
 | `motionPath` | object | no | Preserved. |
 | `effects` | array | no | Preserved. |
 | `metadata` | object | no | Stored as raw metadata. |
+
+Enabled scenes are sorted by numeric `order`. Enabled and visible tracks are sorted by numeric `layer`; incoming array order does not control compositing. Timeline values are seconds. A track's absolute start is `scene.timeline.start + track.timeline.start`, and its absolute end is that start plus `track.timeline.duration`.
 
 ### `track.timeline`
 
@@ -353,7 +405,7 @@ Backend maps these into render layers using:
 Required source options:
 
 - `source.assetId`
-- or `source.fallbackUrl`
+- `source.fallbackUrl` may be retained as metadata, but it is not a render source
 
 The backend resolves the source through the asset registry first. It also accepts raw render-layer fields:
 
@@ -364,6 +416,17 @@ The backend resolves the source through the asset registry first. It also accept
 - `asset_key`
 
 If the asset was uploaded in the same request, prefer using `assets[]` with `file_index` instead of embedding a base64 data URL.
+
+For complex text and drawing output, the frontend may preserve all editable fields and provide a trusted raster representation:
+
+```json
+"renderSource": {
+  "type": "raster",
+  "assetId": "asset-raster-1"
+}
+```
+
+When present, the raster source is preferred for rendering. Rich text features that the FFmpeg text fallback cannot reproduce require a raster source instead of being silently discarded.
 
 ### `audio`
 
@@ -427,6 +490,8 @@ Recommended keyframe shape:
 - Missing `metadata.duration` may fall back to the video duration.
 - Missing scene `timeline.duration` may be derived from the tracks in the scene.
 - Missing track `end` may fall back to the project duration.
+- Positions are canvas pixel coordinates. Render coordinates are scaled to output dimensions and converted from anchor position to FFmpeg top-left position.
+- Rotation is converted from degrees to radians in the internal render plan.
 - `schemaVersion` is stored as the literal string you send.
 - `project.version` is normalized to `3`.
 - Raw input is preserved in `project.raw_payload` and `timeline.raw_payload`.
@@ -454,6 +519,8 @@ Accepted and preserved, but not fully rendered yet:
 - advanced audio mixing
 - full motion path behavior
 - full mask/composition pipeline
+
+Output encoder settings are allowlisted. The current publication profile accepts MP4/H.264/AAC/yuv420p and the `veryfast`, `faster`, `fast`, or `medium` presets; unsupported values are rejected rather than forwarded to FFmpeg.
 
 ## Example v3 Payload
 

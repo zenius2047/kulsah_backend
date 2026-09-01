@@ -2,10 +2,10 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
-use RuntimeException;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Symfony\Component\Process\Process;
 
 class CloudinaryService
@@ -58,13 +58,26 @@ class CloudinaryService
         return hash_equals($expectedSha1, $signature) || hash_equals($expectedSha256, $signature);
     }
 
-    public function uploadVideoFromS3Key(string $sourceKey): array
+    public function uploadVideoFromS3Key(string $sourceKey, ?string $sourceDisk = null): array
     {
-        $disk = config('video.storage_disk', 's3');
+        return $this->uploadMediaFromS3Key($sourceKey, 'video', $sourceDisk);
+    }
+
+    public function uploadImageFromS3Key(string $sourceKey, ?string $sourceDisk = null): array
+    {
+        return $this->uploadMediaFromS3Key($sourceKey, 'image', $sourceDisk);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function uploadMediaFromS3Key(string $sourceKey, string $resourceType = 'video', ?string $sourceDisk = null): array
+    {
+        $disk = $sourceDisk ?: config('video.storage_disk', 's3');
         $cloudName = $this->getCloudName();
         $apiKey = $this->getApiKey();
         $apiSecret = $this->getApiSecret();
-        $folder = trim((string) config('services.cloudinary.folder', 'kulsah/videos'), '/');
+        $folder = trim((string) config('services.cloudinary.folder', 'kulsah/community'), '/');
 
         if (! $cloudName || ! $apiKey || ! $apiSecret) {
             throw new RuntimeException('Cloudinary credentials are not configured.');
@@ -99,7 +112,7 @@ class CloudinaryService
             $transcodeFailed = false;
             $sourceDiagnostics = $this->buildMediaDiagnostics($tempPath, 'source');
 
-            if (filter_var(config('video.transcode_enabled', true), FILTER_VALIDATE_BOOL)) {
+            if ($resourceType === 'video' && filter_var(config('video.transcode_enabled', true), FILTER_VALIDATE_BOOL)) {
                 try {
                     $uploadPath = $this->transcodeForDelivery($tempPath);
                 } catch (RuntimeException $exception) {
@@ -120,7 +133,7 @@ class CloudinaryService
             $timestamp = time();
             $params = $this->buildSignatureParams($folder, $publicId, $timestamp, $transcodeFailed);
             $signature = $this->signParameters($params);
-            $uploadUrl = "https://api.cloudinary.com/v1_1/{$cloudName}/video/upload";
+            $uploadUrl = "https://api.cloudinary.com/v1_1/{$cloudName}/{$resourceType}/upload";
             $mimeType = $this->guessMimeType($uploadPath);
 
             $postFields = [
@@ -133,7 +146,7 @@ class CloudinaryService
                 'unique_filename' => 'false',
                 'use_filename' => 'false',
                 'signature' => $signature,
-                'resource_type' => 'video',
+                'resource_type' => $resourceType,
             ];
 
             if ($transcodeFailed) {
@@ -186,15 +199,27 @@ class CloudinaryService
             throw new RuntimeException('Cloudinary did not return a valid video response. Response body: '.($response['body'] ?? ''));
         }
 
+        $publicId = $response['decoded']['public_id'];
+
         return [
-            'cdn_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
+            'cdn_url' => $resourceType === 'video'
+                ? $this->generateStreamingUrlFromPublicId($publicId)
+                : $this->generateImageUrlFromPublicId($publicId),
             'rendered_url' => $response['decoded']['secure_url'] ?? null,
-            'stream_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
-            'streaming_url' => $this->generateStreamingUrlFromPublicId($response['decoded']['public_id']),
-            'cloudinary_public_id' => $response['decoded']['public_id'],
+            'stream_url' => $resourceType === 'video'
+                ? $this->generateStreamingUrlFromPublicId($publicId)
+                : $this->generateImageUrlFromPublicId($publicId),
+            'streaming_url' => $resourceType === 'video'
+                ? $this->generateStreamingUrlFromPublicId($publicId)
+                : $this->generateImageUrlFromPublicId($publicId),
+            'cloudinary_public_id' => $publicId,
             'cloudinary_asset_id' => $response['decoded']['asset_id'] ?? null,
-            'thumbnail_url' => $this->generatePosterUrlFromPublicId($response['decoded']['public_id']),
-            'poster_url' => $this->generatePosterUrlFromPublicId($response['decoded']['public_id']),
+            'thumbnail_url' => $resourceType === 'video'
+                ? $this->generatePosterUrlFromPublicId($publicId)
+                : $this->generateImageUrlFromPublicId($publicId),
+            'poster_url' => $resourceType === 'video'
+                ? $this->generatePosterUrlFromPublicId($publicId)
+                : $this->generateImageUrlFromPublicId($publicId),
             'duration' => isset($response['decoded']['duration']) ? (int) round((float) $response['decoded']['duration']) : null,
             'streaming_profile' => config('video.cloudinary_stream_max_resolution', '2160p'),
             'metadata' => array_merge($response['decoded'], [
@@ -300,7 +325,7 @@ class CloudinaryService
 
     public function generateDerivedVideoUrl(string $publicId): string
     {
-        return "https://res.cloudinary.com/".$this->getCloudName()."/video/upload/a_auto,f_auto,q_auto/{$publicId}";
+        return 'https://res.cloudinary.com/'.$this->getCloudName()."/video/upload/a_auto,f_auto,q_auto/{$publicId}";
     }
 
     public function generateThumbnailUrl(string $publicId): string
@@ -318,6 +343,13 @@ class CloudinaryService
         $cloudName = $this->getCloudName();
 
         return "https://res.cloudinary.com/{$cloudName}/video/upload/so_0,w_720,h_1280,c_fill,f_jpg,q_auto/{$publicId}";
+    }
+
+    public function generatePosterAtTimeUrl(string $publicId, int $frameTimeMs): string
+    {
+        $seconds = number_format(max(0, $frameTimeMs) / 1000, 3, '.', '');
+
+        return 'https://res.cloudinary.com/'.$this->getCloudName().'/video/upload/so_'.$seconds.',w_720,h_1280,c_fill,f_jpg,q_auto/'.$publicId;
     }
 
     private function buildPublicId(string $sourceKey): string

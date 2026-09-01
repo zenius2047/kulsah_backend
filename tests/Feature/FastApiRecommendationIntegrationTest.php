@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
-use App\Models\User;
 use App\Models\Onboarding;
+use App\Models\Subscription;
+use App\Models\User;
+use App\Models\UserFollow;
 use App\Models\Video;
-use Illuminate\Http\Client\Request;
+use App\Models\VideoBookmark;
+use App\Models\VideoLike;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -47,6 +51,10 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/1.jpg',
             'duration' => 20,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/1.m3u8',
             'metadata' => [],
         ]);
 
@@ -61,6 +69,10 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/2.jpg',
             'duration' => 25,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/2.m3u8',
             'metadata' => [],
         ]);
 
@@ -75,6 +87,10 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/3.jpg',
             'duration' => 30,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/3.m3u8',
             'metadata' => [],
         ]);
 
@@ -163,6 +179,10 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/music.jpg',
             'duration' => 18,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/music.m3u8',
             'metadata' => [],
         ]);
 
@@ -179,6 +199,10 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/travel.jpg',
             'duration' => 24,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/travel.m3u8',
             'metadata' => [],
         ]);
 
@@ -248,6 +272,10 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/1.jpg',
             'duration' => 20,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/1.m3u8',
             'metadata' => [],
         ]);
 
@@ -264,6 +292,10 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/2.jpg',
             'duration' => 25,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/2.m3u8',
             'metadata' => [],
         ]);
 
@@ -280,26 +312,30 @@ class FastApiRecommendationIntegrationTest extends TestCase
             'thumbnail_url' => 'https://cdn.example.com/3.jpg',
             'duration' => 30,
             'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://cdn.example.com/3.m3u8',
             'metadata' => [],
         ]);
 
-        \App\Models\UserFollow::create([
+        UserFollow::create([
             'follower_id' => $viewer->id,
             'followed_id' => $followedCreator->id,
         ]);
 
-        \App\Models\Subscription::create([
+        Subscription::create([
             'subscriber_id' => $viewer->id,
             'creator_id' => $subscribedCreator->id,
             'status' => 'active',
         ]);
 
-        \App\Models\VideoLike::create([
+        VideoLike::create([
             'video_id' => $firstVideo->id,
             'user_id' => $viewer->id,
         ]);
 
-        \App\Models\VideoBookmark::create([
+        VideoBookmark::create([
             'video_id' => $secondVideo->id,
             'user_id' => $viewer->id,
         ]);

@@ -75,6 +75,56 @@ class VideoStorageService
         ];
     }
 
+    public function uploadCommunityMedia(UploadedFile $file, int $userId): array
+    {
+        if (! $file->isValid()) {
+            throw new RuntimeException('The uploaded community media file is not valid.');
+        }
+
+        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.community_media_directory', 'community/media'));
+        $directory = dirname($path);
+
+        // S3 buckets may reject ACL-based visibility settings, so we rely on the disk's default permissions.
+        $storedPath = Storage::disk($disk)->putFileAs($directory, $file, basename($path));
+
+        if (! $storedPath) {
+            throw new RuntimeException(sprintf(
+                'Unable to store the community media in primary storage. disk=%s path=%s mime=%s size=%s',
+                $disk,
+                $path,
+                (string) $file->getMimeType(),
+                (string) $file->getSize(),
+            ));
+        }
+
+        return [
+            'disk' => $disk,
+            'source_key' => $storedPath,
+            'source_url' => Storage::disk($disk)->url($storedPath),
+        ];
+    }
+
+    public function uploadEventCoverImage(UploadedFile $file, int $userId): array
+    {
+        if (! $file->isValid()) {
+            throw new RuntimeException('The uploaded event cover image is not valid.');
+        }
+
+        [$disk, $path] = $this->buildUploadTarget($userId, $file->getClientOriginalName(), config('video.event_cover_directory', 'events/covers'));
+
+        $storedPath = Storage::disk($disk)->putFileAs(dirname($path), $file, basename($path));
+
+        if (! $storedPath) {
+            throw new RuntimeException('Unable to store the event cover image in primary storage.');
+        }
+
+        return [
+            'disk' => $disk,
+            'source_key' => $storedPath,
+            'source_url' => Storage::disk($disk)->url($storedPath),
+        ];
+    }
+
     public function uploadRenderedVideo(string $localPath, int $userId, string $originalName = 'edited.mp4'): array
     {
         if (! is_file($localPath)) {
@@ -107,20 +157,30 @@ class VideoStorageService
 
     public function createTemporaryUpload(int $userId, ?string $originalName = null, ?string $mimeType = null): array
     {
-        [$disk, $path] = $this->buildUploadTarget($userId, $originalName, config('video.upload_directory', 'videos/originals'));
+        return $this->createTemporaryUploadInDirectory(
+            userId: $userId,
+            originalName: $originalName,
+            mimeType: $mimeType,
+            directory: config('video.upload_directory', 'videos/originals')
+        );
+    }
+
+    public function createTemporaryUploadInDirectory(int $userId, ?string $originalName = null, ?string $mimeType = null, ?string $directory = null, string $visibility = 'private'): array
+    {
+        [$disk, $path] = $this->buildUploadTarget($userId, $originalName, $directory);
         $ttlMinutes = max(1, (int) config('video.direct_upload_ttl_minutes', 15));
 
         $upload = Storage::disk($disk)->temporaryUploadUrl(
             $path,
             now()->addMinutes($ttlMinutes),
             array_filter([
-                'ACL' => 'private',
+                'ACL' => $visibility === 'public' ? 'public-read' : 'private',
                 'ContentType' => $mimeType ?: null,
             ])
         );
 
         if (! is_array($upload) || ! isset($upload['url'], $upload['headers'])) {
-            throw new RuntimeException('Unable to generate a temporary video upload URL.');
+            throw new RuntimeException('Unable to generate a temporary upload URL.');
         }
 
         return [
@@ -170,3 +230,4 @@ class VideoStorageService
         return [$disk, $path];
     }
 }
+

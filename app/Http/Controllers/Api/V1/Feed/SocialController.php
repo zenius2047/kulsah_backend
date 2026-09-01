@@ -85,14 +85,16 @@ class SocialController extends Controller
     public function comment(Request $request, string $video)
     {
         $validated = $request->validate([
-            'body' => ['required', 'string', 'min:1', 'max:5000'],
+            'body' => ['nullable', 'string', 'required_without:sticker_id', 'min:1', 'max:5000'],
+            'sticker_id' => ['nullable', 'integer'],
         ]);
 
         return $this->handle(function () use ($request, $video, $validated) {
             return $this->socialEngagementService->commentOnVideo(
                 user: $request->user(),
                 video: Video::query()->findOrFail($video),
-                body: $validated['body']
+                body: $validated['body'] ?? '',
+                stickerId: $validated['sticker_id'] ?? null
             );
         }, 201);
     }
@@ -139,15 +141,17 @@ class SocialController extends Controller
     public function reply(Request $request, string $video, int $comment)
     {
         $validated = $request->validate([
-            'body' => ['required', 'string', 'min:1', 'max:5000'],
+            'body' => ['nullable', 'string', 'required_without:sticker_id', 'min:1', 'max:5000'],
+            'sticker_id' => ['nullable', 'integer'],
         ]);
 
         return $this->handle(function () use ($request, $video, $comment, $validated) {
             return $this->socialEngagementService->commentOnVideo(
                 user: $request->user(),
                 video: Video::query()->findOrFail($video),
-                body: $validated['body'],
-                parentId: $comment
+                body: $validated['body'] ?? '',
+                stickerId: $validated['sticker_id'] ?? null,
+                parentId: $comment,
             );
         }, 201);
     }
@@ -201,3 +205,6 @@ class SocialController extends Controller
         }
     }
 }
+
+
+

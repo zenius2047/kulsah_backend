@@ -19,7 +19,7 @@ class RenderVideoEditsJob implements ShouldQueue
 
     public int $tries = 2;
 
-    public int $timeout = 360;
+    public int $timeout = 1200;
 
     public array $backoff = [30, 120];
 
@@ -29,14 +29,12 @@ class RenderVideoEditsJob implements ShouldQueue
     public function __construct(
         public Video $video,
         public array $timeline,
-    ) {
-    }
+    ) {}
 
     public function handle(
         CloudinaryVideoRendererService $cloudinaryRenderer,
         VideoEditRenderingService $ffmpegRenderer,
-    ): void
-    {
+    ): void {
         $video = $this->video->fresh();
 
         if (! $video) {
@@ -58,6 +56,7 @@ class RenderVideoEditsJob implements ShouldQueue
                 'render_status' => 'processing',
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => 'rendering',
+                    'processing_state' => 'rendering_edit',
                     'edit_started_at' => now()->toISOString(),
                     'render_timeline' => $this->timeline,
                     'render_engine' => $shouldUseFfmpeg ? 'ffmpeg' : 'cloudinary',
@@ -87,6 +86,14 @@ class RenderVideoEditsJob implements ShouldQueue
 
             $video->update([
                 'status' => $isReady ? 'ready' : 'processing',
+                'processing_status' => $isReady ? 'ready' : 'processing',
+                'processing_error' => null,
+                'playback_type' => $isReady ? 'hls' : $video->playback_type,
+                'hls_url' => $isReady ? ($rendered['streaming_url'] ?? $video->hls_url) : $video->hls_url,
+                'fallback_mp4_url' => $isReady ? ($rendered['rendered_url'] ?? $video->fallback_mp4_url) : $video->fallback_mp4_url,
+                'processing_started_at' => $video->processing_started_at ?: now(),
+                'processed_at' => $isReady ? now() : null,
+                'failed_at' => null,
                 'progress_percentage' => $isReady ? 100 : 75,
                 'render_status' => $renderStatus,
                 'render_completed_at' => $isReady ? now() : $video->render_completed_at,
@@ -99,17 +106,25 @@ class RenderVideoEditsJob implements ShouldQueue
                 'poster_url' => $rendered['poster_url'] ?? $video->poster_url,
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => $isReady ? 'ready' : 'rendering',
+                    'processing_state' => $isReady ? 'ready' : 'rendering_edit',
                     'render_requested_at' => now()->toISOString(),
                     'render_completed_at' => $isReady ? now()->toISOString() : null,
                     'render_plan' => $rendered['metadata'] ?? [],
                 ]),
             ]);
+            if ($isReady) {
+                event(new VideoUploaded($video->fresh()));
+            }
         } catch (Throwable $throwable) {
             $video->update([
                 'status' => 'failed',
                 'render_status' => 'failed',
+                'processing_status' => 'processing_failed',
+                'processing_error' => mb_substr($throwable->getMessage(), 0, 5000),
+                'failed_at' => now(),
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => 'failed',
+                    'processing_state' => 'edit_failed',
                     'edit_error' => $throwable->getMessage(),
                 ]),
             ]);

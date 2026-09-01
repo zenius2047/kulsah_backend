@@ -27,8 +27,15 @@ class Subscription extends Model
 
     protected static function booted(): void
     {
-        static::saved(static function (): void {
+        static::saved(static function (self $subscription): void {
             app(FeedService::class)->invalidateFeedCaches();
+
+            if ($subscription->isActiveSubscription()) {
+                app(\App\Services\SignalMessagingService::class)->ensureSubscriptionPromotesFan(
+                    User::find($subscription->subscriber_id),
+                    User::find($subscription->creator_id)
+                );
+            }
         });
 
         static::deleted(static function (): void {
@@ -55,4 +62,10 @@ class Subscription extends Model
     {
         return $this->belongsTo(SubscriptionPlan::class, 'subscription_plan_id');
     }
+
+    public function isActiveSubscription(): bool
+    {
+        return $this->status === 'active' && (! $this->expires_at || $this->expires_at->isFuture());
+    }
 }
+

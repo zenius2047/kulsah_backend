@@ -4,6 +4,7 @@ namespace App\Notifications;
 
 use App\Models\User;
 use App\Models\Video;
+use App\Notifications\Channels\FcmChannel;
 use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Notification;
 
@@ -19,7 +20,7 @@ class VideoMentionedNotification extends Notification
 
     public function via(object $notifiable): array
     {
-        return ['database', 'broadcast'];
+        return ['database', 'broadcast', FcmChannel::class];
     }
 
     public function toDatabase(object $notifiable): array
@@ -32,6 +33,19 @@ class VideoMentionedNotification extends Notification
         return new BroadcastMessage($this->payload($notifiable));
     }
 
+    public function toFcm(object $notifiable): array
+    {
+        return [
+            'title' => 'You were mentioned in a video',
+            'body' => sprintf(
+                '%s mentioned you in %s.',
+                $this->actor->name ?: $this->actor->username,
+                $this->video->title ?: 'a video'
+            ),
+            'data' => $this->payload($notifiable),
+        ];
+    }
+
     public function broadcastType(): string
     {
         return 'video.mentioned';
@@ -39,7 +53,11 @@ class VideoMentionedNotification extends Notification
 
     public function payload(object $notifiable): array
     {
+        $recipientId = (int) ($notifiable->id ?? 0);
+
         return [
+            'schema_version' => 1,
+            'notification_id' => sprintf('video.mentioned:%d:%d', (int) $this->video->id, $recipientId),
             'type' => 'video.mentioned',
             'video_id' => $this->video->id,
             'video_title' => $this->video->title,
@@ -52,7 +70,6 @@ class VideoMentionedNotification extends Notification
             ],
             'mentions' => $this->mentions,
             'hashtags' => $this->hashtags,
-            'notified_user_id' => $notifiable->id ?? null,
             'created_at' => now()->toIso8601String(),
         ];
     }

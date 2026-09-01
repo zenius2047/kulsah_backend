@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\RoleMiddleware;
 use App\Jobs\RenderVideoEditsJob;
 use App\Models\User;
 use App\Models\Video;
@@ -15,6 +16,43 @@ use Tests\TestCase;
 class VideoRenderTimelineTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_direct_upload_must_be_completed_before_an_edit_is_queued(): void
+    {
+        Queue::fake();
+
+        $creator = User::factory()->create([
+            'username' => 'incomplete_direct_upload_creator',
+        ]);
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'source_key' => "videos/originals/{$creator->id}/incomplete.mp4",
+            'status' => 'draft',
+            'metadata' => [
+                'upload_mode' => 'direct',
+                'upload_state' => 'awaiting_upload',
+                'requires_editing' => true,
+            ],
+        ]);
+
+        $response = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(RoleMiddleware::class)
+            ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
+                'schemaVersion' => '3.0.0',
+                'scenes' => [
+                    [
+                        'id' => 'scene-1',
+                        'tracks' => [],
+                    ],
+                ],
+            ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonPath('errors.video.0', 'Complete the primary-storage upload before requesting edits.');
+
+        Queue::assertNotPushed(RenderVideoEditsJob::class);
+    }
 
     public function test_creator_can_queue_a_cloudinary_timeline_render(): void
     {
@@ -38,7 +76,7 @@ class VideoRenderTimelineTest extends TestCase
 
         $response = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
                 'layers' => [
                     [
@@ -137,7 +175,7 @@ class VideoRenderTimelineTest extends TestCase
 
         $response = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->post("/api/v1/creator/videos/{$video->id}/edits", [
                 'layers' => json_encode([
                     [
@@ -168,7 +206,7 @@ class VideoRenderTimelineTest extends TestCase
         $this->assertNotEmpty($video->metadata['edit_overlays'][0]['asset_key']);
         $this->assertSame('testlocal', $video->metadata['edit_overlays'][0]['asset_disk']);
         $this->assertStringStartsWith(
-            'http://localhost/storage/videos/edit-assets/1/',
+            'http://localhost/storage/videos/edit-assets/'.$creator->id.'/',
             $video->metadata['edit_overlays'][0]['asset_url']
         );
         $this->assertTrue(Storage::disk('testlocal')->exists($video->metadata['edit_overlays'][0]['asset_key']));
@@ -198,7 +236,7 @@ class VideoRenderTimelineTest extends TestCase
 
         $response = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
                 'layers' => [
                     [
@@ -248,7 +286,7 @@ class VideoRenderTimelineTest extends TestCase
 
         $response = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson("/api/v1/creator/videos/{$video->id}/edits", [
                 'schemaVersion' => '3.0.0',
                 'metadata' => [
@@ -503,5 +541,4 @@ class VideoRenderTimelineTest extends TestCase
 
         Queue::assertPushed(RenderVideoEditsJob::class);
     }
-
 }

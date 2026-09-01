@@ -52,51 +52,89 @@ class ProfileController extends Controller
         ]);
     }
 
+    private function getLocationFromCountryCode($countryCode)
+    {
+        $country = $this->resolveCountryFromCode($countryCode);
+
+        return $country['name'] ?? null;
+    }
+
+    private function resolveCountryFromCode($countryCode): ?array
+    {
+        $normalized = strtoupper(trim((string) $countryCode));
+        $normalizedDial = preg_replace('/\s+/', '', $normalized);
+
+        foreach (config('countries') as $country) {
+            $countryCodeValue = strtoupper(trim((string) ($country['code'] ?? '')));
+            $dialCodeValue = preg_replace('/\s+/', '', strtoupper(trim((string) ($country['dial_code'] ?? ''))));
+
+            if ($normalized === $countryCodeValue || $normalizedDial === $dialCodeValue) {
+                return $country;
+            }
+        }
+
+        return null;
+    }
+
     //update user profile
 
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
 
-public function updateProfile(Request $request)
-{
-    $user = $request->user();
+        if ($request->filled('country_code')) {
+            $request->merge(['country_code' => strtoupper(trim((string) $request->input('country_code')))]);
+        }
 
-    $request->validate([
-        'name' => 'sometimes|string|max:255',
+        $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'username' => [
+                'sometimes',
+                'string',
+                'max:255',
+                Rule::unique('users', 'username')->ignore($user->id),
+            ],
+            'phone' => [
+                'sometimes|nullable',
+                'string',
+                Rule::unique('users', 'phone')->ignore($user->id),
+            ],
+            'dob' => 'sometimes|nullable|date',
+            'gender' => 'sometimes|nullable|in:male,female',
+            'location' => 'sometimes|nullable|string|max:255',
+            'country_code' => ['sometimes', 'nullable', 'string', 'max:10'],
+        ]);
 
-        'username' => [
-            'sometimes',
-            'string',
-            'max:255',
-            Rule::unique('users', 'username')->ignore($user->id),
-        ],
+        $data = $request->only([
+            'name',
+            'username',
+            'phone',
+            'dob',
+            'gender',
+            'location',
+            'country_code',
+        ]);
 
-        'phone' => [
-            'sometimes|nullable',
-            'string',
-            Rule::unique('users', 'phone')->ignore($user->id),
-        ],
+        if (! empty($data['country_code'])) {
+            $country = $this->resolveCountryFromCode($data['country_code']);
 
-        'dob' => 'sometimes|nullable|date',
-        'gender' => 'sometimes|nullable|in:male,female',
-        'location' => 'sometimes|nullable|string|max:255',
-        'country_code' => 'sometimes|nullable|string|max:255',
-    ]);
+            if (! $country) {
+                return response()->json([
+                    'country_code' => ['The selected country code is invalid.'],
+                ], 422);
+            }
 
-    // Update fields safely
-    $user->fill($request->only([
-        'name',
-        'username',
-        'phone',
-        'dob',
-        'gender',
-        'location',
-        'country_code',
-    ]));
+            $data['country'] = $country['name'];
+            $data['currency'] = $country['currency'] ?? null;
+            $data['location'] = $data['location'] ?? $country['name'];
+        }
 
-    $user->save();
+        $user->fill($data);
+        $user->save();
 
-    return response()->json([
-        'message' => 'Profile updated successfully',
-        'user' => new UserResource($user),
-    ]);
-}
+        return response()->json([
+            'message' => 'Profile updated successfully',
+            'user' => new UserResource($user),
+        ]);
+    }
 }

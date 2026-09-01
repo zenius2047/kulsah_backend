@@ -4,14 +4,13 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
-use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
-use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
@@ -42,7 +41,6 @@ class User extends Authenticatable
         'activated',
     ];
 
-
     /**
      * Get the attributes that should be cast.
      *
@@ -65,7 +63,7 @@ class User extends Authenticatable
         return $this->belongsToMany(Role::class, 'user_roles');
     }
 
-    //define relationship with sessions
+    // define relationship with sessions
     public function sessions()
     {
         return $this->hasMany(Session::class);
@@ -121,6 +119,41 @@ class User extends Authenticatable
         return $this->hasMany(Video::class);
     }
 
+    public function createdChallenges()
+    {
+        return $this->hasMany(Challenge::class, 'created_by_user_id');
+    }
+
+    public function challengeEntries()
+    {
+        return $this->hasMany(ChallengeEntry::class, 'creator_id');
+    }
+
+    public function communityPosts()
+    {
+        return $this->hasMany(CommunityPost::class);
+    }
+
+    public function communityPostViews()
+    {
+        return $this->hasMany(CommunityPostView::class);
+    }
+
+    public function events()
+    {
+        return $this->hasMany(Event::class);
+    }
+
+    public function eventTicketPurchases()
+    {
+        return $this->hasMany(EventTicketPurchase::class, 'buyer_id');
+    }
+
+    public function eventTickets()
+    {
+        return $this->hasMany(EventTicket::class, 'buyer_id');
+    }
+
     public function videoPlaylists()
     {
         return $this->hasMany(VideoPlaylist::class);
@@ -149,6 +182,28 @@ class User extends Authenticatable
         return $this->hasMany(VideoBookmark::class);
     }
 
+    public function conversationParticipants()
+    {
+        return $this->hasMany(ConversationParticipant::class);
+    }
+
+    public function conversations()
+    {
+        return $this->belongsToMany(Conversation::class, 'conversation_participants')
+            ->withPivot(['role', 'last_read_message_id', 'last_read_at', 'archived_at', 'unread_count'])
+            ->withTimestamps();
+    }
+
+    public function notificationDevices()
+    {
+        return $this->hasMany(NotificationDevice::class);
+    }
+
+    public function notificationPreference()
+    {
+        return $this->hasOne(NotificationPreference::class);
+    }
+
     public function follows()
     {
         return $this->hasMany(UserFollow::class, 'follower_id');
@@ -157,6 +212,75 @@ class User extends Authenticatable
     public function followers()
     {
         return $this->hasMany(UserFollow::class, 'followed_id');
+    }
+
+    public function blocks()
+    {
+        return $this->hasMany(UserBlock::class, 'blocker_id');
+    }
+
+    public function blockedBy()
+    {
+        return $this->hasMany(UserBlock::class, 'blocked_id');
+    }
+
+    public function isFanOf(User $other): bool
+    {
+        return UserFollow::query()
+            ->where('follower_id', $this->id)
+            ->where('followed_id', $other->id)
+            ->exists();
+    }
+
+    public function areMutualFans(User $other): bool
+    {
+        return $this->isFanOf($other) && $other->isFanOf($this);
+    }
+
+    public function hasActiveSubscriptionTo(User $creator): bool
+    {
+        return Subscription::query()
+            ->where('subscriber_id', $this->id)
+            ->where('creator_id', $creator->id)
+            ->where('status', 'active')
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->exists();
+    }
+
+    public function isBlockedBy(User $other): bool
+    {
+        return UserBlock::query()
+            ->where('blocker_id', $other->id)
+            ->where('blocked_id', $this->id)
+            ->exists();
+    }
+
+    public function isBlocking(User $other): bool
+    {
+        return UserBlock::query()
+            ->where('blocker_id', $this->id)
+            ->where('blocked_id', $other->id)
+            ->exists();
+    }
+
+    public function signalPreference(): NotificationPreference
+    {
+        return $this->notificationPreference()->firstOrCreate([
+            'user_id' => $this->id,
+        ], [
+            'messages' => true,
+            'challenge_updates' => true,
+            'live_events' => true,
+            'commerce' => true,
+            'marketing' => false,
+            'quiet_hours' => null,
+            'signal_message_policy' => 'people_i_may_know',
+            'signal_allow_contact_sync' => true,
+            'signal_discoverable_by_phone' => true,
+            'signal_discoverable_by_search' => true,
+        ]);
     }
 
     public function receivesBroadcastNotificationsOn(): string
@@ -224,6 +348,49 @@ class User extends Authenticatable
             ->count();
     }
 
+    public function liveSessions()
+    {
+        return $this->hasMany(LiveSession::class, 'creator_id');
+    }
 
+    public function liveViewerSessions()
+    {
+        return $this->hasMany(LiveViewerSession::class);
+    }
 
+    public function liveCohostRequests()
+    {
+        return $this->hasMany(LiveCohostRequest::class, 'requester_id');
+    }
+
+    public function liveCohosts()
+    {
+        return $this->hasMany(LiveCohost::class);
+    }
+
+    public function liveModerators()
+    {
+        return $this->hasMany(LiveModerator::class);
+    }
+
+    public function liveModerationActions()
+    {
+        return $this->hasMany(LiveModerationAction::class, 'actor_id');
+    }
+
+    public function liveProviderIdentity()
+    {
+        return $this->hasOne(LiveProviderIdentity::class);
+    }
+
+    public function liveBattlesAsCreator()
+    {
+        return $this->hasMany(LiveBattle::class, 'creator_id');
+    }
+
+    public function liveBattlesAsOpponent()
+    {
+        return $this->hasMany(LiveBattle::class, 'opponent_id');
+    }
 }
+

@@ -35,7 +35,7 @@
 
         .shell {
             width: 100%;
-            max-width: 400px;
+            max-width: 480px;
         }
 
         .card {
@@ -44,6 +44,64 @@
             border-radius: 16px;
             padding: 32px 32px 24px;
             box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.06);
+        }
+
+        .consent-panel {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: linear-gradient(180deg, #f8fbfe 0%, #ffffff 100%);
+            padding: 18px;
+            margin-bottom: 22px;
+        }
+
+        .consent-kicker {
+            margin: 0 0 8px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--brand-dark);
+        }
+
+        .consent-title {
+            margin: 0 0 8px;
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1.35;
+            color: var(--text);
+        }
+
+        .consent-copy {
+            margin: 0;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        .consent-meta {
+            display: grid;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .consent-meta-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            border-top: 1px solid var(--border);
+            padding-top: 10px;
+            font-size: 13px;
+        }
+
+        .consent-meta-row span {
+            color: var(--muted);
+        }
+
+        .consent-meta-row strong {
+            color: var(--text);
+            font-weight: 600;
+            text-align: right;
+            word-break: break-word;
         }
 
         .brand-row {
@@ -209,8 +267,32 @@
                 <span class="brand-name">Kulsah</span>
             </div>
 
+            @if (!empty($oauthClient))
+                <section class="consent-panel" aria-label="OAuth consent context">
+                    <p class="consent-kicker">Mobile sign-in request</p>
+                    <h1 class="consent-title">{{ $oauthClient->name }} wants to use your Kulsah account</h1>
+                    <p class="consent-copy">
+                        This {{ $oauthClient->clientTypeLabel() }} app is asking you to sign in through Kulsah.
+                        After you log in, you will review and approve the app permissions before returning to the app.
+                    </p>
+
+                    <div class="consent-meta">
+                        <div class="consent-meta-row">
+                            <span>App type</span>
+                            <strong>{{ $oauthClient->clientTypeLabel() }}</strong>
+                        </div>
+                        <div class="consent-meta-row">
+                            <span>Redirect URI</span>
+                            <strong>{{ $oauthRedirectUri ?? 'Not set' }}</strong>
+                        </div>
+                    </div>
+                </section>
+            @endif
+
             <h1>Sign in to continue</h1>
-            <p class="subtitle">Use your Kulsah account to approve this third-party app and return to the developer's redirect URL.</p>
+            <p class="subtitle">
+                Use your Kulsah account to approve this app and return safely to the OAuth flow.
+            </p>
 
             @if ($errors->any())
                 <div class="error-banner">
@@ -253,7 +335,7 @@
             </form>
 
             <div class="note">
-                First-party apps can still use the API login endpoint. This page is only for browser-based OAuth authorization.
+                First-party apps can still use the API login endpoint. This page is only for browser-based OAuth authorization, including Android and iOS native app sign-in.
             </div>
         </section>
     </main>

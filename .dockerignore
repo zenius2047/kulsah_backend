@@ -1,0 +1,11 @@
+vendor
+node_modules
+.git
+.gitignore
+.env
+storage/*.key
+storage/oauth-*.key
+storage/firebase/**
+npm-debug.log
+Dockerfile
+.dockerignore

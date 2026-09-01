@@ -2,18 +2,19 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\RoleMiddleware;
 use App\Jobs\ProcessVideoJob;
-use App\Jobs\RenderVideoEditsJob;
 use App\Models\Subscription;
 use App\Models\User;
 use App\Models\UserFollow;
+use App\Models\Video;
 use App\Models\VideoBookmark;
 use App\Models\VideoComment;
 use App\Models\VideoLike;
-use App\Models\Video;
 use App\Notifications\VideoMentionedNotification;
 use App\Services\CloudinaryService;
 use App\Services\VideoInspectionService;
+use App\Services\VideoService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
@@ -26,6 +27,71 @@ use Tests\TestCase;
 class VideoPipelineTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_direct_upload_that_requires_editing_defers_cloudinary_processing(): void
+    {
+        Storage::fake('testlocal');
+        config()->set('video.storage_disk', 'testlocal');
+        Queue::fake();
+
+        $creator = User::factory()->create([
+            'username' => 'edit_first_creator',
+        ]);
+        $sourceKey = "videos/originals/{$creator->id}/edit-first.mp4";
+        Storage::disk('testlocal')->put($sourceKey, 'video-bytes');
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'source_key' => $sourceKey,
+            'status' => 'draft',
+            'metadata' => [
+                'upload_mode' => 'direct',
+                'upload_state' => 'awaiting_upload',
+                'storage_disk' => 'testlocal',
+                'requires_editing' => true,
+            ],
+        ]);
+
+        $completed = app(VideoService::class)->finalizeDirectUpload($video, (int) $creator->id);
+
+        $this->assertSame('draft', $completed->status);
+        $this->assertSame('awaiting_edit', $completed->render_status);
+        $this->assertSame(100, $completed->progress_percentage);
+        $this->assertSame('uploaded', data_get($completed->metadata, 'upload_state'));
+        $this->assertSame('awaiting_edit', data_get($completed->metadata, 'processing_state'));
+        Queue::assertNotPushed(ProcessVideoJob::class);
+    }
+
+    public function test_direct_upload_without_editing_still_queues_cloudinary_processing(): void
+    {
+        Storage::fake('testlocal');
+        config()->set('video.storage_disk', 'testlocal');
+        Queue::fake();
+
+        $creator = User::factory()->create([
+            'username' => 'direct_publish_creator',
+        ]);
+        $sourceKey = "videos/originals/{$creator->id}/publish-directly.mp4";
+        Storage::disk('testlocal')->put($sourceKey, 'video-bytes');
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'source_key' => $sourceKey,
+            'status' => 'draft',
+            'metadata' => [
+                'upload_mode' => 'direct',
+                'upload_state' => 'awaiting_upload',
+                'storage_disk' => 'testlocal',
+                'requires_editing' => false,
+            ],
+        ]);
+
+        $completed = app(VideoService::class)->finalizeDirectUpload($video, (int) $creator->id);
+
+        $this->assertSame('uploaded', data_get($completed->metadata, 'upload_state'));
+        $this->assertSame('queued', data_get($completed->metadata, 'processing_state'));
+        Queue::assertPushed(ProcessVideoJob::class);
+    }
 
     public function test_creator_can_upload_video_and_queue_processing(): void
     {
@@ -119,7 +185,7 @@ class VideoPipelineTest extends TestCase
 
         $uploadResponse = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson('/api/v1/creator/videos', [
                 'video' => UploadedFile::fake()->create('draft.mp4', 1024, 'video/mp4'),
             ]);
@@ -134,7 +200,7 @@ class VideoPipelineTest extends TestCase
 
         $updateResponse = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->patchJson("/api/v1/creator/videos/{$videoId}", [
                 'caption' => 'Updated caption for @draft_user',
                 'content_type' => ['education', 'tutorial'],
@@ -162,7 +228,7 @@ class VideoPipelineTest extends TestCase
         Notification::assertSentTo(
             $mentioned,
             VideoMentionedNotification::class,
-            function (VideoMentionedNotification $notification) use ($videoId, $creator, $mentioned): bool {
+            function (VideoMentionedNotification $notification) use ($videoId, $creator): bool {
                 return (int) $notification->video->id === (int) $videoId
                     && (int) $notification->actor->id === (int) $creator->id
                     && in_array('draft_user', $notification->mentions, true);
@@ -229,7 +295,7 @@ class VideoPipelineTest extends TestCase
 
         $response = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->getJson("/api/v1/creator/videos/{$video->id}");
 
         $response->assertOk()
@@ -321,7 +387,7 @@ class VideoPipelineTest extends TestCase
 
         $allResponse = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->getJson('/api/v1/creator/videos');
 
         $allResponse->assertOk()
@@ -332,7 +398,7 @@ class VideoPipelineTest extends TestCase
 
         $draftOnlyResponse = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->getJson('/api/v1/creator/videos?draft=true');
 
         $draftOnlyResponse->assertOk()
@@ -343,7 +409,7 @@ class VideoPipelineTest extends TestCase
 
         $premiumResponse = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->getJson('/api/v1/creator/videos?premium=true');
 
         $premiumResponse->assertOk()
@@ -353,7 +419,7 @@ class VideoPipelineTest extends TestCase
 
         $categoryResponse = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->getJson('/api/v1/creator/videos?category=music');
 
         $categoryResponse->assertOk()
@@ -427,7 +493,7 @@ class VideoPipelineTest extends TestCase
 
         $response = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->getJson('/api/v1/creator/videos/analytics');
 
         $response->assertOk()
@@ -455,7 +521,7 @@ class VideoPipelineTest extends TestCase
 
         $draftResponse = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson('/api/v1/creator/videos/drafts', [
                 'title' => 'Processing video',
                 'caption' => 'Still uploading',
@@ -470,7 +536,7 @@ class VideoPipelineTest extends TestCase
 
         $response = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->patchJson("/api/v1/creator/videos/{$videoId}/progress", [
                 'progress_percentage' => 68,
             ]);
@@ -483,7 +549,7 @@ class VideoPipelineTest extends TestCase
 
         $polled = $this
             ->actingAs($creator, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->getJson("/api/v1/creator/videos/{$videoId}/progress");
 
         $polled->assertOk()
@@ -552,7 +618,7 @@ class VideoPipelineTest extends TestCase
         Notification::assertSentTo(
             $mentioned,
             VideoMentionedNotification::class,
-            function (VideoMentionedNotification $notification) use ($videoId, $creator, $mentioned): bool {
+            function (VideoMentionedNotification $notification) use ($videoId, $creator): bool {
                 return (int) $notification->video->id === (int) $videoId
                     && (int) $notification->actor->id === (int) $creator->id
                     && in_array('dance', $notification->hashtags, true)
@@ -564,18 +630,23 @@ class VideoPipelineTest extends TestCase
     public function test_video_processing_keeps_a_creator_uploaded_thumbnail(): void
     {
         config()->set('logging.default', 'null');
+        Storage::fake('testlocal');
+        config()->set('video.storage_disk', 'testlocal');
 
         $creator = User::factory()->create([
             'username' => 'creator_thumbnail',
         ]);
 
+        $sourceKey = 'videos/originals/1/thumbnail-test.mp4';
+        Storage::disk('testlocal')->put($sourceKey, 'raw-video');
         $video = Video::create([
             'user_id' => $creator->id,
             'title' => 'Thumbnail test',
             'caption' => 'Keeping my own cover image',
             'visibility' => 'public',
             'source_url' => 'https://example.com/source.mp4',
-            'source_key' => 'videos/originals/1/thumbnail-test.mp4',
+            'source_key' => $sourceKey,
+            'source_disk' => 'testlocal',
             'thumbnail_url' => 'https://example.com/custom-thumbnail.jpg',
             'duration' => 18,
             'status' => 'processing',
@@ -606,6 +677,36 @@ class VideoPipelineTest extends TestCase
         $this->assertSame('ready', $video->status);
     }
 
+    public function test_original_processing_job_skips_an_edit_first_video(): void
+    {
+        $creator = User::factory()->create([
+            'username' => 'edit_first_job_creator',
+        ]);
+
+        $video = Video::create([
+            'user_id' => $creator->id,
+            'source_key' => "videos/originals/{$creator->id}/edit-first-job.mp4",
+            'status' => 'draft',
+            'render_status' => 'awaiting_edit',
+            'metadata' => [
+                'requires_editing' => true,
+                'upload_state' => 'uploaded',
+            ],
+        ]);
+
+        $this->mock(CloudinaryService::class, function ($mock): void {
+            $mock->shouldNotReceive('uploadVideoFromS3Key');
+        });
+
+        (new ProcessVideoJob($video))->handle(app(CloudinaryService::class));
+
+        $video->refresh();
+
+        $this->assertSame('draft', $video->status);
+        $this->assertSame('awaiting_edit', $video->render_status);
+        $this->assertNull($video->cloudinary_public_id);
+    }
+
     public function test_user_can_record_a_video_view_once_during_cooldown(): void
     {
         config()->set('cache.default', 'array');
@@ -625,7 +726,12 @@ class VideoPipelineTest extends TestCase
             'visibility' => 'public',
             'source_url' => 'https://example.com/source.mp4',
             'source_key' => 'videos/originals/1/example.mp4',
-            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'hls_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'playback_type' => 'hls',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
             'thumbnail_url' => 'https://res.cloudinary.com/demo/video/upload/example.jpg',
             'duration' => 42,
             'status' => 'ready',
@@ -635,7 +741,7 @@ class VideoPipelineTest extends TestCase
 
         $first = $this
             ->actingAs($viewer, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson("/api/v1/general/videos/{$video->id}/view");
 
         $first->assertOk()
@@ -643,7 +749,7 @@ class VideoPipelineTest extends TestCase
 
         $second = $this
             ->actingAs($viewer, 'sanctum')
-            ->withoutMiddleware(\App\Http\Middleware\RoleMiddleware::class)
+            ->withoutMiddleware(RoleMiddleware::class)
             ->postJson("/api/v1/general/videos/{$video->id}/view");
 
         $second->assertOk()
@@ -720,7 +826,12 @@ class VideoPipelineTest extends TestCase
             'visibility' => 'public',
             'source_url' => 'https://example.com/source.mp4',
             'source_key' => 'videos/originals/1/example.mp4',
-            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.mp4',
+            'cdn_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'streaming_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'hls_url' => 'https://res.cloudinary.com/demo/video/upload/example.m3u8',
+            'playback_type' => 'hls',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
             'thumbnail_url' => 'https://res.cloudinary.com/demo/video/upload/example.jpg',
             'duration' => 42,
             'status' => 'ready',

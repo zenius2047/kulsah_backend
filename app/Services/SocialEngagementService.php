@@ -329,3 +329,4 @@ class SocialEngagementService
         $this->videoCacheService->invalidateViewer((int) $user->id);
     }
 }
+

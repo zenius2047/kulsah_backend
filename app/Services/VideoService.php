@@ -3,17 +3,17 @@
 namespace App\Services;
 
 use App\Jobs\ProcessVideoJob;
-use App\Models\Video;
 use App\Models\User;
+use App\Models\Video;
 use App\Models\VideoView;
 use App\Notifications\VideoMentionedNotification;
-use App\Services\FeedService;
+use App\Services\NotificationDeliveryService;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
 use Throwable;
@@ -26,8 +26,7 @@ class VideoService
         private readonly VideoCaptionParserService $videoCaptionParserService,
         private readonly FastApiRecommendationService $fastApiRecommendationService,
         private readonly FeedService $feedService,
-    ) {
-    }
+    ) {}
 
     public function createDraftVideo(array $data, int $userId): Video
     {
@@ -42,6 +41,8 @@ class VideoService
 
         $video = Video::create([
             'user_id' => $userId,
+            'media_type' => 'video',
+            'purpose' => $data['purpose'] ?? 'post_video',
             'title' => $data['title'] ?? null,
             'caption' => $data['caption'] ?? null,
             'content_type' => $primaryContentType,
@@ -49,6 +50,8 @@ class VideoService
             'visibility' => $data['visibility'] ?? 'public',
             'thumbnail_url' => $data['thumbnail_url'] ?? null,
             'status' => 'draft',
+            'upload_status' => 'initialized',
+            'processing_status' => 'initialized',
             'progress_percentage' => 0,
             'metadata' => [
                 'caption_hashtags' => [],
@@ -122,6 +125,13 @@ class VideoService
                 $video->update(array_filter([
                     'source_url' => $stored['source_url'],
                     'source_key' => $stored['source_key'],
+                    'source_disk' => $stored['disk'],
+                    'original_filename' => $data['original_name'] ?? $file->getClientOriginalName(),
+                    'mime_type' => $data['mime_type'] ?? $file->getMimeType(),
+                    'file_size' => $data['size'] ?? $file->getSize(),
+                    'upload_status' => 'uploaded',
+                    'processing_status' => 'queued',
+                    'uploaded_at' => now(),
                     'thumbnail_url' => $thumbnail['source_url'] ?? ($data['thumbnail_url'] ?? null),
                     'progress_percentage' => 100,
                     'metadata' => array_merge($video->metadata ?? [], array_filter([
@@ -253,6 +263,13 @@ class VideoService
             $video->update([
                 'source_url' => $stored['source_url'],
                 'source_key' => $stored['source_key'],
+                'source_disk' => $stored['disk'],
+                'original_filename' => $file->getClientOriginalName(),
+                'mime_type' => $file->getMimeType(),
+                'file_size' => $file->getSize(),
+                'upload_status' => 'uploaded',
+                'processing_status' => 'queued',
+                'uploaded_at' => now(),
                 'thumbnail_url' => $thumbnail['source_url'] ?? $video->thumbnail_url,
                 'status' => 'draft',
                 'progress_percentage' => 100,
@@ -275,7 +292,7 @@ class VideoService
             if ($thumbnail) {
                 $this->videoStorageService->delete($thumbnail['source_key'], $thumbnail['disk']);
             }
-                throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
+            throw new RuntimeException('Failed to attach the uploaded video: '.$throwable->getMessage(), previous: $throwable);
         }
 
         ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
@@ -311,6 +328,8 @@ class VideoService
 
             $video = Video::create([
                 'user_id' => $userId,
+                'media_type' => 'video',
+                'purpose' => $data['purpose'] ?? 'post_video',
                 'title' => $data['title'] ?? null,
                 'caption' => $data['caption'] ?? null,
                 'content_type' => $primaryContentType,
@@ -319,6 +338,12 @@ class VideoService
                 'thumbnail_url' => $thumbnail['source_url'] ?? null,
                 'source_url' => $upload['source_url'],
                 'source_key' => $upload['source_key'],
+                'source_disk' => $upload['disk'],
+                'original_filename' => $data['original_name'] ?? null,
+                'mime_type' => $data['mime_type'] ?? null,
+                'file_size' => $data['size'] ?? null,
+                'upload_status' => 'initialized',
+                'processing_status' => 'initialized',
                 'status' => 'draft',
                 'progress_percentage' => 0,
                 'metadata' => [
@@ -328,6 +353,7 @@ class VideoService
                     'original_name' => $data['original_name'] ?? null,
                     'mime_type' => $data['mime_type'] ?? null,
                     'size' => $data['size'] ?? null,
+                    'requires_editing' => (bool) ($data['requires_editing'] ?? false),
                     'thumbnail_disk' => $thumbnail['disk'] ?? null,
                     'thumbnail_source_key' => $thumbnail['source_key'] ?? null,
                     'thumbnail_original_name' => $thumbnailFile?->getClientOriginalName(),
@@ -352,46 +378,90 @@ class VideoService
 
     public function finalizeDirectUpload(Video $video, int $userId): Video
     {
-        $video = $video->fresh();
+        $dispatchProcessing = false;
 
-        if (! $video) {
-            throw ValidationException::withMessages([
-                'video' => 'The selected video does not exist.',
+        $video = DB::transaction(function () use ($video, $userId, &$dispatchProcessing): Video {
+            $video = Video::query()->lockForUpdate()->findOrFail($video->id);
+
+            if ((int) $video->user_id !== (int) $userId) {
+                throw ValidationException::withMessages(['video' => 'You are not allowed to update this video.']);
+            }
+            if (! $video->source_key) {
+                throw ValidationException::withMessages(['video' => 'The upload session is missing a source key.']);
+            }
+            if ($video->upload_status?->value === 'uploaded') {
+                return $video;
+            }
+
+            $disk = $video->source_disk ?: data_get($video->metadata, 'storage_disk', config('video.storage_disk', 's3'));
+            $storage = Storage::disk($disk);
+            if (! $storage->exists($video->source_key)) {
+                throw ValidationException::withMessages(['video' => 'The uploaded file has not been received yet. Please finish the upload and try again.']);
+            }
+
+            $actualSize = $storage->size($video->source_key);
+            $maximumBytes = (int) config('video.max_upload_kb', 102400) * 1024;
+            if ($actualSize <= 0 || $actualSize > $maximumBytes) {
+                throw ValidationException::withMessages(['video' => 'The uploaded object has an invalid file size.']);
+            }
+            if ($video->file_size && (int) $video->file_size !== (int) $actualSize) {
+                throw ValidationException::withMessages(['video' => 'The uploaded object size does not match the initialized upload.']);
+            }
+
+            $requiresEditing = (bool) data_get($video->metadata, 'requires_editing', false);
+            $dispatchProcessing = ! $requiresEditing;
+            $video->update([
+                'status' => 'draft',
+                'upload_status' => 'uploaded',
+                'processing_status' => $requiresEditing ? 'initialized' : 'queued',
+                'uploaded_at' => now(),
+                'progress_percentage' => 100,
+                'render_status' => $requiresEditing ? 'awaiting_edit' : $video->render_status,
+                'metadata' => array_merge($video->metadata ?? [], [
+                    'upload_state' => 'uploaded',
+                    'upload_completed_at' => now()->toISOString(),
+                    'verified_size' => $actualSize,
+                    'processing_state' => $requiresEditing ? 'awaiting_edit' : 'queued',
+                ]),
             ]);
+
+            return $video->fresh();
+        });
+
+        if ($dispatchProcessing) {
+            ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
         }
 
-        if ((int) $video->user_id !== (int) $userId) {
-            throw ValidationException::withMessages([
-                'video' => 'You are not allowed to update this video.',
+        return $video;
+    }
+
+    public function retryProcessing(Video $video, int $userId): Video
+    {
+        $video = DB::transaction(function () use ($video, $userId): Video {
+            $video = Video::query()->lockForUpdate()->findOrFail($video->id);
+            if ((int) $video->user_id !== (int) $userId) {
+                throw ValidationException::withMessages(['video' => 'You are not allowed to retry this video.']);
+            }
+            if ($video->processing_status?->value !== 'processing_failed') {
+                throw ValidationException::withMessages(['video' => 'Only failed video processing may be retried.']);
+            }
+            $disk = $video->source_disk ?: config('video.storage_disk', 's3');
+            if (! $video->source_key || ! Storage::disk($disk)->exists($video->source_key)) {
+                throw ValidationException::withMessages(['video' => 'The original source is unavailable for retry.']);
+            }
+            $video->update([
+                'status' => 'draft',
+                'processing_status' => 'queued',
+                'processing_error' => null,
+                'failed_at' => null,
             ]);
-        }
 
-        if (! $video->source_key) {
-            throw ValidationException::withMessages([
-                'video' => 'The upload session is missing a source key.',
-            ]);
-        }
+            return $video->fresh();
+        });
 
-        $disk = data_get($video->metadata, 'storage_disk', config('video.storage_disk', 's3'));
+        ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
 
-        if (! Storage::disk($disk)->exists($video->source_key)) {
-            throw ValidationException::withMessages([
-                'video' => 'The uploaded file has not been received yet. Please finish the upload and try again.',
-            ]);
-        }
-
-        $video->update([
-            'status' => 'draft',
-            'progress_percentage' => 100,
-            'metadata' => array_merge($video->metadata ?? [], [
-                'upload_state' => 'uploaded',
-                'upload_completed_at' => now()->toISOString(),
-            ]),
-        ]);
-
-        ProcessVideoJob::dispatch($video->fresh())->onQueue(config('video.processing_queue', 'videos'));
-
-        return $video->fresh();
+        return $video;
     }
 
     public function updateUploadProgress(Video $video, int $progressPercentage): Video
@@ -418,6 +488,7 @@ class VideoService
 
         $video->update([
             'progress_percentage' => max(0, min(100, $progressPercentage)),
+            'upload_status' => $progressPercentage < 100 ? 'uploading' : $video->upload_status,
         ]);
 
         return $video->fresh();
@@ -473,6 +544,10 @@ class VideoService
 
         if (array_key_exists('visibility', $data)) {
             $updates['visibility'] = $data['visibility'] ?? 'public';
+        }
+
+        if (array_key_exists('allow_duet', $data)) {
+            $updates['allow_duet'] = (bool) $data['allow_duet'];
         }
 
         if ($updates !== []) {
@@ -555,3 +630,4 @@ class VideoService
         return $this->videoStorageService->uploadThumbnail($thumbnailFile, $userId);
     }
 }
+

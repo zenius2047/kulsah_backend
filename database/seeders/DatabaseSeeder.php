@@ -19,6 +19,9 @@ class DatabaseSeeder extends Seeder
             RoleSeeder::class,
             UserSeeder::class,
             KulCoinCatalogSeeder::class,
+            GhsKulCoinCatalogSeeder::class,
+            StickerSeeder::class,
         ]);
     }
 }
+

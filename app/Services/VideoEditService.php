@@ -10,8 +10,7 @@ class VideoEditService
 {
     public function __construct(
         private readonly VideoProjectNormalizer $videoProjectNormalizer,
-    ) {
-    }
+    ) {}
 
     /**
      * Queue a Cloudinary timeline render using the new frontend payload.
@@ -40,6 +39,20 @@ class VideoEditService
             ]);
         }
 
+        if (data_get($video->metadata, 'upload_mode') === 'direct'
+            && data_get($video->metadata, 'upload_state') !== 'uploaded') {
+            throw ValidationException::withMessages([
+                'video' => 'Complete the primary-storage upload before requesting edits.',
+            ]);
+        }
+
+        if (! (bool) data_get($video->metadata, 'requires_editing', false)
+            && $video->status !== 'ready') {
+            throw ValidationException::withMessages([
+                'video' => 'Wait for the original video to finish processing before requesting edits.',
+            ]);
+        }
+
         $timeline = $this->applyVideoDurationFallback($video, $timeline);
         $normalizedProject = $this->videoProjectNormalizer->normalize($timeline, $userId);
         $normalizedTimeline = array_merge([
@@ -61,6 +74,7 @@ class VideoEditService
             'render_completed_at' => null,
             'metadata' => array_merge($video->metadata ?? [], [
                 'edit_status' => 'queued',
+                'processing_state' => 'edit_queued',
                 'edit_requested_at' => now()->toISOString(),
                 'schema_version' => $normalizedProject['schema_version'],
                 'edit_project' => $normalizedProject['project'],
