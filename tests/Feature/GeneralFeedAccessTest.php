@@ -71,6 +71,11 @@ class GeneralFeedAccessTest extends TestCase
             ->getJson('/api/v1/general/feed?limit=10')
             ->assertOk()
             ->assertJsonPath('data.0.id', (string) $video->id);
+
+        $this->actingAs($viewer, 'sanctum')
+            ->getJson('/api/v1/general/feed?limit=10')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', (string) $video->id);
     }
     public function test_invalid_bearer_token_is_rejected_for_public_feed(): void
     {

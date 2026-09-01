@@ -86,10 +86,6 @@ class FeedController extends Controller
 
         $payload['live_streams'] = LiveSessionResource::collection($liveStreams)->resolve($request);
 
-        $this->feedViewerContextService->recordServedVideos(
-            $viewerKey,
-            collect($payload['data'] ?? [])->pluck('id')->all()
-        );
 
         return response()->json($payload);
     }
@@ -147,10 +143,6 @@ class FeedController extends Controller
         );
 
 
-        $this->feedViewerContextService->recordServedVideos(
-            $viewerKey,
-            collect($payload['data'] ?? [])->all()
-        );
 
         return response()->json($payload);
     }

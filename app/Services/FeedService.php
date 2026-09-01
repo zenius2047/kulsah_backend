@@ -184,7 +184,11 @@ class FeedService
         }
 
         $candidateIds = $candidateIds->merge($this->collectCandidateIds(
-            (clone $base)->whereIn('purpose', ['challenge_video', 'challenge_instruction_video', 'challenge_entry'])->latest('created_at')->latest('id'),
+            (clone $base)->where(function (Builder $challengeQuery): void {
+                $challengeQuery
+                    ->whereIn('purpose', ['challenge_video', 'challenge_instruction_video', 'challenge_entry'])
+                    ->orWhereHas('challengeEntries');
+            })->latest('created_at')->latest('id'),
             $bucketSize
         ));
 
@@ -204,7 +208,7 @@ class FeedService
         $candidateIds = $candidateIds
             ->filter()
             ->map(static fn ($id) => (int) $id)
-            ->when($seenVideoIds !== [], fn (Collection $collection) => $collection->reject(fn (int $id) => in_array($id, $seenVideoIds, true)))
+
             ->when($blockedCreatorIds !== [], function (Collection $collection) use ($blockedCreatorIds): Collection {
                 return $collection->filter(function (int $id) use ($blockedCreatorIds): bool {
                     $creatorId = Video::query()->whereKey($id)->value('user_id');
@@ -260,10 +264,6 @@ class FeedService
             $query->whereNotIn('user_id', $blockedCreatorIds);
         }
 
-        $seenVideoIds = array_map('intval', $context['seen_video_ids'] ?? []);
-        if ($seenVideoIds !== []) {
-            $query->whereNotIn('id', $seenVideoIds);
-        }
 
         return $query;
     }
