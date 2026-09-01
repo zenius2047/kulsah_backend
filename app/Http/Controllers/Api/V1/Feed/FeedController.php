@@ -164,7 +164,7 @@ class FeedController extends Controller
         }
 
         $videosById = Video::query()
-            ->with(['user', 'duetSourceVideo.user'])
+            ->with(['user', 'duetSourceVideo.user', 'challengeEntries.challenge'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->whereIn('id', $videoIds)
             ->get()
@@ -221,10 +221,46 @@ class FeedController extends Controller
             $video->setAttribute('is_subscribed', $subscribedCreatorIds->has((int) $video->user_id));
         });
 
-        return $videoIds
+        $orderedVideos = $videoIds
             ->map(static fn (int $id) => $videosById->get($id))
             ->filter()
             ->values();
+
+        return $this->composeFeedVideos($orderedVideos);
+    }
+
+    private function composeFeedVideos(Collection $videos): Collection
+    {
+        $battleVideos = $videos
+            ->filter(fn (Video $video): bool => $this->isCreatorBattleVideo($video))
+            ->shuffle();
+
+        if ($battleVideos->isEmpty()) {
+            return $videos;
+        }
+
+        $selectedBattle = $battleVideos->first();
+
+        $remainingVideos = $videos
+            ->reject(fn (Video $video): bool => $this->isCreatorBattleVideo($video))
+            ->values();
+        $insertAt = random_int(0, $remainingVideos->count());
+        $remainingVideos->splice($insertAt, 0, [$selectedBattle]);
+
+        return $remainingVideos->values();
+    }
+
+    private function isCreatorBattleVideo(Video $video): bool
+    {
+        if (! $video->relationLoaded('challengeEntries')) {
+            return false;
+        }
+
+        return $video->challengeEntries->contains(function ($entry): bool {
+            $challenge = $entry->relationLoaded('challenge') ? $entry->challenge : null;
+
+            return $challenge?->isCreatorBattle() === true;
+        });
     }
 
     private function validateRecommendationRequest(Request $request): array
