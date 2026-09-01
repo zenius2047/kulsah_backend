@@ -43,6 +43,35 @@ class GeneralFeedAccessTest extends TestCase
             ->assertJsonPath('data.0.id', (string) $video->id);
     }
 
+    public function test_authenticated_users_receive_public_videos_including_their_own(): void
+    {
+        config()->set('cache.default', 'array');
+        config()->set('services.fastapi.enabled', false);
+        Cache::flush();
+
+        $viewer = User::factory()->create();
+        $video = Video::create([
+            'user_id' => $viewer->id,
+            'title' => 'Authenticated feed clip',
+            'caption' => 'Visible in the feed',
+            'visibility' => 'public',
+            'source_url' => 'https://example.com/authenticated.mp4',
+            'source_key' => 'videos/originals/authenticated.mp4',
+            'cdn_url' => 'https://example.com/authenticated.mp4',
+            'thumbnail_url' => 'https://example.com/authenticated.jpg',
+            'duration' => 12,
+            'status' => 'ready',
+            'upload_status' => 'uploaded',
+            'processing_status' => 'ready',
+            'playback_type' => 'hls',
+            'hls_url' => 'https://example.com/authenticated.m3u8',
+        ]);
+
+        $this->actingAs($viewer, 'sanctum')
+            ->getJson('/api/v1/general/feed?limit=10')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', (string) $video->id);
+    }
     public function test_invalid_bearer_token_is_rejected_for_public_feed(): void
     {
         config()->set('cache.default', 'array');

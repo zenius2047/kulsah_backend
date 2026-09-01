@@ -16,7 +16,7 @@ class FeedService
 
     private const CACHE_VERSION_KEY = 'feed:version';
 
-    private const FEED_RULES_VERSION = 3;
+    private const FEED_RULES_VERSION = 4;
 
     public function __construct(
         private readonly FastApiRecommendationService $fastApiRecommendationService,
@@ -47,6 +47,12 @@ class FeedService
 
         $candidateVideos = $this->filterInitialVibeVideos($candidateVideos, $context);
         $rankedVideos = $this->rankVideosForUser($candidateVideos, (int) ($context['user_id'] ?? 0), $context);
+
+        // Refill from the complete eligible pool when viewer history exhausted the feed.
+        if ($rankedVideos->isEmpty()) {
+            $candidateVideos = $this->fallbackRecentVideos($candidateLimit, $context, true);
+            $rankedVideos = $this->rankVideosForUser($candidateVideos, (int) ($context['user_id'] ?? 0), $context);
+        }
         $rankedVideos = $this->applyDiversification($rankedVideos);
         $total = $rankedVideos->count();
         $pagedVideos = $rankedVideos->forPage($page, $limit)->values();
@@ -239,7 +245,7 @@ class FeedService
             ->values();
     }
 
-    private function eligibleVideoQuery(array $context = []): Builder
+    private function eligibleVideoQuery(array $context = [], bool $includeSeen = false): Builder
     {
         $query = Video::query()
             ->ready()
@@ -248,10 +254,6 @@ class FeedService
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->withExists(['challengeEntries']);
 
-        $userId = (int) ($context['user_id'] ?? 0);
-        if ($userId > 0) {
-            $query->where('user_id', '!=', $userId);
-        }
 
         $blockedCreatorIds = array_map('intval', $context['blocked_creator_ids'] ?? []);
         if ($blockedCreatorIds !== []) {
@@ -292,9 +294,9 @@ class FeedService
         });
     }
 
-    private function fallbackRecentVideos(int $candidateLimit, array $context = []): Collection
+    private function fallbackRecentVideos(int $candidateLimit, array $context = [], bool $includeSeen = false): Collection
     {
-        $base = $this->eligibleVideoQuery($context);
+        $base = $this->eligibleVideoQuery($context, $includeSeen);
 
         return Video::query()
             ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user'])
