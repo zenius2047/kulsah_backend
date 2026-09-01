@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
 use App\Http\Controllers\Api\V1\Challenge\ChallengeController;
@@ -232,6 +232,7 @@ Route::prefix('general')
 Route::prefix('general')
     ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
+        Route::post('/live/{liveSession}/preview', [LiveController::class, 'preview'])->middleware('throttle:live-token');
         Route::post('/live/{liveSession}/join', [LiveController::class, 'join']);
         Route::post('/live/{liveSession}/leave', [LiveController::class, 'leave']);
         Route::post('/live/{liveSession}/comments', [LiveController::class, 'comment']);

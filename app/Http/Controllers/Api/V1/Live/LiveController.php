@@ -130,6 +130,16 @@ class LiveController extends Controller
         ]);
     }
 
+    public function preview(LiveSession $liveSession, Request $request, LiveAuthorizationService $authorization, AgoraTokenService $tokens)
+    {
+        $authorization->assertViewerCanJoin($request->user(), $liveSession);
+
+        return response()->json([
+            'data' => new LiveSessionResource($liveSession->fresh('creator')),
+            'preview' => true,
+            'credentials' => $tokens->generateAudienceToken($liveSession, $request->user()),
+        ]);
+    }
     public function join(LiveSession $liveSession, Request $request, LiveAuthorizationService $authorization, LivePresenceService $presence, AgoraTokenService $tokens)
     {
         $authorization->assertViewerCanJoin($request->user(), $liveSession);
