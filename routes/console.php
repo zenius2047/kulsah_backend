@@ -15,6 +15,11 @@ Schedule::command('wallets:settle-pending-funds')
     ->withoutOverlapping()
     ->onOneServer();
 
+Schedule::command('live:reconcile')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->onOneServer();
+
 Schedule::command('notification-devices:prune-stale')
     ->dailyAt('03:15')
     ->withoutOverlapping()

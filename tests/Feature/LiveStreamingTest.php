@@ -81,6 +81,44 @@ class LiveStreamingTest extends TestCase
             'watch_seconds' => 253,
         ]);
     }
+    public function test_stale_live_enters_reconnecting_before_it_is_ended(): void
+    {
+        $creator = $this->creatorUser('live_creator_timeout');
+        $live = LiveSession::factory()->create([
+            'creator_id' => $creator->id,
+            'status' => LiveStatus::LIVE,
+            'last_heartbeat_at' => now()->subSeconds(16),
+        ]);
+
+        config()->set('live.heartbeat_ttl_seconds', 15);
+        config()->set('live.reconnect_grace_seconds', 45);
+
+        $reconciled = app(LiveSessionService::class)->reconcileStaleLive($live);
+
+        $this->assertTrue($reconciled);
+        $this->assertSame(LiveStatus::RECONNECTING, $live->refresh()->status);
+    }
+
+    public function test_reconnecting_live_is_ended_after_grace_period(): void
+    {
+        $creator = $this->creatorUser('live_creator_timeout_end');
+        $live = LiveSession::factory()->create([
+            'creator_id' => $creator->id,
+            'status' => LiveStatus::RECONNECTING,
+        ]);
+        $live->forceFill(['updated_at' => Carbon::now()->subSeconds(46)])->saveQuietly();
+
+        config()->set('live.reconnect_grace_seconds', 45);
+
+        $reconciled = app(LiveSessionService::class)->reconcileStaleLive($live->refresh());
+
+        $this->assertTrue($reconciled);
+        $this->assertDatabaseHas('live_sessions', [
+            'id' => $live->id,
+            'status' => LiveStatus::ENDED->value,
+            'termination_reason' => 'system_timeout',
+        ]);
+    }
     public function test_viewer_cannot_join_subscriber_only_live_without_active_subscription(): void
     {
         $creator = $this->creatorUser('live_creator_two');
