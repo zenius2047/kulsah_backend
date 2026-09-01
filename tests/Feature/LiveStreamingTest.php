@@ -62,6 +62,25 @@ class LiveStreamingTest extends TestCase
         $this->assertSame('creator_ended', $ended->termination_reason);
     }
 
+    public function test_leaving_a_live_persists_integer_watch_seconds(): void
+    {
+        $creator = $this->creatorUser('live_creator_watch_seconds');
+        $viewer = User::factory()->create(['activated' => true]);
+        $live = LiveSession::factory()->create([
+            'creator_id' => $creator->id,
+            'status' => LiveStatus::LIVE,
+        ]);
+
+        [$session] = app(LivePresenceService::class)->join($live, $viewer);
+        $session->forceFill(['joined_at' => now()->subSeconds(253)->subMicroseconds(556867)])->saveQuietly();
+
+        app(LivePresenceService::class)->leave($session->fresh());
+
+        $this->assertDatabaseHas('live_viewer_sessions', [
+            'id' => $session->id,
+            'watch_seconds' => 253,
+        ]);
+    }
     public function test_viewer_cannot_join_subscriber_only_live_without_active_subscription(): void
     {
         $creator = $this->creatorUser('live_creator_two');

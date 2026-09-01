@@ -71,7 +71,7 @@ class LivePresenceService
 
         $session->forceFill([
             'left_at' => now(),
-            'watch_seconds' => max(0, $session->joined_at?->diffInSeconds(now()) ?? 0),
+            'watch_seconds' => max(0, (int) floor((float) ($session->joined_at?->diffInSeconds(now()) ?? 0))),
         ])->save();
 
         Redis::srem($this->presenceKey($session->live_session_id), $session->user_id.':'.$session->session_key);
