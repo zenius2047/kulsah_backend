@@ -42,22 +42,10 @@ class LiveController extends Controller
         ]);
     }
 
-    public function store(Request $request, LiveSessionService $service)
+    public function store(StoreLiveRequest $request, LiveSessionService $service)
     {
-        $data = $request->validate([
-            'title' => ['required', 'string', 'max:160'],
-            'description' => ['nullable', 'string', 'max:5000'],
-            'category' => ['nullable', 'string', 'max:100'],
-            'cover_url' => ['nullable', 'url', 'max:2048'],
-            'visibility' => ['required', Rule::in(['public', 'fans', 'subscribers'])],
-            'scheduled_at' => ['nullable', 'date', 'after:now'],
-            'chat_enabled' => ['sometimes', 'boolean'],
-            'gifts_enabled' => ['sometimes', 'boolean'],
-            'recording_enabled' => ['sometimes', 'boolean'],
-        ]);
-
         return response()->json([
-            'data' => new LiveSessionResource($service->create($request->user(), $data)),
+            'data' => new LiveSessionResource($service->create($request->user(), $request->validated())),
         ], 201);
     }
 
@@ -392,6 +380,7 @@ class LiveController extends Controller
         return response()->json(['data' => $snapshot]);
     }
 }
+
 
 
 

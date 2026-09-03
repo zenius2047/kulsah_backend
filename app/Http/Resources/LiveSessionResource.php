@@ -28,6 +28,16 @@ class LiveSessionResource extends JsonResource
             'chat_enabled' => (bool) $this->chat_enabled,
             'gifts_enabled' => (bool) $this->gifts_enabled,
             'recording_enabled' => (bool) $this->recording_enabled,
+            'notify_followers' => (bool) $this->notify_followers,
+            'age_restricted' => (bool) $this->age_restricted,
+            'stream_quality' => $this->stream_quality,
+            'orientation' => $this->orientation,
+            'moderation' => $this->moderation ?? [
+                'profanity_filter_enabled' => false,
+                'followers_only_chat' => false,
+                'slow_mode_seconds' => null,
+                'blocked_words' => [],
+            ],
             'current_viewers' => (int) $this->current_viewers,
             'unique_viewers' => (int) $this->unique_viewers,
             'peak_viewers' => (int) $this->peak_viewers,
@@ -46,4 +56,7 @@ class LiveSessionResource extends JsonResource
         ];
     }
 }
+
+
+
 

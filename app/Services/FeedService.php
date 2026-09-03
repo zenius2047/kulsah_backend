@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
+use Throwable;
 
 class FeedService
 {
@@ -192,6 +194,8 @@ class FeedService
             $bucketSize
         ));
 
+        $candidateIds = $candidateIds->merge($this->collectTrendingCandidateIds($base, $bucketSize));
+
         if ($favoriteCreatorIds !== []) {
             $candidateIds = $candidateIds->merge($this->collectCandidateIds(
                 (clone $base)->whereNotIn('user_id', $favoriteCreatorIds)->latest('created_at')->latest('id'),
@@ -209,13 +213,7 @@ class FeedService
             ->filter()
             ->map(static fn ($id) => (int) $id)
 
-            ->when($blockedCreatorIds !== [], function (Collection $collection) use ($blockedCreatorIds): Collection {
-                return $collection->filter(function (int $id) use ($blockedCreatorIds): bool {
-                    $creatorId = Video::query()->whereKey($id)->value('user_id');
 
-                    return ! in_array((int) $creatorId, $blockedCreatorIds, true);
-                });
-            })
             ->unique()
             ->take($candidateLimit)
             ->values();
@@ -236,7 +234,7 @@ class FeedService
         }
 
         $videos = Video::query()
-            ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user'])
+            ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user:id,name,username,avatar,banner'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->withExists(['challengeEntries'])
             ->whereIn('id', $candidateIds->all())
@@ -281,6 +279,44 @@ class FeedService
             ->all();
     }
 
+    /**
+     * Add the shared trending pool without bypassing viewer eligibility rules.
+     * Redis is an optimization only; an unavailable key must not break feed delivery.
+     *
+     * @return array<int, int>
+     */
+    private function collectTrendingCandidateIds(Builder $base, int $limit): array
+    {
+        try {
+            $ids = Redis::connection()->zrevrange(
+                (string) config('video.trending_pool_key', 'feed:trending:videos'),
+                0,
+                max(0, $limit - 1)
+            );
+
+            if ($ids === []) {
+                return [];
+            }
+
+            $allowed = (clone $base)
+                ->whereIn('id', array_map('intval', $ids))
+                ->pluck('id')
+                ->map(static fn ($id) => (int) $id)
+                ->flip();
+
+            return collect($ids)
+                ->map(static fn ($id) => (int) $id)
+                ->filter(static fn (int $id) => $allowed->has($id))
+                ->values()
+                ->all();
+        } catch (Throwable $exception) {
+            Log::debug('Trending feed pool unavailable; using database candidates.', [
+                'message' => $exception->getMessage(),
+            ]);
+
+            return [];
+        }
+    }
     private function interestQuery(Builder $query, array $interestTerms, array $vibeTerms): Builder
     {
         $terms = array_values(array_unique(array_merge($interestTerms, $vibeTerms)));
@@ -299,7 +335,7 @@ class FeedService
         $base = $this->eligibleVideoQuery($context, $includeSeen);
 
         return Video::query()
-            ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user'])
+            ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user:id,name,username,avatar,banner'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->withExists(['challengeEntries'])
             ->whereIn('id', $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $candidateLimit))

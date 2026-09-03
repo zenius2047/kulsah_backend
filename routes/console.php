@@ -20,6 +20,11 @@ Schedule::command('live:reconcile')
     ->withoutOverlapping()
     ->onOneServer();
 
+Schedule::command('feed:refresh-trending')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->onOneServer();
+
 Schedule::command('notification-devices:prune-stale')
     ->dailyAt('03:15')
     ->withoutOverlapping()

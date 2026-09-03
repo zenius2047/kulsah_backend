@@ -22,7 +22,7 @@ class LiveSessionFactory extends Factory
             'creator_id' => User::factory(),
             'title' => fake()->sentence(4),
             'description' => fake()->optional()->paragraph(),
-            'category' => fake()->randomElement(['music', 'talk', 'gaming', 'beauty']),
+            'category' => fake()->randomElement(['music', 'gaming', 'talk_show', 'lifestyle', 'education']),
             'cover_url' => null,
             'visibility' => 'public',
             'scheduled_at' => null,
@@ -34,6 +34,16 @@ class LiveSessionFactory extends Factory
             'chat_enabled' => true,
             'gifts_enabled' => true,
             'recording_enabled' => false,
+            'notify_followers' => true,
+            'age_restricted' => false,
+            'stream_quality' => '1080p_30fps',
+            'orientation' => 'portrait',
+            'moderation' => [
+                'profanity_filter_enabled' => false,
+                'followers_only_chat' => false,
+                'slow_mode_seconds' => null,
+                'blocked_words' => [],
+            ],
             'current_viewers' => 0,
             'unique_viewers' => 0,
             'peak_viewers' => 0,
@@ -47,3 +57,5 @@ class LiveSessionFactory extends Factory
         ];
     }
 }
+
+

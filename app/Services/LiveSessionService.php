@@ -28,24 +28,31 @@ class LiveSessionService
     {
         $this->authorization->assertCreatorEligible($creator);
 
+        $data = $this->normalizeCreateData($data);
+
         return DB::transaction(function () use ($creator, $data): LiveSession {
             $live = LiveSession::query()->create([
                 'public_id' => (string) Str::uuid(),
                 'creator_id' => $creator->id,
                 'title' => $data['title'],
-                'description' => $data['description'] ?? null,
-                'category' => $data['category'] ?? null,
-                'cover_url' => $data['cover_url'] ?? null,
-                'visibility' => $data['visibility'] ?? 'public',
-                'scheduled_at' => $data['scheduled_at'] ?? null,
+                'description' => $data['description'],
+                'category' => $data['category'],
+                'cover_url' => $data['cover_url'],
+                'visibility' => $data['visibility'],
+                'scheduled_at' => $data['scheduled_at'],
                 'provider' => config('live.provider', 'agora'),
                 'provider_channel' => $this->provider->channelName(new LiveSession([
                     'public_id' => (string) Str::uuid(),
                 ])),
                 'status' => ! empty($data['scheduled_at']) ? LiveStatus::SCHEDULED : LiveStatus::CREATED,
-                'chat_enabled' => $data['chat_enabled'] ?? true,
-                'gifts_enabled' => $data['gifts_enabled'] ?? true,
-                'recording_enabled' => $data['recording_enabled'] ?? false,
+                'chat_enabled' => $data['chat_enabled'],
+                'gifts_enabled' => $data['gifts_enabled'],
+                'recording_enabled' => $data['recording_enabled'],
+                'notify_followers' => $data['notify_followers'],
+                'age_restricted' => $data['age_restricted'],
+                'stream_quality' => $data['stream_quality'],
+                'orientation' => $data['orientation'],
+                'moderation' => $data['moderation'],
             ]);
 
             if (($data['recording_enabled'] ?? false) && config('live.features.recording')) {
@@ -54,6 +61,39 @@ class LiveSessionService
 
             return $live->load('creator');
         });
+    }
+
+    private function normalizeCreateData(array $data): array
+    {
+        $moderation = is_array($data['moderation'] ?? null) ? $data['moderation'] : [];
+        $blockedWords = array_values(array_unique(array_filter(array_map(
+            static fn ($word) => is_string($word) ? trim($word) : '',
+            $moderation['blocked_words'] ?? []
+        ))));
+
+        return [
+            'title' => trim((string) ($data['title'] ?? '')),
+            'description' => array_key_exists('description', $data)
+                ? (is_string($data['description']) ? trim($data['description']) : $data['description'])
+                : null,
+            'category' => isset($data['category']) ? strtolower(trim((string) $data['category'])) : null,
+            'cover_url' => $data['cover_url'] ?? null,
+            'visibility' => isset($data['visibility']) ? strtolower(trim((string) $data['visibility'])) : 'public',
+            'scheduled_at' => $data['scheduled_at'] ?? null,
+            'chat_enabled' => array_key_exists('chat_enabled', $data) ? (bool) $data['chat_enabled'] : true,
+            'gifts_enabled' => array_key_exists('gifts_enabled', $data) ? (bool) $data['gifts_enabled'] : true,
+            'recording_enabled' => array_key_exists('recording_enabled', $data) ? (bool) $data['recording_enabled'] : false,
+            'notify_followers' => array_key_exists('notify_followers', $data) ? (bool) $data['notify_followers'] : true,
+            'age_restricted' => array_key_exists('age_restricted', $data) ? (bool) $data['age_restricted'] : false,
+            'stream_quality' => isset($data['stream_quality']) ? strtolower(trim((string) $data['stream_quality'])) : '1080p_30fps',
+            'orientation' => isset($data['orientation']) ? strtolower(trim((string) $data['orientation'])) : 'portrait',
+            'moderation' => [
+                'profanity_filter_enabled' => (bool) ($moderation['profanity_filter_enabled'] ?? false),
+                'followers_only_chat' => (bool) ($moderation['followers_only_chat'] ?? false),
+                'slow_mode_seconds' => $moderation['slow_mode_seconds'] ?? null,
+                'blocked_words' => $blockedWords,
+            ],
+        ];
     }
 
     public function start(LiveSession $live, User $creator): array
@@ -158,4 +198,5 @@ class LiveSessionService
         return $this->reconciliationService->reconcileStaleLive($live);
     }
 }
+
 

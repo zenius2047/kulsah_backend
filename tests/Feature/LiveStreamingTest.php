@@ -32,23 +32,66 @@ class LiveStreamingTest extends TestCase
         config()->set('agora.enabled', false);
     }
 
+    public function test_creator_can_create_a_live_session_with_the_minimal_payload_defaults(): void
+    {
+        $creator = $this->creatorUser('live_creator_payload_defaults');
+
+        $response = $this->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(RoleMiddleware::class)
+            ->postJson('/api/v1/creator/live', [
+                'title' => 'Acoustic night',
+                'category' => 'Music',
+                'visibility' => 'public',
+                'recording_enabled' => true,
+                'chat_enabled' => true,
+                'gifts_enabled' => true,
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.category', 'music')
+            ->assertJsonPath('data.notify_followers', true)
+            ->assertJsonPath('data.age_restricted', false)
+            ->assertJsonPath('data.stream_quality', '1080p_30fps')
+            ->assertJsonPath('data.orientation', 'portrait')
+            ->assertJsonPath('data.moderation.profanity_filter_enabled', false)
+            ->assertJsonPath('data.moderation.followers_only_chat', false)
+            ->assertJsonPath('data.moderation.blocked_words', []);
+    }
+
     public function test_creator_can_create_start_and_end_a_live_session(): void
     {
         $creator = $this->creatorUser('live_creator_one');
 
         $service = app(LiveSessionService::class);
         $live = $service->create($creator, [
-            'title' => 'Live demo',
-            'description' => 'Testing live lifecycle',
+            'title' => 'Sunday vibes ? let\'s chill and sing together ??',
+            'description' => null,
+            'category' => 'Music',
             'visibility' => 'public',
+            'notify_followers' => true,
+            'recording_enabled' => true,
             'chat_enabled' => true,
             'gifts_enabled' => true,
-            'recording_enabled' => true,
+            'age_restricted' => false,
+            'stream_quality' => '1080p_60fps',
+            'orientation' => 'portrait',
+            'moderation' => [
+                'profanity_filter_enabled' => true,
+                'followers_only_chat' => false,
+                'slow_mode_seconds' => 10,
+                'blocked_words' => [' spam ', 'spam', 'scam'],
+            ],
         ]);
 
         $this->assertSame(LiveStatus::CREATED, $live->status);
         $this->assertNotEmpty($live->public_id);
         $this->assertNotEmpty($live->provider_channel);
+        $this->assertTrue($live->notify_followers);
+        $this->assertFalse($live->age_restricted);
+        $this->assertSame('1080p_60fps', $live->stream_quality);
+        $this->assertSame('portrait', $live->orientation);
+        $this->assertTrue($live->moderation['profanity_filter_enabled']);
+        $this->assertSame(['spam', 'scam'], $live->moderation['blocked_words']);
 
         [$started, $credentials] = $service->start($live, $creator);
         $this->assertSame('broadcaster', $credentials['role']);
@@ -287,5 +330,6 @@ class LiveStreamingTest extends TestCase
         return $user;
     }
 }
+
 
 

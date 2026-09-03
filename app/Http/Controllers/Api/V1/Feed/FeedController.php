@@ -164,7 +164,7 @@ class FeedController extends Controller
         }
 
         $videosById = Video::query()
-            ->with(['user', 'duetSourceVideo.user', 'challengeEntries.challenge'])
+            ->with(['user:id,name,username,avatar,banner,verified', 'duetSourceVideo.user:id,name,username,avatar,banner,verified', 'challengeEntries.challenge'])
             ->withCount(['likes', 'comments', 'bookmarks'])
             ->whereIn('id', $videoIds)
             ->get()

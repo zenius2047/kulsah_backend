@@ -31,6 +31,11 @@ class LiveSession extends Model
         'chat_enabled',
         'gifts_enabled',
         'recording_enabled',
+        'notify_followers',
+        'age_restricted',
+        'stream_quality',
+        'orientation',
+        'moderation',
         'current_viewers',
         'unique_viewers',
         'peak_viewers',
@@ -59,6 +64,11 @@ class LiveSession extends Model
             'chat_enabled' => 'boolean',
             'gifts_enabled' => 'boolean',
             'recording_enabled' => 'boolean',
+            'notify_followers' => 'boolean',
+            'age_restricted' => 'boolean',
+            'stream_quality' => 'string',
+            'orientation' => 'string',
+            'moderation' => 'array',
             'current_viewers' => 'integer',
             'unique_viewers' => 'integer',
             'peak_viewers' => 'integer',
@@ -152,4 +162,6 @@ class LiveSession extends Model
         return 'public_id';
     }
 }
+
+
 
