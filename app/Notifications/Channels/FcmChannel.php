@@ -125,6 +125,7 @@ class FcmChannel
             str_starts_with($type, 'signal.message_request.'),
             $type === 'video.mentioned' => 'messages',
             str_starts_with($type, 'challenge.') => 'challenge_updates',
+            str_starts_with($type, 'live.') => 'live_events',
             str_starts_with($type, 'marketing.') => 'marketing',
             default => null,
         };
@@ -136,6 +137,7 @@ class FcmChannel
         $defaults = [
             'messages' => true,
             'challenge_updates' => true,
+            'live_events' => true,
             'marketing' => false,
         ];
 
