@@ -25,8 +25,12 @@ class StoreLiveRequest extends FormRequest
             'description' => is_string($this->input('description')) ? trim($this->input('description')) : $this->input('description'),
             'category' => is_string($this->input('category')) ? strtolower(trim($this->input('category'))) : $this->input('category'),
             'visibility' => is_string($this->input('visibility')) ? strtolower(trim($this->input('visibility'))) : $this->input('visibility'),
-            'stream_quality' => is_string($this->input('stream_quality')) ? strtolower(trim($this->input('stream_quality'))) : $this->input('stream_quality'),
-            'orientation' => is_string($this->input('orientation')) ? strtolower(trim($this->input('orientation'))) : $this->input('orientation'),
+            'stream_quality' => is_string($this->input('stream_quality'))
+                ? strtolower(trim($this->input('stream_quality')))
+                : '1080p_30fps',
+            'orientation' => is_string($this->input('orientation'))
+                ? strtolower(trim($this->input('orientation')))
+                : 'portrait',
             'notify_followers' => $this->has('notify_followers') ? (bool) $this->boolean('notify_followers') : true,
             'recording_enabled' => $this->has('recording_enabled') ? (bool) $this->boolean('recording_enabled') : false,
             'chat_enabled' => $this->has('chat_enabled') ? (bool) $this->boolean('chat_enabled') : true,
@@ -63,7 +67,7 @@ class StoreLiveRequest extends FormRequest
             'moderation.profanity_filter_enabled' => ['required', 'boolean'],
             'moderation.followers_only_chat' => ['required', 'boolean'],
             'moderation.slow_mode_seconds' => ['nullable', 'integer', 'min:1', 'max:86400'],
-            'moderation.blocked_words' => ['required', 'array'],
+            'moderation.blocked_words' => ['present', 'array'],
             'moderation.blocked_words.*' => ['string', 'max:100'],
         ];
     }

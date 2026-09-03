@@ -21,7 +21,20 @@ class DatabaseSeeder extends Seeder
             KulCoinCatalogSeeder::class,
             GhsKulCoinCatalogSeeder::class,
             StickerSeeder::class,
+            WalletSeeder::class,
+            DeveloperSeeder::class,
+            FeedSeeder::class,
+            VideoLifecycleSeeder::class,
+            DuetSeeder::class,
+            ProfileSubscriptionSeeder::class,
+            EventSeeder::class,
+            CommunitySeeder::class,
+            CommunityVolumeSeeder::class,
+            GiftSeeder::class,
+            PlaylistSeeder::class,
+            NotificationSeeder::class,
+            ChallengeSeeder::class,
+            ChallengeVolumeSeeder::class,
         ]);
     }
 }
-

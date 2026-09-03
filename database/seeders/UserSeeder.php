@@ -42,12 +42,47 @@ class UserSeeder extends Seeder
                     'password' => 'Creator@123',
                     'role' => 'creator',
                 ],
-                 [
+                [
                     'name' => 'Test Fan',
                     'username' => 'fans',
                     'email' => 'fans@kulsah.com',
                     'password' => 'Fans@123',
                     'role' => 'fan',
+                ],
+                [
+                    'name' => 'Zuri Moves',
+                    'username' => 'zuri.moves',
+                    'email' => 'zuri.moves@kulsah.com',
+                    'password' => 'Creator@123',
+                    'role' => 'creator',
+                ],
+                [
+                    'name' => 'Tunde Creates',
+                    'username' => 'tunde.creates',
+                    'email' => 'tunde.creates@kulsah.com',
+                    'password' => 'Creator@123',
+                    'role' => 'creator',
+                ],
+                [
+                    'name' => 'Naledi Fit',
+                    'username' => 'naledi.fit',
+                    'email' => 'naledi.fit@kulsah.com',
+                    'password' => 'Creator@123',
+                    'role' => 'creator',
+                ],
+                [
+                    'name' => 'Kwame Frames',
+                    'username' => 'kwame.frames',
+                    'email' => 'kwame.frames@kulsah.com',
+                    'password' => 'Creator@123',
+                    'role' => 'creator',
+                ],
+                [
+                    'name' => 'Amina Designs',
+                    'username' => 'amina.designs',
+                    'email' => 'amina.designs@kulsah.com',
+                    'password' => 'Creator@123',
+                    'role' => 'creator',
                 ],
             ];
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Live;
 
 use App\Events\LiveUpdated;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Live\StoreLiveRequest;
 use App\Http\Resources\LiveSessionResource;
 use App\Models\KulCoinGift;
 use App\Models\LiveBattle;
@@ -380,7 +381,6 @@ class LiveController extends Controller
         return response()->json(['data' => $snapshot]);
     }
 }
-
 
 
 

@@ -58,6 +58,47 @@ class LiveStreamingTest extends TestCase
             ->assertJsonPath('data.moderation.blocked_words', []);
     }
 
+    public function test_creator_can_create_a_live_session_with_the_complete_setup_payload(): void
+    {
+        $creator = $this->creatorUser('live_creator_complete_setup');
+        $scheduledAt = now()->addDay()->startOfHour();
+
+        $response = $this->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(RoleMiddleware::class)
+            ->postJson('/api/v1/creator/live', [
+                'title' => 'Creator Q&A',
+                'category' => 'talk_show',
+                'visibility' => 'subscribers',
+                'scheduled_at' => $scheduledAt->toIso8601String(),
+                'notify_followers' => false,
+                'recording_enabled' => true,
+                'chat_enabled' => true,
+                'gifts_enabled' => false,
+                'age_restricted' => true,
+                'stream_quality' => '1080p_60fps',
+                'orientation' => 'landscape',
+                'moderation' => [
+                    'profanity_filter_enabled' => true,
+                    'followers_only_chat' => true,
+                    'slow_mode_seconds' => 10,
+                    'blocked_words' => ['spam', 'scam'],
+                ],
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.category', 'talk_show')
+            ->assertJsonPath('data.visibility', 'subscribers')
+            ->assertJsonPath('data.status', 'scheduled')
+            ->assertJsonPath('data.notify_followers', false)
+            ->assertJsonPath('data.age_restricted', true)
+            ->assertJsonPath('data.stream_quality', '1080p_60fps')
+            ->assertJsonPath('data.orientation', 'landscape')
+            ->assertJsonPath('data.moderation.profanity_filter_enabled', true)
+            ->assertJsonPath('data.moderation.followers_only_chat', true)
+            ->assertJsonPath('data.moderation.slow_mode_seconds', 10)
+            ->assertJsonPath('data.moderation.blocked_words', ['spam', 'scam']);
+    }
+
     public function test_creator_can_create_start_and_end_a_live_session(): void
     {
         $creator = $this->creatorUser('live_creator_one');
@@ -330,6 +371,5 @@ class LiveStreamingTest extends TestCase
         return $user;
     }
 }
-
 
 
