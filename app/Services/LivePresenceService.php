@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\LiveUpdated;
 use App\Models\LiveSession;
 use App\Models\LiveViewerSession;
 use App\Models\User;
@@ -33,6 +34,8 @@ class LivePresenceService
                 'peak_viewers' => max((int) $live->peak_viewers, $currentViewers),
             ])->saveQuietly();
 
+            LiveUpdated::dispatch($live->fresh('creator'), 'viewer_count');
+
             return [$existing, false];
         }
 
@@ -60,6 +63,8 @@ class LivePresenceService
             'peak_viewers' => max((int) $live->peak_viewers, $currentViewers),
         ])->saveQuietly();
 
+        LiveUpdated::dispatch($live->fresh('creator'), 'viewer_count');
+
         return [$session, $isNewUniqueViewer];
     }
 
@@ -80,6 +85,7 @@ class LivePresenceService
         if ($live) {
             $current = (int) Redis::scard($this->presenceKey($live->id));
             $live->forceFill(['current_viewers' => $current])->saveQuietly();
+            LiveUpdated::dispatch($live->fresh('creator'), 'viewer_count');
         }
     }
 

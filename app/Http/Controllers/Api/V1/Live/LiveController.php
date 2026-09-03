@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Live;
 
+use App\Events\LiveDirectoryUpdated;
 use App\Events\LiveUpdated;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Live\StoreLiveRequest;
@@ -64,6 +65,7 @@ class LiveController extends Controller
     {
         $live = $service->confirmLive($liveSession);
         LiveUpdated::dispatch($live, 'status');
+        LiveDirectoryUpdated::dispatch($live, 'status');
 
         return response()->json([
             'data' => new LiveSessionResource($live),
@@ -74,6 +76,7 @@ class LiveController extends Controller
     {
         $live = $service->reconnect($liveSession);
         LiveUpdated::dispatch($live, 'status');
+        LiveDirectoryUpdated::dispatch($live, 'status');
 
         return response()->json([
             'data' => new LiveSessionResource($live),
@@ -183,7 +186,20 @@ class LiveController extends Controller
             'comments_count' => (int) $liveSession->comments_count + 1,
         ])->saveQuietly();
 
-        LiveUpdated::dispatch($liveSession->fresh('creator'), 'chat_created');
+        LiveUpdated::dispatch($liveSession->fresh('creator'), 'chat_created', [
+            'comment' => [
+                'id' => $comment->id,
+                'user_id' => $comment->user_id,
+                'body' => $comment->body,
+                'user' => [
+                    'id' => $comment->user?->id,
+                    'name' => $comment->user?->name,
+                    'username' => $comment->user?->username,
+                    'avatar' => $comment->user?->avatar,
+                ],
+                'created_at' => optional($comment->created_at)?->toIso8601String(),
+            ],
+        ]);
 
         return response()->json([
             'data' => $comment->load('user'),

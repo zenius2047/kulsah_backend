@@ -39,7 +39,17 @@ class LiveGiftService
             'gift_value_kc' => (int) $live->gift_value_kc + ((int) $gift->coin_cost * $quantity),
         ])->saveQuietly();
 
-        LiveUpdated::dispatch($live->fresh('creator'), 'gift_created');
+        LiveUpdated::dispatch($live->fresh('creator'), 'gift_created', [
+            'gift' => [
+                'transaction_id' => $transaction->id,
+                'reference' => $transaction->reference,
+                'gift_id' => $gift->id,
+                'gift_name' => $gift->name,
+                'quantity' => $quantity,
+                'coin_amount' => (int) $transaction->coin_amount,
+                'sender_id' => $sender->id,
+            ],
+        ]);
 
         return $transaction;
     }

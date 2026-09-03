@@ -4,12 +4,15 @@ namespace App\Services;
 
 use App\Contracts\LiveStreamingProviderInterface;
 use App\Enums\LiveStatus;
+use App\Events\LiveDirectoryUpdated;
 use App\Events\LiveUpdated;
 use App\Models\LiveSession;
+use App\Models\Subscription;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Notifications\Notification;
 use Illuminate\Validation\ValidationException;
 
 class LiveSessionService
@@ -131,9 +134,34 @@ class LiveSessionService
             $this->recordingService->start($live);
         }
 
+        $this->notifySubscribersLiveStarted($live);
+
         return $live->fresh('creator');
     }
 
+    private function notifySubscribersLiveStarted(LiveSession $live): void
+    {
+        if ($live->live_started_notifications_sent_at) {
+            return;
+        }
+
+        $subscribers = Subscription::query()
+            ->where('creator_id', $live->creator_id)
+            ->where('status', 'active')
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->with('subscriber')
+            ->get()
+            ->pluck('subscriber')
+            ->filter();
+
+        if ($subscribers->isNotEmpty()) {
+            Notification::sendNow($subscribers, new CreatorLiveStartedNotification($live->loadMissing('creator')));
+        }
+
+        $live->forceFill(['live_started_notifications_sent_at' => now()])->saveQuietly();
+    }
     public function reconnect(LiveSession $live): LiveSession
     {
         return $this->transition($live, LiveStatus::RECONNECTING);
@@ -175,6 +203,7 @@ class LiveSessionService
             $this->analyticsService->upsertFromLive($live, ['termination_reason' => $reason]);
 
             LiveUpdated::dispatch($live->fresh('creator'), 'ended');
+            LiveDirectoryUpdated::dispatch($live->fresh('creator'), 'ended');
 
             return $live->fresh('creator');
         });

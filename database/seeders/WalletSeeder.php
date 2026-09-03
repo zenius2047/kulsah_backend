@@ -47,7 +47,7 @@ class WalletSeeder extends Seeder
                 [
                     'user_id' => null,
                     'account_name' => $accountName,
-                    'base_currency' => 'USD',
+                    'base_currency' => config('wallet.base_currency', 'GHS'),
                     'available_balance_usd' => $balance,
                     'pending_balance_usd' => 0,
                     'held_balance_usd' => 0,
@@ -71,7 +71,7 @@ class WalletSeeder extends Seeder
                 [
                     'account_key' => null,
                     'account_name' => "{$user->name} Wallet",
-                    'base_currency' => 'USD',
+                    'base_currency' => config('wallet.base_currency', 'GHS'),
                     'available_balance_usd' => $available,
                     'pending_balance_usd' => $pending,
                     'held_balance_usd' => 0,

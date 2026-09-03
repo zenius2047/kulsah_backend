@@ -71,7 +71,8 @@ class WalletController extends Controller
     {
         $validated = $request->validate([
             'recipient_id' => ['required', 'integer', 'exists:users,id'],
-            'amount_usd' => ['required', 'numeric', 'min:0.0001'],
+            'amount' => ['required_without:amount_usd', 'numeric', 'min:0.0001'],
+            'amount_usd' => ['sometimes', 'numeric', 'min:0.0001'],
             'description' => ['nullable', 'string', 'max:500'],
         ]);
 
@@ -102,7 +103,8 @@ class WalletController extends Controller
     public function topUp(Request $request)
     {
         $validated = $request->validate([
-            'amount_usd' => ['required', 'numeric', 'min:0.0001'],
+            'amount' => ['required_without:amount_usd', 'numeric', 'min:0.0001'],
+            'amount_usd' => ['sometimes', 'numeric', 'min:0.0001'],
             'description' => ['nullable', 'string', 'max:500'],
             'payment_reference' => ['nullable', 'string', 'max:255'],
         ]);

@@ -22,7 +22,7 @@ class WalletService
             ['user_id' => $user->id],
             [
                 'account_name' => $user->name ?: $user->username ?: 'User Wallet',
-                'base_currency' => 'USD',
+                'base_currency' => config('wallet.base_currency', 'GHS'),
                 'status' => 'active',
                 'available_balance_usd' => 0,
                 'pending_balance_usd' => 0,
@@ -37,7 +37,7 @@ class WalletService
             ['account_key' => $accountKey],
             [
                 'account_name' => $accountName,
-                'base_currency' => 'USD',
+                'base_currency' => config('wallet.base_currency', 'GHS'),
                 'status' => 'active',
                 'available_balance_usd' => 0,
                 'pending_balance_usd' => 0,
@@ -53,10 +53,11 @@ class WalletService
         return [
             'wallet' => $wallet,
             'balances' => [
-                'available_usd' => $wallet->available_balance_usd,
-                'pending_usd' => $wallet->pending_balance_usd,
-                'held_usd' => $wallet->held_balance_usd,
-                'total_usd' => $this->toDecimal(
+                'currency' => $wallet->base_currency,
+                'available' => $wallet->available_balance_usd,
+                'pending' => $wallet->pending_balance_usd,
+                'held' => $wallet->held_balance_usd,
+                'total' => $this->toDecimal(
                     ((float) $wallet->available_balance_usd) +
                     ((float) $wallet->pending_balance_usd) +
                     ((float) $wallet->held_balance_usd)

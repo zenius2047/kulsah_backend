@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\LiveRecordingStatus;
 use App\Enums\LiveStatus;
+use App\Events\LiveDirectoryUpdated;
 use App\Events\LiveUpdated;
 use App\Models\LiveRecording;
 use App\Models\LiveSession;
@@ -30,6 +31,7 @@ class LiveReconciliationService
 
             $live->forceFill(['status' => LiveStatus::RECONNECTING])->saveQuietly();
             LiveUpdated::dispatch($live->fresh('creator'), 'status');
+            LiveDirectoryUpdated::dispatch($live->fresh('creator'), 'status');
 
             return true;
         }
@@ -62,6 +64,7 @@ class LiveReconciliationService
         });
 
         LiveUpdated::dispatch($live->fresh('creator'), 'ended');
+        LiveDirectoryUpdated::dispatch($live->fresh('creator'), 'ended');
 
         return true;
     }
