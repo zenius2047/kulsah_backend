@@ -174,6 +174,17 @@ class KulCoinService
         array $data = [],
         ?User $actor = null
     ): KulCoinTransaction {
+        if ($sender->is($creator)) {
+            throw ValidationException::withMessages([
+                'creator_id' => 'You cannot send a gift to yourself.',
+            ]);
+        }
+
+        if (! $creator->roles()->where('name', 'creator')->exists()) {
+            throw ValidationException::withMessages([
+                'creator_id' => 'The selected recipient must have the creator role.',
+            ]);
+        }
         if (! $gift->is_active) {
             throw ValidationException::withMessages([
                 'gift_id' => 'The selected gift is not available.',

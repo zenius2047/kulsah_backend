@@ -17,6 +17,12 @@ class WalletResource extends JsonResource
             'base_currency' => $this->base_currency,
             'status' => $this->status,
             'balances' => [
+                'currency' => $this->base_currency,
+                'available' => $this->available_balance_usd,
+                'pending' => $this->pending_balance_usd,
+                'held' => $this->held_balance_usd,
+                'total' => round(((float) $this->available_balance_usd) + ((float) $this->pending_balance_usd) + ((float) $this->held_balance_usd), 4),
+                // Deprecated aliases kept while clients migrate from USD-specific names.
                 'available_usd' => $this->available_balance_usd,
                 'pending_usd' => $this->pending_balance_usd,
                 'held_usd' => $this->held_balance_usd,

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Contracts\LiveStreamingProviderInterface;
 use App\Enums\LiveStatus;
+use App\Events\LiveDirectoryUpdated;
 use App\Events\LiveUpdated;
 use App\Models\LiveSession;
 use App\Models\User;
@@ -175,6 +176,7 @@ class LiveSessionService
             $this->analyticsService->upsertFromLive($live, ['termination_reason' => $reason]);
 
             LiveUpdated::dispatch($live->fresh('creator'), 'ended');
+            LiveDirectoryUpdated::dispatch($live->fresh('creator'), 'ended');
 
             return $live->fresh('creator');
         });
