@@ -9,10 +9,11 @@ use App\Events\LiveUpdated;
 use App\Models\LiveSession;
 use App\Models\Subscription;
 use App\Models\User;
+use App\Notifications\CreatorLiveStartedNotification;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
-use Illuminate\Notifications\Notification;
 use Illuminate\Validation\ValidationException;
 
 class LiveSessionService
@@ -227,5 +228,4 @@ class LiveSessionService
         return $this->reconciliationService->reconcileStaleLive($live);
     }
 }
-
 

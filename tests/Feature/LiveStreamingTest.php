@@ -7,7 +7,9 @@ use App\Enums\LiveStatus;
 use App\Models\KulCoinGift;
 use App\Models\LiveSession;
 use App\Models\Role;
+use App\Models\Subscription;
 use App\Models\User;
+use App\Notifications\CreatorLiveStartedNotification;
 use App\Services\LiveAuthorizationService;
 use App\Services\LiveBattleService;
 use App\Services\LiveCohostService;
@@ -16,6 +18,7 @@ use App\Services\LiveLikeService;
 use App\Services\LivePresenceService;
 use App\Services\LiveSessionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Redis;
 use Tests\Fakes\FakeLiveStreamingProvider;
 use Tests\TestCase;
@@ -144,6 +147,30 @@ class LiveStreamingTest extends TestCase
         $ended = $service->end($live, 'creator_ended');
         $this->assertSame(LiveStatus::ENDED, $ended->status);
         $this->assertSame('creator_ended', $ended->termination_reason);
+    }
+
+    public function test_confirming_a_live_session_notifies_active_subscribers(): void
+    {
+        Notification::fake();
+
+        $creator = $this->creatorUser('live_creator_with_subscriber');
+        $subscriber = User::factory()->create(['activated' => true]);
+
+        Subscription::query()->create([
+            'subscriber_id' => $subscriber->id,
+            'creator_id' => $creator->id,
+            'status' => 'active',
+        ]);
+
+        $live = LiveSession::factory()->create([
+            'creator_id' => $creator->id,
+            'status' => LiveStatus::STARTING,
+        ]);
+
+        app(LiveSessionService::class)->confirmLive($live);
+
+        Notification::assertSentTo($subscriber, CreatorLiveStartedNotification::class);
+        $this->assertNotNull($live->refresh()->live_started_notifications_sent_at);
     }
 
     public function test_leaving_a_live_persists_integer_watch_seconds(): void
@@ -371,5 +398,4 @@ class LiveStreamingTest extends TestCase
         return $user;
     }
 }
-
 

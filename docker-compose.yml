@@ -3,10 +3,12 @@ services:
   laravel:
     build:
       context: .
+    image: kulsah-backend:local
     container_name: kulsah-laravel
     volumes:
       - ./:/var/www
-      - /var/www/vendor
+      - laravel_vendor:/var/www/vendor
+      - laravel_bootstrap_cache:/var/www/bootstrap/cache
       - ./storage/firebase:/var/www/storage/firebase:ro
     depends_on:
       - postgres
@@ -30,12 +32,13 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/service-account.json
 
   queue:
-    build:
-      context: .
+    image: kulsah-backend:local
+    pull_policy: never
     container_name: kulsah-queue
     volumes:
       - ./:/var/www
-      - /var/www/vendor
+      - laravel_vendor:/var/www/vendor
+      - laravel_bootstrap_cache:/var/www/bootstrap/cache
       - ./storage/firebase:/var/www/storage/firebase:ro
     command: php artisan horizon
     depends_on:
@@ -62,12 +65,13 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/service-account.json
 
   media:
-    build:
-      context: .
+    image: kulsah-backend:local
+    pull_policy: never
     container_name: kulsah-media
     volumes:
       - ./:/var/www
-      - /var/www/vendor
+      - laravel_vendor:/var/www/vendor
+      - laravel_bootstrap_cache:/var/www/bootstrap/cache
       - ./storage/firebase:/var/www/storage/firebase:ro
     command: php artisan queue:work redis --queue=videos --tries=3 --timeout=1200 --memory=512 --sleep=1
     depends_on:
@@ -94,12 +98,13 @@ services:
       REVERB_SCHEME: http
       GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/service-account.json
   scheduler:
-    build:
-      context: .
+    image: kulsah-backend:local
+    pull_policy: never
     container_name: kulsah-scheduler
     volumes:
       - ./:/var/www
-      - /var/www/vendor
+      - laravel_vendor:/var/www/vendor
+      - laravel_bootstrap_cache:/var/www/bootstrap/cache
       - ./storage/firebase:/var/www/storage/firebase:ro
     command: php artisan schedule:work
     depends_on:
@@ -125,12 +130,13 @@ services:
       REVERB_SCHEME: http
       GOOGLE_APPLICATION_CREDENTIALS: /var/www/storage/firebase/service-account.json
   reverb:
-    build:
-      context: .
+    image: kulsah-backend:local
+    pull_policy: never
     container_name: kulsah-reverb
     volumes:
       - ./:/var/www
-      - /var/www/vendor
+      - laravel_vendor:/var/www/vendor
+      - laravel_bootstrap_cache:/var/www/bootstrap/cache
     command: php artisan reverb:start --host=0.0.0.0 --port=8080
     depends_on:
       - postgres
@@ -212,3 +218,5 @@ services:
 
 volumes:
   pgdata:
+  laravel_vendor:
+  laravel_bootstrap_cache:

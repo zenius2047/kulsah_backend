@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM php:8.4-fpm
 
 WORKDIR /var/www
@@ -28,12 +29,16 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 COPY . .
 
 # Install dependencies
-RUN BROADCAST_CONNECTION=log composer install
+RUN --mount=type=cache,target=/tmp/composer-cache,sharing=locked \
+    BROADCAST_CONNECTION=log \
+    COMPOSER_CACHE_DIR=/tmp/composer-cache \
+    COMPOSER_MAX_PARALLEL_HTTP=4 \
+    php -d default_socket_timeout=900 /usr/bin/composer install \
+      --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
 
 EXPOSE 9000
 
 # Passport refuses to read private keys that are group/world-writable.
 # The repo is bind-mounted in Docker, so we fix the mode on container start.
 CMD ["sh", "-lc", "if [ -f /var/www/storage/oauth-private.key ]; then chmod 600 /var/www/storage/oauth-private.key; fi; if [ -f /var/www/storage/oauth-public.key ]; then chmod 600 /var/www/storage/oauth-public.key; fi; exec php-fpm"]
-
 
