@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\Video;
 use App\Models\VideoView;
 use App\Notifications\VideoMentionedNotification;
+use App\Services\MusicReferenceService;
 use App\Services\NotificationDeliveryService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
@@ -26,6 +27,7 @@ class VideoService
         private readonly VideoCaptionParserService $videoCaptionParserService,
         private readonly FastApiRecommendationService $fastApiRecommendationService,
         private readonly FeedService $feedService,
+        private readonly MusicReferenceService $musicReferenceService,
     ) {}
 
     public function createDraftVideo(array $data, int $userId): Video
@@ -57,6 +59,7 @@ class VideoService
                 'caption_hashtags' => [],
                 'caption_mentions' => [],
                 'mentioned_user_ids' => [],
+                ...$this->musicMetadata($data, $userId),
             ],
         ]);
 
@@ -360,6 +363,7 @@ class VideoService
                     'thumbnail_mime_type' => $thumbnailFile?->getMimeType(),
                     'thumbnail_size' => $thumbnailFile?->getSize(),
                     'thumbnail_source' => $thumbnail ? 'user' : null,
+                    ...$this->musicMetadata($data, $userId),
                 ],
             ]);
         } catch (Throwable $throwable) {
@@ -550,6 +554,13 @@ class VideoService
             $updates['allow_duet'] = (bool) $data['allow_duet'];
         }
 
+        if (array_key_exists('music', $data) || array_key_exists('sound', $data)) {
+            $updates['metadata'] = array_merge(
+                $updates['metadata'] ?? $currentMetadata,
+                $this->musicMetadata($data, $userId, includeEmpty: true),
+            );
+        }
+
         if ($updates !== []) {
             $video->update($updates);
         }
@@ -621,6 +632,52 @@ class VideoService
         )));
     }
 
+
+    /**
+     * Persist a provider-aware sound snapshot; stream URLs remain disposable.
+     *
+     * @return array<string, mixed>
+     */
+    private function musicMetadata(array $data, int $userId, bool $includeEmpty = false): array
+    {
+        $selection = array_key_exists('music', $data) ? $data['music'] : ($data['sound'] ?? null);
+
+        if ($selection === null) {
+            return $includeEmpty ? ['music' => null] : [];
+        }
+
+        if (! is_array($selection)) {
+            return [];
+        }
+
+        $provider = strtolower(trim((string) ($selection['provider'] ?? '')));
+        $externalId = trim((string) ($selection['external_id'] ?? $selection['id'] ?? ''));
+
+        if ($provider === '' || $externalId === '') {
+            return [];
+        }
+
+        $snapshot = array_filter([
+            'id' => $selection['id'] ?? $provider.':'.$externalId,
+            'provider' => $provider,
+            'external_id' => $externalId,
+            'title' => $selection['title'] ?? null,
+            'artist' => $selection['artist'] ?? null,
+            'artist_id' => $selection['artist_id'] ?? null,
+            'artist_username' => $selection['artist_username'] ?? null,
+            'artwork' => is_array($selection['artwork'] ?? null) ? $selection['artwork'] : null,
+            'duration' => $selection['duration'] ?? null,
+            'genre' => $selection['genre'] ?? null,
+            'permalink' => $selection['permalink'] ?? null,
+            'streamable' => array_key_exists('streamable', $selection) ? (bool) $selection['streamable'] : null,
+            'rights_status' => $selection['rights_status'] ?? null,
+        ], static fn (mixed $value): bool => $value !== null && $value !== '');
+
+        $this->musicReferenceService->recordUsage($snapshot, $userId);
+
+        return ['music' => $snapshot];
+    }
+
     private function uploadThumbnailIfProvided(?UploadedFile $thumbnailFile, int $userId): ?array
     {
         if (! $thumbnailFile) {
@@ -630,4 +687,3 @@ class VideoService
         return $this->videoStorageService->uploadThumbnail($thumbnailFile, $userId);
     }
 }
-

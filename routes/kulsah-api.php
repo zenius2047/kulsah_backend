@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\KulCoin\KulCoinController;
 use App\Http\Controllers\Api\V1\Kulscan\CreatorDashboardController as KulscanCreatorDashboardController;
 use App\Http\Controllers\Api\V1\Kulscan\CreatorEventsController;
 use App\Http\Controllers\Api\V1\Media\MessageAttachmentController;
+use App\Http\Controllers\Api\V1\Music\MusicController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 use App\Http\Controllers\Api\V1\Live\LiveController;
@@ -36,6 +37,7 @@ Route::pattern('liveSession', '[0-9a-fA-F-]{36}');
 Route::pattern('cohostRequest', '[0-9]+');
 Route::pattern('battle', '[0-9]+');
 Route::pattern('user', '[0-9]+');
+Route::pattern('musicTrack', '[^/]+');
 
 Route::post('/cloudinary/webhook', [CloudinaryWebhookController::class, 'store']);
 
@@ -52,6 +54,14 @@ Route::prefix('media')
     ->group(function () {
         Route::post('/message-uploads', [MessageAttachmentController::class, 'init']);
         Route::post('/message-uploads/{attachment}/complete', [MessageAttachmentController::class, 'complete']);
+    });
+
+Route::prefix('creator/music')
+    ->middleware(['optional.sanctum', 'throttle:music'])
+    ->group(function () {
+        Route::get('/', [MusicController::class, 'index'])->name('music.index');
+        Route::get('/{musicTrack}', [MusicController::class, 'show'])->name('music.show');
+        Route::get('/{musicTrack}/stream', [MusicController::class, 'stream'])->middleware('throttle:music-stream')->name('music.stream');
     });
 
 Route::prefix('general')
@@ -262,6 +272,3 @@ Route::prefix('creator')
         Route::post('/live/{liveSession}/battles/invite', [LiveController::class, 'inviteBattle'])->middleware('throttle:live-token');
         Route::get('/live/{liveSession}/analytics', [LiveController::class, 'analytics']);
     });
-
-
-

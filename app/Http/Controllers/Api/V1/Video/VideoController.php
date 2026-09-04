@@ -772,6 +772,8 @@ class VideoController extends Controller
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
             'allow_duet' => ['sometimes', 'boolean'],
+            'music' => ['sometimes', 'nullable', 'array'],
+            'sound' => ['sometimes', 'nullable', 'array'],
         ]);
 
         try {

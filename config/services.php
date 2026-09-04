@@ -53,6 +53,17 @@ return [
         'webhook_url' => env('CLOUDINARY_WEBHOOK_URL'),
     ],
 
+    'audius' => [
+        'base_url' => env('AUDIUS_BASE_URL', 'https://api.audius.co/v1'),
+        'api_key' => env('AUDIUS_API_KEY'),
+        'bearer_token' => env('AUDIUS_BEARER_TOKEN', env('AUDIUS_API_TOKEN')),
+        'timeout' => (float) env('AUDIUS_TIMEOUT', 8),
+        'connect_timeout' => (float) env('AUDIUS_CONNECT_TIMEOUT', 3),
+        'retries' => (int) env('AUDIUS_RETRIES', 2),
+        'cache_enabled' => env('AUDIUS_CACHE_ENABLED', true),
+        'cache_ttl' => (int) env('AUDIUS_CACHE_TTL', 300),
+    ],
+
     'fastapi' => [
         'url' => env('FASTAPI_URL', 'http://127.0.0.1:8001'),
         'enabled' => env('FASTAPI_ENABLED', true),
@@ -67,3 +78,4 @@ return [
     ],
 
 ];
+

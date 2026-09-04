@@ -3,11 +3,13 @@
 namespace App\Providers;
 
 use App\Contracts\LiveStreamingProviderInterface;
+use App\Contracts\MusicProviderInterface;
 use App\Jobs\ExtractChallengeCoverFrame;
 use App\Jobs\VideoUploaded;
 use App\Models\ChallengeMedia;
 use App\Models\OAuthClient;
 use App\Services\AgoraLiveStreamingProvider;
+use App\Services\AudiusMusicProvider;
 use App\Services\FeedService;
 use App\Services\VideoCacheService;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -31,6 +33,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(DeviceAuthorizationViewResponse::class, fn () => new SimpleViewResponse('passport.device.authorize'));
         $this->app->singleton(DeviceUserCodeViewResponse::class, fn () => new SimpleViewResponse('passport.device.user-code'));
         $this->app->singleton(LiveStreamingProviderInterface::class, AgoraLiveStreamingProvider::class);
+        $this->app->singleton(MusicProviderInterface::class, AudiusMusicProvider::class);
     }
 
     public function boot(): void
@@ -47,6 +50,8 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('live-likes', fn (Request $request) => Limit::perMinute(120)->by($request->user()?->id ?: $request->ip()));
         RateLimiter::for('live-gifts', fn (Request $request) => Limit::perMinute(20)->by($request->user()?->id ?: $request->ip()));
         RateLimiter::for('live-moderation', fn (Request $request) => Limit::perMinute(20)->by($request->user()?->id ?: $request->ip()));
+        RateLimiter::for('music', fn (Request $request) => Limit::perMinute(60)->by($request->user()?->id ?: $request->ip()));
+        RateLimiter::for('music-stream', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
 
         Event::listen(VideoUploaded::class, function (VideoUploaded $event): void {
             app(FeedService::class)->invalidateFeedCaches();
@@ -56,4 +61,3 @@ class AppServiceProvider extends ServiceProvider
         });
     }
 }
-
