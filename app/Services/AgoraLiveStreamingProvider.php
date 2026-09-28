@@ -59,6 +59,42 @@ class AgoraLiveStreamingProvider implements LiveStreamingProviderInterface
         return $this->credentials($live, $user, $role);
     }
 
+    public function revokePublishing(LiveSession $live, User $user): int
+    {
+        $uid = LiveProviderIdentity::query()->where('provider', 'agora')->where('user_id', $user->id)->value('provider_uid');
+        $response = $this->channelManagementRequest()->post('https://api.agora.io/dev/v1/kicking-rule', [
+            'appid' => config('agora.app_id'),
+            'cname' => $live->provider_channel,
+            'uid' => (int) ($uid ?? $this->uid($user)),
+            'time_in_seconds' => min(86430, max(10, (int) config('agora.publisher_token_ttl', 900) + 30)),
+            'privileges' => ['publish_audio', 'publish_video'],
+        ])->throw()->json();
+        if (($response['status'] ?? null) !== 'success' || empty($response['id'])) {
+            throw new RuntimeException('Agora could not revoke co-host publishing.');
+        }
+        return (int) $response['id'];
+    }
+
+    public function restorePublishing(int $ruleId): void
+    {
+        $response = $this->channelManagementRequest()->delete('https://api.agora.io/dev/v1/kicking-rule', [
+            'appid' => config('agora.app_id'), 'id' => $ruleId,
+        ]);
+        if ($response->status() !== 404) {
+            $response->throw();
+            if ($response->json('status') !== 'success') throw new RuntimeException('Agora could not restore co-host publishing.');
+        }
+    }
+
+    private function channelManagementRequest(): \Illuminate\Http\Client\PendingRequest
+    {
+        foreach (['app_id', 'customer_id', 'customer_secret'] as $key) {
+            if (! config("agora.$key")) throw new RuntimeException('Agora channel management credentials are required to manage co-hosts.');
+        }
+        return Http::withBasicAuth((string) config('agora.customer_id'), (string) config('agora.customer_secret'))
+            ->acceptJson()->timeout(20);
+    }
+
     public function startRecording(LiveSession $live): array
     {
         $this->assertRecordingConfigured();

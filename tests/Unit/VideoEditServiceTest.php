@@ -2,6 +2,8 @@
 
 namespace Tests\Unit;
 
+use App\Jobs\RenderVideoEditsJob;
+use App\Models\Video;
 use App\Services\VideoEditService;
 use App\Services\VideoProjectNormalizer;
 use Tests\TestCase;
@@ -42,5 +44,20 @@ class VideoEditServiceTest extends TestCase
         ]);
 
         $this->assertSame('ffmpeg', $engine);
+    }
+
+    public function test_audio_layers_force_ffmpeg_and_queue_visibility_exceeds_render_timeout(): void
+    {
+        $service = new VideoEditService($this->createMock(VideoProjectNormalizer::class));
+        $method = new \ReflectionMethod(VideoEditService::class, 'resolveRenderEngine');
+        $method->setAccessible(true);
+
+        $engine = $method->invoke($service, [
+            'layers' => [['type' => 'audio', 'asset_key' => 'videos/edit-assets/1/music.m4a']],
+        ]);
+        $job = new RenderVideoEditsJob(new Video, []);
+
+        $this->assertSame('ffmpeg', $engine);
+        $this->assertGreaterThan($job->timeout, config('queue.connections.redis.retry_after'));
     }
 }

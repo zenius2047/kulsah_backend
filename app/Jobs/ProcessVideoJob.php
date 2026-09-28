@@ -117,7 +117,8 @@ class ProcessVideoJob implements ShouldQueue
 
             $result = $cloudinaryService->uploadVideoFromS3Key($video->source_key, $disk);
             $maxDuration = (int) config('video.max_duration_seconds', 120);
-            $duration = (int) ($result['duration'] ?? 0);
+            $resultMetadata = array_merge($video->metadata ?? [], $result['metadata'] ?? []);
+            $duration = $this->resolveDurationSeconds($result, $resultMetadata, $video);
 
             if ($duration > 0 && $duration > $maxDuration) {
                 $video->update([
@@ -134,7 +135,6 @@ class ProcessVideoJob implements ShouldQueue
             }
 
             $hlsUrl = $result['streaming_url'] ?? $result['stream_url'] ?? $result['cdn_url'];
-            $resultMetadata = array_merge($video->metadata ?? [], $result['metadata'] ?? []);
             $video->update([
                 'cdn_url' => $result['cdn_url'],
                 'rendered_url' => $result['rendered_url'] ?? $video->rendered_url,
@@ -146,8 +146,8 @@ class ProcessVideoJob implements ShouldQueue
                 'cloudinary_public_id' => $result['cloudinary_public_id'],
                 'cloudinary_asset_id' => $result['cloudinary_asset_id'] ?? null,
                 'thumbnail_url' => $video->thumbnail_url ?: ($result['poster_url'] ?? $result['thumbnail_url']),
-                'duration' => $duration ?: null,
-                'duration_ms' => $duration > 0 ? $duration * 1000 : null,
+                'duration' => $duration !== null ? (int) round($duration) : null,
+                'duration_ms' => $duration !== null ? (int) round($duration * 1000) : null,
                 'width' => $result['width'] ?? data_get($resultMetadata, 'width'),
                 'height' => $result['height'] ?? data_get($resultMetadata, 'height'),
                 'aspect_ratio' => $result['aspect_ratio'] ?? data_get($resultMetadata, 'aspect_ratio'),
@@ -198,5 +198,30 @@ class ProcessVideoJob implements ShouldQueue
 
             throw $throwable;
         }
+    }
+
+    /**
+     * Cloudinary normally returns duration at the top level, but different
+     * upload and render paths can place it in metadata instead. Preserve the
+     * verified duration for challenge-rule validation in either case.
+     */
+    private function resolveDurationSeconds(array $result, array $metadata, Video $video): ?float
+    {
+        $candidates = [
+            $result['duration'] ?? null,
+            data_get($metadata, 'duration'),
+            data_get($metadata, 'duration_seconds'),
+            data_get($metadata, 'format.duration'),
+            $video->duration,
+            $video->duration_ms ? ((float) $video->duration_ms / 1000) : null,
+        ];
+
+        foreach ($candidates as $duration) {
+            if (is_numeric($duration) && (float) $duration > 0) {
+                return (float) $duration;
+            }
+        }
+
+        return null;
     }
 }

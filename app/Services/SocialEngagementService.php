@@ -173,7 +173,13 @@ class SocialEngagementService
         ];
     }
 
-    public function commentOnVideo(User $user, Video $video, string $body, ?int $parentId = null): array
+    public function commentOnVideo(
+        User $user,
+        Video $video,
+        string $body,
+        ?int $parentId = null,
+        ?int $stickerId = null,
+    ): array
     {
         $videoId = (int) $video->getKey();
 
@@ -193,6 +199,7 @@ class SocialEngagementService
             'user_id' => $user->id,
             'parent_id' => $parentId,
             'body' => $body,
+            'sticker_id' => $stickerId,
         ]);
 
         $comment->load([
@@ -329,4 +336,3 @@ class SocialEngagementService
         $this->videoCacheService->invalidateViewer((int) $user->id);
     }
 }
-

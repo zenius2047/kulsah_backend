@@ -24,6 +24,7 @@ class StoreLiveRequest extends FormRequest
             'title' => is_string($this->input('title')) ? trim($this->input('title')) : $this->input('title'),
             'description' => is_string($this->input('description')) ? trim($this->input('description')) : $this->input('description'),
             'category' => is_string($this->input('category')) ? strtolower(trim($this->input('category'))) : $this->input('category'),
+            'live_type' => is_string($this->input('live_type')) ? strtolower(trim($this->input('live_type'))) : 'regular',
             'visibility' => is_string($this->input('visibility')) ? strtolower(trim($this->input('visibility'))) : $this->input('visibility'),
             'stream_quality' => is_string($this->input('stream_quality'))
                 ? strtolower(trim($this->input('stream_quality')))
@@ -53,6 +54,7 @@ class StoreLiveRequest extends FormRequest
             'title' => ['required', 'string', 'max:100'],
             'description' => ['nullable', 'string', 'max:5000'],
             'category' => ['required', Rule::in(['music', 'gaming', 'talk_show', 'lifestyle', 'education'])],
+            'live_type' => ['required', Rule::in(['regular', 'battle'])],
             'visibility' => ['required', Rule::in(['public', 'subscribers'])],
             'scheduled_at' => ['nullable', 'date', 'after:now'],
             'notify_followers' => ['required', 'boolean'],

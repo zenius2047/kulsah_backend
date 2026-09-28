@@ -99,6 +99,26 @@ class CloudinaryWebhookService
             throw new RuntimeException('Unable to match Cloudinary webhook to a video record.');
         }
 
+        $payloadRenderHash = $this->resolveContextValue(data_get($payload, 'context'), 'render_hash')
+            ?: $this->resolveContextValue(data_get($payload, 'asset.context'), 'render_hash');
+        $currentRenderHash = (string) data_get($video->metadata, 'cloudinary_render_hash', '');
+        if (is_string($payloadRenderHash) && $payloadRenderHash !== ''
+            && $currentRenderHash !== '' && ! hash_equals($currentRenderHash, $payloadRenderHash)) {
+            $event->forceFill(['processed_at' => now()])->save();
+
+            Log::info('Ignored stale Cloudinary render webhook.', [
+                'video_id' => $video->id,
+                'payload_render_hash' => $payloadRenderHash,
+                'current_render_hash' => $currentRenderHash,
+            ]);
+
+            return [
+                'status' => 'stale',
+                'event' => $event->fresh(),
+                'video' => $video,
+            ];
+        }
+
         $isFailure = $this->isFailurePayload($payload);
 
         DB::transaction(function () use ($event, $video, $payload, $isFailure): void {

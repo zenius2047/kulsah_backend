@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\Wallet\WalletController;
 use App\Http\Controllers\Api\V1\Live\LiveController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\StickerController;
+use App\Http\Controllers\Api\V1\UserNotificationController;
 use Illuminate\Support\Facades\Route;
 
 Route::pattern('video', '[0-9]+');
@@ -78,6 +79,8 @@ Route::prefix('general')
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
 
         Route::get('/conversations/unread-count', [ConversationController::class, 'unreadCount']);
+        Route::get('/notifications', [UserNotificationController::class, 'index']);
+        Route::patch('/notifications/{notification}/read', [UserNotificationController::class, 'markRead']);
         Route::prefix('stickers')->group(function () {
             Route::get('/', [StickerController::class, 'index']);
             Route::get('/search', [StickerController::class, 'search']);
@@ -211,6 +214,24 @@ Route::prefix('creator')
 
         Route::post('/community/posts', [CommunityPostController::class, 'store']);
 
+        Route::prefix('challenges')->group(function () {
+            Route::post('/', [ChallengeController::class, 'store']);
+            Route::post('/draft', [ChallengeController::class, 'draft']);
+            Route::patch('/{challenge}', [ChallengeController::class, 'update']);
+            Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);
+            Route::post('/{challenge}/entries', [ChallengeController::class, 'submitEntry'])->middleware('throttle:challenge-entries');
+            Route::delete('/{challenge}/entries/{entry}', [ChallengeController::class, 'withdraw']);
+            Route::put('/{challenge}/entries/{entry}/jury-scores', [ChallengeController::class, 'juryScore']);
+            Route::post('/{challenge}/entries/{entry}/select-winner', [ChallengeController::class, 'selectWinner']);
+            Route::post('/{challenge}/finalize', [ChallengeController::class, 'finalize'])->middleware('throttle:challenge-finalize');
+            Route::post('/{challenge}/settle-creator-battle', [ChallengeController::class, 'settleCreatorBattle']);
+            Route::post('/{challenge}/invites', [ChallengeController::class, 'inviteParticipant']);
+            Route::post('/{challenge}/invites/{invite}/accept', [ChallengeController::class, 'acceptInvite']);
+            Route::post('/{challenge}/jury', [ChallengeController::class, 'inviteJury']);
+            Route::post('/{challenge}/integrity-flags/{integrityFlag}/resolve', [ChallengeController::class, 'resolveIntegrity']);
+            Route::post('/{challenge}/reward-allocations/{allocation}/process', [ChallengeController::class, 'processReward']);
+        });
+
         Route::get('/events', [EventController::class, 'creatorIndex'])->middleware('cache.api:60');
         Route::post('/events', [EventController::class, 'store']);
         Route::get('/events/{event}', [EventController::class, 'creatorShow'])->middleware('cache.api:60');
@@ -250,9 +271,13 @@ Route::prefix('general')
         Route::post('/live/{liveSession}/gifts', [LiveController::class, 'gift']);
         Route::post('/live/{liveSession}/reports', [LiveController::class, 'report']);
         Route::post('/live/{liveSession}/cohost-requests', [LiveController::class, 'requestCohost']);
+        Route::get('/live/{liveSession}/participants', [LiveController::class, 'participants']);
+        Route::post('/live/{liveSession}/cohosts/credentials', [LiveController::class, 'cohostCredentials'])->middleware('throttle:live-token');
+        Route::post('/live/{liveSession}/cohosts/leave', [LiveController::class, 'leaveCohost']);
         Route::post('/live/cohost-requests/{cohostRequest}/accept', [LiveController::class, 'acceptCohost']);
         Route::post('/live/cohost-requests/{cohostRequest}/decline', [LiveController::class, 'declineCohost']);
         Route::post('/live/battles/{battle}/accept', [LiveController::class, 'acceptBattle']);
+        Route::post('/live/battles/{battle}/votes', [LiveController::class, 'voteBattle']);
         Route::post('/live/battles/{battle}/score', [LiveController::class, 'scoreBattle']);
         Route::post('/live/battles/{battle}/end', [LiveController::class, 'endBattle']);
     });
@@ -270,5 +295,6 @@ Route::prefix('creator')
         Route::post('/live/{liveSession}/cohosts/invite', [LiveController::class, 'inviteCohost'])->middleware('throttle:live-token');
         Route::delete('/live/{liveSession}/cohosts/{user}', [LiveController::class, 'removeCohost'])->middleware('throttle:live-moderation');
         Route::post('/live/{liveSession}/battles/invite', [LiveController::class, 'inviteBattle'])->middleware('throttle:live-token');
+        Route::get('/live/{liveSession}/battle-creators', [LiveController::class, 'battleCreators']);
         Route::get('/live/{liveSession}/analytics', [LiveController::class, 'analytics']);
     });

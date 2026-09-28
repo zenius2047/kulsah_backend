@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Jobs\RenderVideoEditsJob;
 use App\Models\Video;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class VideoEditService
@@ -58,6 +59,8 @@ class VideoEditService
         $normalizedTimeline = array_merge([
             'video_id' => (int) $video->id,
         ], $normalizedProject['timeline']);
+        $renderToken = (string) Str::uuid();
+        $normalizedTimeline['render_token'] = $renderToken;
         $renderEngine = $this->resolveRenderEngine($normalizedTimeline);
 
         $video->update([
@@ -81,6 +84,7 @@ class VideoEditService
                 'edit_overlays' => $normalizedTimeline['layers'],
                 'render_timeline' => $normalizedTimeline,
                 'edit_renderer' => $renderEngine,
+                'edit_render_token' => $renderToken,
                 'previous_source_key' => $video->source_key,
                 'previous_source_url' => $video->source_url,
                 'previous_cloudinary_public_id' => $video->cloudinary_public_id,
@@ -147,24 +151,7 @@ class VideoEditService
             }
 
             if (in_array($type, ['audio'], true)) {
-                $hasRichEffects = ! empty($layer['stroke'] ?? [])
-                    || ! empty($layer['shadow'] ?? [])
-                    || ! empty($layer['keyframes'] ?? [])
-                    || ! empty($layer['animation'] ?? [])
-                    || ! empty($layer['transition'] ?? [])
-                    || ! empty(data_get($layer, 'metadata.transition', []))
-                    || data_get($layer, 'preset') !== null
-                    || data_get($layer, 'content.preset') !== null
-                    || data_get($layer, 'font_weight') !== null
-                    || data_get($layer, 'font_style') !== null
-                    || data_get($layer, 'margin_x') !== null
-                    || data_get($layer, 'margin_y') !== null
-                    || data_get($layer, 'padding_x') !== null
-                    || data_get($layer, 'padding_y') !== null;
-
-                if ($hasRichEffects) {
-                    return 'ffmpeg';
-                }
+                return 'ffmpeg';
             }
         }
 

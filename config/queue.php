@@ -68,7 +68,8 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            // Keep this above the longest media worker/job timeout (1800s).
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 2100),
             'block_for' => null,
             'after_commit' => false,
         ],
@@ -127,4 +128,3 @@ return [
     ],
 
 ];
-

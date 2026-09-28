@@ -41,6 +41,7 @@ class LiveSessionService
                 'title' => $data['title'],
                 'description' => $data['description'],
                 'category' => $data['category'],
+                'live_type' => $data['live_type'],
                 'cover_url' => $data['cover_url'],
                 'visibility' => $data['visibility'],
                 'scheduled_at' => $data['scheduled_at'],
@@ -81,6 +82,7 @@ class LiveSessionService
                 ? (is_string($data['description']) ? trim($data['description']) : $data['description'])
                 : null,
             'category' => isset($data['category']) ? strtolower(trim((string) $data['category'])) : null,
+            'live_type' => isset($data['live_type']) ? strtolower(trim((string) $data['live_type'])) : 'regular',
             'cover_url' => $data['cover_url'] ?? null,
             'visibility' => isset($data['visibility']) ? strtolower(trim((string) $data['visibility'])) : 'public',
             'scheduled_at' => $data['scheduled_at'] ?? null,
@@ -228,4 +230,3 @@ class LiveSessionService
         return $this->reconciliationService->reconcileStaleLive($live);
     }
 }
-

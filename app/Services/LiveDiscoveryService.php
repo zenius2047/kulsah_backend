@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Cache;
 
 class LiveDiscoveryService
 {
-    public function discover(?User $viewer = null, int $perPage = 20): LengthAwarePaginator
+    public function discover(?User $viewer = null, int $perPage = 20, string $searchQuery = ''): LengthAwarePaginator
     {
         $viewerId = $viewer?->id;
 
@@ -20,6 +20,17 @@ class LiveDiscoveryService
             ->with(['creator:id,name,username,avatar,banner,verified'])
             ->withCount(['viewerSessions as active_viewer_sessions_count' => fn (Builder $query) => $query->whereNull('left_at')])
             ->whereIn('status', [LiveStatus::STARTING, LiveStatus::LIVE, LiveStatus::RECONNECTING])
+            ->when($searchQuery !== '', function (Builder $query) use ($searchQuery): void {
+                $query->where(function (Builder $search) use ($searchQuery): void {
+                    $search->whereLike('title', '%'.$searchQuery.'%')
+                        ->orWhereLike('description', '%'.$searchQuery.'%')
+                        ->orWhereLike('category', '%'.$searchQuery.'%')
+                        ->orWhereHas('creator', function (Builder $creator) use ($searchQuery): void {
+                            $creator->whereLike('name', '%'.$searchQuery.'%')
+                                ->orWhereLike('username', '%'.$searchQuery.'%');
+                        });
+                });
+            })
             ->orderByDesc('started_at')
             ->orderByDesc('current_viewers')
             ->paginate($perPage);
@@ -34,4 +45,3 @@ class LiveDiscoveryService
         });
     }
 }
-

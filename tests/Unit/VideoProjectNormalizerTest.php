@@ -126,6 +126,38 @@ class VideoProjectNormalizerTest extends TestCase
         ], 7);
     }
 
+    public function test_v3_shape_tracks_are_preserved_in_the_render_plan(): void
+    {
+        $result = app(VideoProjectNormalizer::class)->normalize([
+            'schemaVersion' => '3.0.0',
+            'metadata' => ['duration' => 10],
+            'canvas' => ['width' => 1080, 'height' => 1920],
+            'output' => ['width' => 1080, 'height' => 1920],
+            'scenes' => [[
+                'timeline' => ['start' => 0, 'duration' => 10],
+                'tracks' => [[
+                    'id' => 'shape-1',
+                    'type' => 'shape',
+                    'timeline' => ['start' => 2, 'duration' => 4],
+                    'shapeType' => 'rectangle',
+                    'fill' => ['color' => '#FF0000', 'opacity' => 0.5],
+                    'transform' => [
+                        'position' => ['x' => 200, 'y' => 300],
+                        'size' => ['width' => 100, 'height' => 80],
+                    ],
+                ]],
+            ]],
+        ], 7);
+
+        $layer = $result['timeline']['layers'][0];
+        $this->assertSame('shape', $layer['type']);
+        $this->assertSame(2.0, $layer['start']);
+        $this->assertSame(6.0, $layer['end']);
+        $this->assertSame('#FF0000', $layer['color']);
+        $this->assertSame(100, $layer['width']);
+        $this->assertSame(80, $layer['height']);
+    }
+
     public function test_v3_project_rejects_unsafe_output_options(): void
     {
         $this->expectException(ValidationException::class);

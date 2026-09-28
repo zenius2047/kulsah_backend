@@ -73,7 +73,7 @@ services:
       - laravel_vendor:/var/www/vendor
       - laravel_bootstrap_cache:/var/www/bootstrap/cache
       - ./storage/firebase:/var/www/storage/firebase:ro
-    command: php artisan queue:work redis --queue=videos --tries=3 --timeout=1200 --memory=512 --sleep=1
+    command: php artisan queue:work redis --queue=videos --tries=3 --timeout=1800 --memory=512 --sleep=1
     depends_on:
       - postgres
       - redis
@@ -85,7 +85,7 @@ services:
       DB_USERNAME: postgres
       DB_PASSWORD: password
       REDIS_HOST: redis
-      REDIS_QUEUE_RETRY_AFTER: 1260
+      REDIS_QUEUE_RETRY_AFTER: 2100
       FASTAPI_URL: http://fastapi:8000
       FASTAPI_SHARED_SECRET: ${FASTAPI_SHARED_SECRET}
       FASTAPI_SIGNATURE_TTL_SECONDS: ${FASTAPI_SIGNATURE_TTL_SECONDS:-300}

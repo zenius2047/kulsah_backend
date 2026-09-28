@@ -209,6 +209,7 @@ class VideoController extends Controller
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
             'allow_duet' => ['sometimes', 'boolean'],
+            'requires_editing' => ['sometimes', 'boolean'],
         ]);
 
         try {
@@ -221,6 +222,7 @@ class VideoController extends Controller
                     'content_type' => $contentTypes[0] ?? null,
                     'content_types' => $contentTypes,
                     'visibility' => $request->input('visibility', 'public'),
+                    'requires_editing' => $request->boolean('requires_editing'),
                     'original_name' => $request->file('video')->getClientOriginalName(),
                     'mime_type' => $request->file('video')->getMimeType(),
                     'size' => $request->file('video')->getSize(),
@@ -253,8 +255,12 @@ class VideoController extends Controller
         $video->refresh();
         $this->invalidateCreatorCaches((int) $request->user()->id);
 
+        $requiresEditing = (bool) data_get($video->metadata, 'requires_editing', false);
+
         return response()->json([
-            'message' => 'Video uploaded successfully and is now in draft while processing starts.',
+            'message' => $requiresEditing
+                ? 'Video uploaded successfully and is ready for editing.'
+                : 'Video uploaded successfully and is now in draft while processing starts.',
             'data' => new VideoResource($video),
         ], 201);
     }
@@ -839,26 +845,29 @@ class VideoController extends Controller
             'You are not allowed to view this video.'
         );
 
-        $payload = $this->videoCacheService->rememberCreator(
-            creatorId: (int) $request->user()->id,
-            scope: 'videos:progress',
-            context: ['video_id' => (int) $video->id],
-            resolver: function () use ($video): array {
-                $video->refresh();
-
-                return [
-                    'data' => [
-                        'video_id' => $video->id,
-                        'status' => $video->status,
-                        'render_status' => $video->render_status,
-                        'progress_percentage' => (int) ($video->progress_percentage ?? 0),
-                        'requires_editing' => (bool) data_get($video->metadata, 'requires_editing', false),
-                        'upload_state' => data_get($video->metadata, 'upload_state'),
-                        'processing_state' => data_get($video->metadata, 'processing_state'),
-                    ],
-                ];
-            }
-        );
+        // Progress is a polling endpoint. Caching it for the normal creator
+        // cache TTL can keep returning "processing" after an async render or
+        // Cloudinary webhook has already marked the video ready.
+        $video->refresh();
+        $metadata = $video->metadata ?? [];
+        $payload = [
+            'data' => [
+                'video_id' => $video->id,
+                'status' => $video->status,
+                'render_status' => $video->render_status,
+                'progress_percentage' => (int) ($video->progress_percentage ?? 0),
+                'requires_editing' => (bool) data_get($metadata, 'requires_editing', false),
+                'upload_state' => data_get($metadata, 'upload_state'),
+                'upload_status' => $video->upload_status?->value,
+                'processing_state' => data_get($metadata, 'processing_state'),
+                'processing_status' => $video->processing_status?->value,
+                'render_completed_at' => $video->render_completed_at?->toISOString(),
+                'metadata' => [
+                    'edit_status' => data_get($metadata, 'edit_status'),
+                    'edit_error' => data_get($metadata, 'edit_error'),
+                ],
+            ],
+        ];
 
         return response()->json($payload);
     }
@@ -917,17 +926,22 @@ class VideoController extends Controller
         $rawGlobalEffects = $request->input('globalEffects');
         $rawGuides = $request->input('guides');
         $rawLayers = $request->input('layers', []);
-        $editAssetUploads = $this->storeEditAssetUploads($request->file('asset_files', []), (int) $request->user()->id);
-
-        if (is_array($rawAssets) && $rawAssets !== []) {
-            $rawAssets = $this->applyEditAssetUploadsToAssets($rawAssets, $editAssetUploads, (int) $request->user()->id);
-        }
-
-        if (is_array($rawLayers) && $rawLayers !== []) {
-            $rawLayers = $this->applyEditAssetUploadsToMediaLayers($rawLayers, $editAssetUploads, (int) $request->user()->id);
-        }
+        $editAssetUploads = [];
 
         try {
+            $editAssetUploads = $this->storeEditAssetUploads(
+                $request->file('asset_files', []),
+                (int) $request->user()->id
+            );
+
+            if (is_array($rawAssets) && $rawAssets !== []) {
+                $rawAssets = $this->applyEditAssetUploadsToAssets($rawAssets, $editAssetUploads, (int) $request->user()->id);
+            }
+
+            if (is_array($rawLayers) && $rawLayers !== []) {
+                $rawLayers = $this->applyEditAssetUploadsToMediaLayers($rawLayers, $editAssetUploads, (int) $request->user()->id);
+            }
+
             $timelinePayload = [
                 'video_id' => (int) $video->id,
                 'schemaVersion' => is_string($rawSchemaVersion) && $rawSchemaVersion !== ''
@@ -953,6 +967,7 @@ class VideoController extends Controller
                 userId: (int) $request->user()->id,
             );
         } catch (Throwable $throwable) {
+            $this->deleteEditAssetUploads($editAssetUploads);
             report($throwable);
 
             if ($throwable instanceof ValidationException) {
@@ -1223,6 +1238,24 @@ class VideoController extends Controller
         }
 
         return $uploads;
+    }
+
+    /**
+     * @param  array<int, array{disk:string,source_key:string,source_url:string}>  $uploads
+     */
+    private function deleteEditAssetUploads(array $uploads): void
+    {
+        foreach ($uploads as $upload) {
+            if (! is_array($upload) || empty($upload['disk']) || empty($upload['source_key'])) {
+                continue;
+            }
+
+            try {
+                $this->videoStorageService->delete((string) $upload['source_key'], (string) $upload['disk']);
+            } catch (Throwable $throwable) {
+                report($throwable);
+            }
+        }
     }
 
     /**

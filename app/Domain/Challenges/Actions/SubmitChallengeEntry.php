@@ -77,16 +77,62 @@ class SubmitChallengeEntry
     private function validateSubmissionRules(Challenge $challenge, Video $video): void
     {
         foreach ($challenge->rules()->where('scope', 'submission')->where('rules_version', $challenge->rules_version)->get() as $rule) {
+            $duration = $rule->rule_type === 'video_duration'
+                ? $this->resolveVideoDurationSeconds($video)
+                : null;
             $error = match ($rule->rule_type) {
-                'video_duration' => ! app(ChallengeRuleEngine::class)->passes($rule, $video->duration),
+                'video_duration' => $duration === null || ! app(ChallengeRuleEngine::class)->passes($rule, $duration),
                 'aspect_ratio' => ! app(ChallengeRuleEngine::class)->passes($rule, data_get($video->metadata, 'aspect_ratio', data_get($video->metadata, 'canvas.aspect_ratio'))),
                 'required_hashtag' => ! str_contains(strtolower((string) $video->caption), strtolower((string) $rule->value)),
                 'official_sound' => (int) data_get($video->metadata, 'sound_id') !== (int) $challenge->official_sound_id,
                 default => false,
             };
             if ($error) {
-                throw ValidationException::withMessages(['video_id' => "The video failed the {$rule->rule_type} rule."]);
+                $message = $rule->rule_type === 'video_duration'
+                    ? $this->durationRuleMessage($rule, $duration)
+                    : "The video failed the {$rule->rule_type} rule.";
+
+                throw ValidationException::withMessages(['video_id' => $message]);
             }
         }
+    }
+
+    private function resolveVideoDurationSeconds(Video $video): ?float
+    {
+        $candidates = [
+            $video->duration,
+            $video->duration_ms ? ((float) $video->duration_ms / 1000) : null,
+            data_get($video->metadata, 'duration_seconds'),
+            data_get($video->metadata, 'duration'),
+            data_get($video->metadata, 'format.duration'),
+        ];
+
+        foreach ($candidates as $duration) {
+            if (is_numeric($duration) && (float) $duration > 0) {
+                return (float) $duration;
+            }
+        }
+
+        return null;
+    }
+
+    private function durationRuleMessage(object $rule, ?float $duration): string
+    {
+        if ($duration === null) {
+            return 'We could not verify this video\'s duration yet. Please wait for processing to finish and try again.';
+        }
+
+        $expected = match (strtoupper((string) $rule->operator)) {
+            'BETWEEN' => sprintf('%s to %s seconds', $rule->value[0] ?? '?', $rule->value[1] ?? '?'),
+            '<=' => sprintf('%s seconds or less', $rule->value),
+            '>=' => sprintf('%s seconds or more', $rule->value),
+            default => sprintf('%s seconds', is_array($rule->value) ? implode(' to ', $rule->value) : $rule->value),
+        };
+
+        return sprintf(
+            'This battle requires a video that is %s. Your uploaded video is %s seconds.',
+            $expected,
+            rtrim(rtrim(number_format($duration, 3, '.', ''), '0'), '.'),
+        );
     }
 }

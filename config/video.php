@@ -13,6 +13,7 @@ return [
     'max_upload_kb' => (int) env('VIDEO_MAX_UPLOAD_KB', 102400),
     'thumbnail_max_upload_kb' => (int) env('VIDEO_THUMBNAIL_MAX_UPLOAD_KB', 5120),
     'max_duration_seconds' => (int) env('VIDEO_MAX_DURATION_SECONDS', 120),
+    'inspect_direct_uploads' => env('VIDEO_INSPECT_DIRECT_UPLOADS', true),
     'transcode_enabled' => env('VIDEO_TRANSCODE_ENABLED', true),
     'transcode_preset' => env('VIDEO_TRANSCODE_PRESET', 'veryfast'),
     'transcode_crf' => (int) env('VIDEO_TRANSCODE_CRF', 28),

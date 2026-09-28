@@ -34,6 +34,8 @@ class LiveDirectoryUpdated implements ShouldBroadcastNow
             'title' => $this->live->title,
             'status' => $this->live->status?->value ?? $this->live->status,
             'category' => $this->live->category,
+            'live_type' => $this->live->live_type ?: 'regular',
+            'is_battle' => ($this->live->live_type ?: 'regular') === 'battle',
             'cover_url' => $this->live->cover_url,
             'visibility' => $this->live->visibility,
             'current_viewers' => (int) $this->live->current_viewers,

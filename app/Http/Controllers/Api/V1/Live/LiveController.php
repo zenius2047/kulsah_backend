@@ -32,7 +32,16 @@ class LiveController extends Controller
 {
     public function index(Request $request, LiveDiscoveryService $discovery)
     {
-        return LiveSessionResource::collection($discovery->discover($request->user(), (int) $request->integer('per_page', 20)));
+        $validated = $request->validate([
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'search_query' => ['sometimes', 'nullable', 'string', 'max:255'],
+        ]);
+
+        return LiveSessionResource::collection($discovery->discover(
+            viewer: $request->user(),
+            perPage: (int) ($validated['per_page'] ?? 20),
+            searchQuery: trim((string) ($validated['search_query'] ?? '')),
+        ));
     }
 
     public function show(Request $request, LiveSession $liveSession)
@@ -61,8 +70,9 @@ class LiveController extends Controller
         ]);
     }
 
-    public function confirm(LiveSession $liveSession, LiveSessionService $service)
+    public function confirm(LiveSession $liveSession, Request $request, LiveSessionService $service)
     {
+        abort_unless((int) $liveSession->creator_id === (int) $request->user()->id, 403);
         $live = $service->confirmLive($liveSession);
         LiveUpdated::dispatch($live, 'status');
         LiveDirectoryUpdated::dispatch($live, 'status');
@@ -72,8 +82,9 @@ class LiveController extends Controller
         ]);
     }
 
-    public function reconnect(LiveSession $liveSession, LiveSessionService $service)
+    public function reconnect(LiveSession $liveSession, Request $request, LiveSessionService $service)
     {
+        abort_unless((int) $liveSession->creator_id === (int) $request->user()->id, 403);
         $live = $service->reconnect($liveSession);
         LiveUpdated::dispatch($live, 'status');
         LiveDirectoryUpdated::dispatch($live, 'status');
@@ -146,8 +157,13 @@ class LiveController extends Controller
         ]);
     }
 
-    public function leave(LiveSession $liveSession, Request $request, LivePresenceService $presence)
+    public function leave(LiveSession $liveSession, Request $request, LivePresenceService $presence, LiveCohostService $cohosts)
     {
+        if ($liveSession->cohosts()->where('user_id', $request->user()->id)->where('status', 'active')->exists()) {
+            $cohosts->remove($liveSession, $request->user(), $request->user());
+        }
+        $liveSession->cohostRequests()->where('requester_id', $request->user()->id)
+            ->whereIn('status', ['pending', 'accepted'])->update(['status' => 'cancelled', 'cancelled_at' => now()]);
         $session = $liveSession->viewerSessions()
             ->where('user_id', $request->user()->id)
             ->whereNull('left_at')
@@ -278,17 +294,73 @@ class LiveController extends Controller
         return response()->json(['data' => $result]);
     }
 
-    public function declineCohost(LiveCohostRequest $cohostRequest, Request $request)
+    public function declineCohost(LiveCohostRequest $cohostRequest, Request $request, LiveCohostService $cohosts)
     {
-        abort_unless(in_array($request->user()->id, [$cohostRequest->invitee_id, $cohostRequest->requester_id], true), 403);
+        return response()->json(['data' => $cohosts->decline($cohostRequest, $request->user())]);
+    }
 
-        $cohostRequest->forceFill([
-            'status' => 'declined',
-            'responded_at' => now(),
-            'declined_at' => now(),
-        ])->save();
+    public function participants(LiveSession $liveSession, Request $request, LiveAuthorizationService $authorization)
+    {
+        $authorization->assertViewerCanJoin($request->user(), $liveSession);
+        $creator = (int) $liveSession->creator_id === (int) $request->user()->id;
+        $stageBattles = LiveBattle::query()->where('creator_live_session_id', $liveSession->id)
+            ->whereIn('status', ['pending', 'accepted', 'active'])->get()
+            ->filter(fn ($battle) => (bool) ($battle->metadata['shared_stage'] ?? false))
+            ->filter(fn ($battle) => $creator
+                || (int) $battle->opponent_id === (int) $request->user()->id
+                || $battle->status->value === 'active');
+        $battleStage = null;
+        if ($stageBattles->isNotEmpty()) {
+            $stageIds = $stageBattles->pluck('opponent_id')->prepend($liveSession->creator_id)->unique()->values();
+            $stageUsers = User::query()->whereIn('id', $stageIds)->get()->keyBy('id');
+            $identities = \App\Models\LiveProviderIdentity::query()->where('provider', 'agora')
+                ->whereIn('user_id', $stageIds)->pluck('provider_uid', 'user_id');
+            $battleStage = [
+                'all_accepted' => $stageBattles->every(fn ($battle) => in_array($battle->status->value, ['accepted', 'active'])),
+                'participants' => $stageIds->map(fn ($id) => [
+                    'user_id' => (int) $id, 'rtc_uid' => (int) ($identities[$id] ?? $id),
+                    'name' => $stageUsers[$id]?->name ?? 'Creator',
+                    'username' => $stageUsers[$id]?->username,
+                    'avatar' => $stageUsers[$id]?->avatar,
+                    'verified' => (bool) ($stageUsers[$id]?->verified ?? false),
+                    'accepted' => (int) $id === (int) $liveSession->creator_id
+                        || $stageBattles->contains(fn ($battle) => (int) $battle->opponent_id === (int) $id && in_array($battle->status->value, ['accepted', 'active'])),
+                ])->all(),
+            ];
+        }
+        $requests = $liveSession->cohostRequests()
+            ->when(! $creator, fn ($q) => $q->where('requester_id', $request->user()->id))
+            ->with('requester:id,name,username,avatar')->latest('updated_at')->limit(100)->get();
+        $requests->each(function ($item) {
+            $item->requester?->setAppends([]);
+            if (in_array($item->status->value, ['pending', 'accepted']) && $item->expires_at?->isPast()) {
+                $item->status = 'expired';
+            }
+        });
+        return response()->json(['data' => [
+            'requests' => $requests,
+            'battle_stage' => $battleStage,
+            'vote_price_kc' => max(1, (int) config('kulcoin.vote_coin_price', 10)),
+            'cohosts' => $liveSession->cohosts()->where('status', 'active')->whereNull('removed_at')->with('user:id,name,username,avatar')->get()->each(fn ($cohost) => $cohost->user?->setAppends([])),
+            'viewers' => $creator ? User::query()->whereIn('id', $liveSession->viewerSessions()->whereNull('left_at')->select('user_id'))
+                ->where('id', '!=', $liveSession->creator_id)->select('id', 'name', 'username', 'avatar')->limit(100)->get()->each(fn ($user) => $user->setAppends([])) : [],
+            'battles' => LiveBattle::query()->where(fn ($q) => $q->where('creator_live_session_id', $liveSession->id)->orWhere('opponent_live_session_id', $liveSession->id))
+                ->when(! $creator, fn ($q) => $q->where(fn ($q) => $q->where('status', 'active')->orWhere('opponent_id', $request->user()->id)))
+                ->with(['creator:id,name,username,avatar', 'opponent:id,name,username,avatar'])
+                ->latest()->limit(20)->get(),
+        ]]);
+    }
 
-        return response()->json(['data' => $cohostRequest]);
+    public function cohostCredentials(LiveSession $liveSession, Request $request, LiveAuthorizationService $authorization, AgoraTokenService $tokens)
+    {
+        $authorization->assertViewerCanJoin($request->user(), $liveSession);
+        abort_unless($authorization->canPublish($request->user(), $liveSession), 403);
+        return response()->json(['data' => $tokens->generateCoHostToken($liveSession, $request->user())]);
+    }
+
+    public function leaveCohost(LiveSession $liveSession, Request $request, LiveCohostService $cohosts)
+    {
+        return response()->json(['data' => $cohosts->remove($liveSession, $request->user(), $request->user())]);
     }
 
     public function removeCohost(LiveSession $liveSession, User $user, Request $request, LiveCohostService $cohosts)
@@ -301,24 +373,80 @@ class LiveController extends Controller
     public function inviteBattle(LiveSession $liveSession, Request $request, LiveBattleService $battles)
     {
         $validated = $request->validate([
-            'opponent_live_session_public_id' => ['required', 'string', 'exists:live_sessions,public_id'],
+            'opponent_id' => ['required_without:opponent_live_session_public_id', 'integer', 'exists:users,id'],
+            'opponent_live_session_public_id' => ['required_without:opponent_id', 'string', 'exists:live_sessions,public_id'],
         ]);
 
-        $opponentLive = LiveSession::query()->where('public_id', $validated['opponent_live_session_public_id'])->firstOrFail();
-        $battle = $battles->invite($liveSession, $opponentLive, $request->user());
+        $opponent = isset($validated['opponent_id']) ? User::query()->findOrFail($validated['opponent_id'])
+            : LiveSession::query()->where('public_id', $validated['opponent_live_session_public_id'])->firstOrFail();
+        $battle = $battles->invite($liveSession, $opponent, $request->user());
 
         return response()->json(['data' => $battle], 201);
+    }
+
+    public function battleCreators(LiveSession $liveSession, Request $request, \App\Services\RealtimePresenceService $presence)
+    {
+        abort_unless((int) $liveSession->creator_id === (int) $request->user()->id, 403);
+        $validated = $request->validate([
+            'search_query' => ['nullable', 'string', 'max:255'],
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'limit' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+        $page = (int) ($validated['page'] ?? 1);
+        $limit = (int) ($validated['limit'] ?? 30);
+        $words = array_values(array_filter(array_map(
+            fn ($word) => ltrim($word, '@'),
+            preg_split('/\s+/u', trim($validated['search_query'] ?? '')) ?: []
+        ), fn ($word) => $word !== ''));
+        $query = User::query()->select('id', 'name', 'username', 'avatar')
+            ->where('id', '!=', $request->user()->id)
+            ->whereHas('roles', fn ($query) => $query->where('name', 'creator'));
+        foreach ($words as $word) {
+            $query->where(fn ($query) => $query->whereLike('name', '%'.$word.'%')->orWhereLike('username', '%'.$word.'%'));
+        }
+        // Apply online status before pagination, independently of discovery/view history
+        // and the requesting device's websocket presence snapshot.
+        $creators = $query->lazyById(100)
+            ->filter(fn (User $user) => $presence->isOnline($user))
+            ->skip(($page - 1) * $limit)->take($limit + 1)->values()->collect();
+        return response()->json([
+            'data' => $creators->take($limit)->map(fn (User $user) => [
+                'id' => $user->id, 'name' => $user->name, 'handle' => $user->username,
+                'avatar_url' => $user->avatar, 'is_online' => true,
+            ])->values(),
+            'meta' => ['current_page' => $page, 'has_more' => $creators->count() > $limit],
+        ]);
     }
 
     public function acceptBattle(LiveBattle $battle, Request $request, LiveBattleService $battles)
     {
         $battle = $battles->accept($battle, $request->user());
 
-        return response()->json(['data' => $battle]);
+        return response()->json(['data' => $battle, 'credentials' => ($battle->metadata['shared_stage'] ?? false)
+            ? app(AgoraTokenService::class)->generateCoHostToken($battle->creatorLive, $request->user()) : null]);
+    }
+
+    public function voteBattle(LiveBattle $battle, Request $request, LiveBattleService $battles)
+    {
+        $validated = $request->validate([
+            'target_user_id' => ['required', 'integer', 'exists:users,id'],
+            'vote_count' => ['required', 'integer', 'min:1', 'max:100'],
+            'idempotency_key' => ['required', 'string', 'max:255'],
+        ]);
+        $result = $battles->vote($battle, $request->user(), $validated);
+
+        return response()->json(['data' => [
+            'battle' => $result['battle'],
+            'transaction_id' => $result['transaction']->id,
+            'coin_amount' => (int) $result['transaction']->coin_amount,
+            'vote_count' => (int) ($result['transaction']->metadata['vote_count'] ?? $validated['vote_count']),
+            'target_user_id' => (int) $validated['target_user_id'],
+        ]]);
     }
 
     public function scoreBattle(LiveBattle $battle, Request $request, LiveBattleService $battles)
     {
+        app(LiveAuthorizationService::class)->assertBattleParticipants($battle, $request->user());
         $battle = $battles->score($battle);
 
         return response()->json(['data' => $battle]);
@@ -326,6 +454,7 @@ class LiveController extends Controller
 
     public function endBattle(LiveBattle $battle, Request $request, LiveBattleService $battles)
     {
+        app(LiveAuthorizationService::class)->assertBattleParticipants($battle, $request->user());
         $battle = $battles->end($battle);
 
         return response()->json(['data' => $battle]);
@@ -343,6 +472,7 @@ class LiveController extends Controller
         ]);
 
         $target = User::query()->findOrFail($validated['target_id']);
+        abort_if((int) $target->id === (int) $liveSession->creator_id && $validated['action'] !== 'terminate_live', 422, 'The host cannot be moderated as a viewer.');
         $expiresAt = isset($validated['duration_seconds']) ? now()->addSeconds((int) $validated['duration_seconds']) : null;
 
         $action = $moderation->record(
@@ -356,6 +486,9 @@ class LiveController extends Controller
         );
 
         if (in_array($validated['action'], ['remove', 'ban_from_live'], true)) {
+            if ($liveSession->cohosts()->where('user_id', $target->id)->where('status', 'active')->exists()) {
+                app(LiveCohostService::class)->remove($liveSession, $request->user(), $target);
+            }
             $session = $liveSession->viewerSessions()->where('user_id', $target->id)->whereNull('left_at')->latest()->first();
             if ($session) {
                 app(LivePresenceService::class)->leave($session);
@@ -366,7 +499,9 @@ class LiveController extends Controller
             $liveSession = app(LiveSessionService::class)->end($liveSession, 'platform_terminated');
         }
 
-        LiveUpdated::dispatch($liveSession->fresh('creator'), 'moderation_applied');
+        LiveUpdated::dispatch($liveSession->fresh('creator'), 'moderation_applied', [
+            'moderation' => ['target_id' => $target->id, 'action' => $validated['action']],
+        ]);
 
         return response()->json(['data' => $action]);
     }
@@ -390,16 +525,11 @@ class LiveController extends Controller
         return response()->json(['data' => $report], 201);
     }
 
-    public function analytics(LiveSession $liveSession, LiveAnalyticsService $analytics)
+    public function analytics(LiveSession $liveSession, Request $request, LiveAnalyticsService $analytics)
     {
+        abort_unless((int) $liveSession->creator_id === (int) $request->user()->id, 403);
         $snapshot = $analytics->upsertFromLive($liveSession->fresh());
 
         return response()->json(['data' => $snapshot]);
     }
 }
-
-
-
-
-
-

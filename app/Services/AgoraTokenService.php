@@ -31,5 +31,14 @@ class AgoraTokenService
     {
         return $this->provider->renewCredentials($live, $user, $role);
     }
-}
 
+    public function revokePublishing(LiveSession $live, User $user): int
+    {
+        return $this->provider->revokePublishing($live, $user);
+    }
+
+    public function restorePublishing(int $ruleId): void
+    {
+        $this->provider->restorePublishing($ruleId);
+    }
+}

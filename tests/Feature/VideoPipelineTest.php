@@ -556,6 +556,24 @@ class VideoPipelineTest extends TestCase
             ->assertJsonPath('data.video_id', $videoId)
             ->assertJsonPath('data.status', 'draft')
             ->assertJsonPath('data.progress_percentage', 68);
+
+        Video::query()->findOrFail($videoId)->update([
+            'status' => 'ready',
+            'render_status' => 'ready',
+            'progress_percentage' => 100,
+            'render_completed_at' => now(),
+        ]);
+
+        $completed = $this
+            ->actingAs($creator, 'sanctum')
+            ->withoutMiddleware(RoleMiddleware::class)
+            ->getJson("/api/v1/creator/videos/{$videoId}/progress");
+
+        $completed->assertOk()
+            ->assertJsonPath('data.status', 'ready')
+            ->assertJsonPath('data.render_status', 'ready')
+            ->assertJsonPath('data.progress_percentage', 100)
+            ->assertJsonPath('data.render_completed_at', fn ($value) => is_string($value) && $value !== '');
     }
 
     public function test_creator_upload_mentions_user_and_dispatches_notification(): void

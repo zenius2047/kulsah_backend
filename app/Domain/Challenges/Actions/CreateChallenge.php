@@ -82,8 +82,6 @@ class CreateChallenge
             ]);
 
             if ($mode === ChallengeMode::CreatorBattle) {
-                $invitedUsers = User::query()->whereIn('id', $battleParticipantIds->all())->get();
-
                 foreach ($battleParticipantIds as $participantId) {
                     ChallengeInvite::updateOrCreate(
                         ['challenge_id' => $challenge->id, 'invited_user_id' => $participantId],
@@ -108,15 +106,27 @@ class CreateChallenge
                     );
                 }
 
-                DB::afterCommit(function () use ($invitedUsers, $challenge, $user): void {
-                    app(ChallengeInvitationNotificationService::class)->send(
-                        $invitedUsers,
-                        $challenge->fresh(),
-                        $user,
-                        'creator_battle',
-                        null,
-                        'challenger',
-                    );
+                DB::afterCommit(function () use ($battleParticipantIds, $challenge, $user): void {
+                    $invites = ChallengeInvite::query()
+                        ->where('challenge_id', $challenge->id)
+                        ->whereIn('invited_user_id', $battleParticipantIds->all())
+                        ->with('invitedUser')
+                        ->get();
+
+                    foreach ($invites as $invite) {
+                        if (! $invite->invitedUser) {
+                            continue;
+                        }
+
+                        app(ChallengeInvitationNotificationService::class)->send(
+                            $invite->invitedUser,
+                            $challenge->fresh(),
+                            $user,
+                            'creator_battle',
+                            $invite->id,
+                            'challenger',
+                        );
+                    }
                 });
             }
 

@@ -15,6 +15,8 @@ class LiveSessionResource extends JsonResource
             'title' => $this->title,
             'description' => $this->description,
             'category' => $this->category,
+            'live_type' => $this->live_type ?: 'regular',
+            'is_battle' => ($this->live_type ?: 'regular') === 'battle',
             'cover_url' => $this->cover_url,
             'visibility' => $this->visibility,
             'status' => $this->status?->value ?? $this->status,
@@ -56,7 +58,6 @@ class LiveSessionResource extends JsonResource
         ];
     }
 }
-
 
 
 

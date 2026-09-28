@@ -135,6 +135,10 @@ class VideoEditRenderingService
         }
 
         $filter = $this->buildFilterGraph($overlays, $timeline);
+        $audioFilter = $this->buildAudioFilterGraph($overlays, $sourcePath);
+        if ($audioFilter !== null) {
+            $filter .= ';'.$audioFilter;
+        }
         $output = is_array($timeline['output'] ?? null) ? $timeline['output'] : [];
         $preset = in_array((string) ($output['preset'] ?? ''), ['veryfast', 'faster', 'fast', 'medium'], true)
             ? (string) $output['preset']
@@ -148,7 +152,7 @@ class VideoEditRenderingService
             '-map',
             '[vout]',
             '-map',
-            '0:a?',
+            $audioFilter !== null ? '[aout]' : '0:a?',
             '-c:v',
             'libx264',
             '-pix_fmt',
@@ -262,7 +266,7 @@ class VideoEditRenderingService
         if ($publicId !== '') {
             $type = (string) ($overlay['type'] ?? '');
 
-            if ($type === 'video') {
+            if (in_array($type, ['video', 'audio'], true)) {
                 return $this->cloudinaryService->generateDerivedVideoUrl($publicId);
             }
 
@@ -324,7 +328,19 @@ class VideoEditRenderingService
             $current = '[base]';
         }
 
+        $globalFilters = $this->buildGlobalVideoFilters(
+            is_array($timeline['filters'] ?? null) ? $timeline['filters'] : []
+        );
+        if ($globalFilters !== []) {
+            $filters[] = $current.implode(',', $globalFilters).'[filtered]';
+            $current = '[filtered]';
+        }
+
         foreach ($overlays as $overlay) {
+            if (($overlay['type'] ?? null) === 'audio') {
+                continue;
+            }
+
             $next = '[v'.$step.']';
             $enable = $this->enableExpression((float) ($overlay['start'] ?? 0), $overlay['end'] ?? null);
 
@@ -341,7 +357,7 @@ class VideoEditRenderingService
                     'text='.$this->escapeFilterValue((string) $overlay['text']),
                     'x='.$xExpression,
                     'y='.$yExpression,
-                    'fontsize='.(int) ($overlay['font_size'] ?? 42),
+                    'fontsize='.(int) ($overlay['size'] ?? $overlay['font_size'] ?? 42),
                     'fontcolor='.$this->escapeFilterValue((string) ($overlay['color'] ?? '#ffffff')),
                     'alpha='.$alphaExpression,
                     'fix_bounds=1',
@@ -396,6 +412,7 @@ class VideoEditRenderingService
                     .':h='.$shapeHeight
                     .':color='.$this->escapeFilterValue((string) $shapeColor.'@'.($shapeOpacity / 100))
                     .':t=fill'
+                    .":enable='{$enable}'"
                     .$next;
                 $current = $next;
                 $step++;
@@ -475,7 +492,8 @@ class VideoEditRenderingService
             $overlayX = $this->buildNumericPositionExpression($overlay, 'x', (string) ($overlay['x'] ?? 0));
             $overlayY = $this->buildNumericPositionExpression($overlay, 'y', (string) ($overlay['y'] ?? 0));
 
-            $filters[] = $current.$overlayInput.'overlay='.$overlayX.':'.$overlayY.":eof_action=pass:enable='{$enable}'".$next;
+            $shortest = $this->shouldLoopOverlayInput($overlay) ? ':shortest=1' : '';
+            $filters[] = $current.$overlayInput.'overlay='.$overlayX.':'.$overlayY.":eof_action=pass{$shortest}:enable='{$enable}'".$next;
             $current = $next;
             $step++;
         }
@@ -483,6 +501,130 @@ class VideoEditRenderingService
         $filters[] = $current.'format=yuv420p[vout]';
 
         return implode(';', $filters);
+    }
+
+    /**
+     * Build a basic but faithful audio timeline for managed v3 audio tracks.
+     */
+    private function buildAudioFilterGraph(array $overlays, string $sourcePath): ?string
+    {
+        $audioLayers = array_values(array_filter(
+            $overlays,
+            static fn ($overlay): bool => is_array($overlay) && ($overlay['type'] ?? null) === 'audio'
+        ));
+
+        if ($audioLayers === []) {
+            return null;
+        }
+
+        $filters = [];
+        $mixInputs = [];
+
+        if ($this->sourceHasAudio($sourcePath)) {
+            $filters[] = '[0:a]asetpts=PTS-STARTPTS[abase]';
+            $mixInputs[] = '[abase]';
+        }
+
+        foreach ($audioLayers as $index => $layer) {
+            $inputIndex = (int) ($layer['input_index'] ?? 0);
+            if ($inputIndex <= 0) {
+                continue;
+            }
+
+            $start = max(0.0, (float) ($layer['start'] ?? 0));
+            $end = isset($layer['end']) ? max($start, (float) $layer['end']) : null;
+            $trimStart = max(0.0, (float) ($layer['trim_start'] ?? 0));
+            $trimEnd = isset($layer['trim_end']) ? max($trimStart, (float) $layer['trim_end']) : null;
+            $duration = $end !== null ? max(0.0, $end - $start) : null;
+            $chain = [];
+
+            if ($trimStart > 0 || $trimEnd !== null) {
+                $trim = 'atrim=start='.$trimStart;
+                if ($trimEnd !== null && $trimEnd > $trimStart) {
+                    $trim .= ':end='.$trimEnd;
+                }
+                $chain[] = $trim;
+            }
+            $chain[] = 'asetpts=PTS-STARTPTS+'.$start.'/TB';
+            $chain[] = 'volume='.max(0.0, min(4.0, (float) ($layer['volume'] ?? 1.0)));
+
+            $fadeIn = max(0.0, (float) ($layer['fade_in'] ?? 0));
+            if ($fadeIn > 0) {
+                $chain[] = 'afade=t=in:st='.$start.':d='.$fadeIn;
+            }
+            $fadeOut = max(0.0, (float) ($layer['fade_out'] ?? 0));
+            if ($fadeOut > 0 && $duration !== null) {
+                $chain[] = 'afade=t=out:st='.max($start, $end - $fadeOut).':d='.$fadeOut;
+            }
+
+            $label = '[audio'.$index.']';
+            $filters[] = '['.$inputIndex.':a]'.implode(',', $chain).$label;
+            $mixInputs[] = $label;
+        }
+
+        if ($mixInputs === []) {
+            return null;
+        }
+
+        if (count($mixInputs) === 1) {
+            $filters[] = $mixInputs[0].'anull[aout]';
+        } else {
+            $filters[] = implode('', $mixInputs).'amix=inputs='.count($mixInputs).':duration=longest:dropout_transition=0[aout]';
+        }
+
+        return implode(';', $filters);
+    }
+
+    private function sourceHasAudio(string $sourcePath): bool
+    {
+        $process = new Process([
+            'ffprobe', '-v', 'error', '-select_streams', 'a:0',
+            '-show_entries', 'stream=index', '-of', 'csv=p=0', $sourcePath,
+        ]);
+        $process->setTimeout(20);
+        $process->run();
+
+        return $process->isSuccessful() && trim($process->getOutput()) !== '';
+    }
+
+    /**
+     * Translate the editor's Cloudinary-style -100..100 adjustments to
+     * equivalent FFmpeg filters for timelines that require local rendering.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<int, string>
+     */
+    private function buildGlobalVideoFilters(array $filters): array
+    {
+        $result = [];
+        $eq = [];
+
+        if (isset($filters['brightness']) && is_numeric($filters['brightness'])) {
+            $eq[] = 'brightness='.max(-1.0, min(1.0, (float) $filters['brightness'] / 100));
+        }
+        if (isset($filters['contrast']) && is_numeric($filters['contrast'])) {
+            $eq[] = 'contrast='.max(0.0, min(2.0, 1.0 + ((float) $filters['contrast'] / 100)));
+        }
+        if (isset($filters['saturation']) && is_numeric($filters['saturation'])) {
+            $eq[] = 'saturation='.max(0.0, min(3.0, 1.0 + ((float) $filters['saturation'] / 100)));
+        }
+        if (isset($filters['gamma']) && is_numeric($filters['gamma'])) {
+            $eq[] = 'gamma='.max(0.1, min(10.0, 1.0 + ((float) $filters['gamma'] / 100)));
+        }
+        if ($eq !== []) {
+            $result[] = 'eq='.implode(':', $eq);
+        }
+        if (isset($filters['hue']) && is_numeric($filters['hue'])) {
+            $result[] = 'hue=h='.max(-180.0, min(180.0, (float) $filters['hue']));
+        }
+        if (filter_var($filters['grayscale'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $result[] = 'hue=s=0';
+        }
+        if (filter_var($filters['sepia'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $result[] = 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131';
+        }
+
+        return $result;
     }
 
     private function enableExpression(float $start, mixed $end): string
@@ -720,6 +862,7 @@ class VideoEditRenderingService
 
         return match ($overlayType) {
             'video' => '.mp4',
+            'audio' => '.m4a',
             'image', 'sticker', 'drawing' => '.png',
             default => '.bin',
         };
@@ -739,7 +882,9 @@ class VideoEditRenderingService
             $estimatedTimeout = (int) ceil($durationSeconds * 15) + ($overlayCount * 5);
         }
 
-        return max($configuredTimeout, min(1800, max(300, $estimatedTimeout)));
+        // Leave the 1800-second queue timeout enough time to validate and
+        // upload the rendered file after FFmpeg exits.
+        return min(1500, max($configuredTimeout, max(300, $estimatedTimeout)));
     }
 
     private function resolveVideoDurationSeconds(Video $video): float

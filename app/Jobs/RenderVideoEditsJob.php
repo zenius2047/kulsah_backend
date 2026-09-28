@@ -19,7 +19,7 @@ class RenderVideoEditsJob implements ShouldQueue
 
     public int $tries = 2;
 
-    public int $timeout = 1200;
+    public int $timeout = 1800;
 
     public array $backoff = [30, 120];
 
@@ -40,6 +40,15 @@ class RenderVideoEditsJob implements ShouldQueue
         if (! $video) {
             Log::warning('RenderVideoEditsJob skipped because the video record no longer exists.', [
                 'video_id' => $this->video->id ?? null,
+            ]);
+
+            return;
+        }
+
+        if (! $this->isCurrentRender($video)) {
+            Log::info('RenderVideoEditsJob skipped because a newer edit superseded it.', [
+                'video_id' => $video->id,
+                'render_token' => $this->timeline['render_token'] ?? null,
             ]);
 
             return;
@@ -81,6 +90,15 @@ class RenderVideoEditsJob implements ShouldQueue
             }
             $video = $video->fresh() ?? $video;
 
+            if (! $this->isCurrentRender($video)) {
+                Log::info('RenderVideoEditsJob result ignored because a newer edit superseded it.', [
+                    'video_id' => $video->id,
+                    'render_token' => $this->timeline['render_token'] ?? null,
+                ]);
+
+                return;
+            }
+
             $renderStatus = (string) ($rendered['render_status'] ?? 'processing');
             $isReady = $renderStatus === 'ready';
 
@@ -116,6 +134,16 @@ class RenderVideoEditsJob implements ShouldQueue
                 event(new VideoUploaded($video->fresh()));
             }
         } catch (Throwable $throwable) {
+            $video = $video->fresh() ?? $video;
+            if (! $this->isCurrentRender($video)) {
+                Log::info('Stale RenderVideoEditsJob failure ignored.', [
+                    'video_id' => $video->id,
+                    'render_token' => $this->timeline['render_token'] ?? null,
+                ]);
+
+                return;
+            }
+
             $video->update([
                 'status' => 'failed',
                 'render_status' => 'failed',
@@ -178,5 +206,13 @@ class RenderVideoEditsJob implements ShouldQueue
             || str_contains($message, 'shape')
             || str_contains($message, 'transition')
             || str_contains($message, 'captions');
+    }
+
+    private function isCurrentRender(Video $video): bool
+    {
+        $jobToken = (string) ($this->timeline['render_token'] ?? '');
+
+        return $jobToken === ''
+            || hash_equals((string) data_get($video->metadata, 'edit_render_token', ''), $jobToken);
     }
 }

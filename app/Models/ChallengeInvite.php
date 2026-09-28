@@ -17,4 +17,9 @@ class ChallengeInvite extends Model
     {
         return $this->belongsTo(Challenge::class);
     }
+
+    public function invitedUser()
+    {
+        return $this->belongsTo(User::class, 'invited_user_id');
+    }
 }

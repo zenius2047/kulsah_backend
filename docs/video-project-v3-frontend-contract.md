@@ -435,7 +435,7 @@ Accepted and preserved:
 - `source`
 - `audio`
 
-The backend stores audio track metadata and passes the audio timeline through, but the current FFmpeg render path does not yet implement the full v3 audio-mixing model.
+The FFmpeg renderer mixes managed audio assets with the source audio and supports timeline start/end, trim, volume, and fade-in/fade-out. More advanced audio effects remain preserved as project metadata.
 
 ### `shape`
 

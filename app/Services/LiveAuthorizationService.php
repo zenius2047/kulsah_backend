@@ -39,6 +39,8 @@ class LiveAuthorizationService
             throw ValidationException::withMessages(['live' => 'This Live is not active.']);
         }
 
+        if ((int) $viewer->id === (int) $live->creator_id) return;
+
         if ($viewer->isBlockedBy($live->creator) || $viewer->isBlocking($live->creator)) {
             throw ValidationException::withMessages(['live' => 'You cannot access this Live.']);
         }
@@ -127,4 +129,3 @@ class LiveAuthorizationService
         }
     }
 }
-

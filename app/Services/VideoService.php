@@ -3,12 +3,11 @@
 namespace App\Services;
 
 use App\Jobs\ProcessVideoJob;
+use App\Jobs\RenderVideoEditsJob;
 use App\Models\User;
 use App\Models\Video;
 use App\Models\VideoView;
 use App\Notifications\VideoMentionedNotification;
-use App\Services\MusicReferenceService;
-use App\Services\NotificationDeliveryService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -59,6 +58,7 @@ class VideoService
                 'caption_hashtags' => [],
                 'caption_mentions' => [],
                 'mentioned_user_ids' => [],
+                'requires_editing' => (bool) ($data['requires_editing'] ?? false),
                 ...$this->musicMetadata($data, $userId),
             ],
         ]);
@@ -133,10 +133,11 @@ class VideoService
                     'mime_type' => $data['mime_type'] ?? $file->getMimeType(),
                     'file_size' => $data['size'] ?? $file->getSize(),
                     'upload_status' => 'uploaded',
-                    'processing_status' => 'queued',
+                    'processing_status' => ($data['requires_editing'] ?? false) ? 'initialized' : 'queued',
                     'uploaded_at' => now(),
                     'thumbnail_url' => $thumbnail['source_url'] ?? ($data['thumbnail_url'] ?? null),
                     'progress_percentage' => 100,
+                    'render_status' => ($data['requires_editing'] ?? false) ? 'awaiting_edit' : null,
                     'metadata' => array_merge($video->metadata ?? [], array_filter([
                         'storage_disk' => $stored['disk'],
                         'original_name' => $data['original_name'] ?? null,
@@ -189,14 +190,18 @@ class VideoService
             );
         }
 
-        ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
+        if (! (bool) data_get($video->metadata, 'requires_editing', false)) {
+            ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
+        }
 
-        Log::info('Video processing job dispatched.', [
-            'stage' => 'queue',
-            'user_id' => $userId,
-            'video_id' => $video->id,
-            'queue' => config('video.processing_queue', 'videos'),
-        ]);
+        Log::info((bool) data_get($video->metadata, 'requires_editing', false)
+            ? 'Video is awaiting edits before processing.'
+            : 'Video processing job dispatched.', [
+                'stage' => 'queue',
+                'user_id' => $userId,
+                'video_id' => $video->id,
+                'queue' => config('video.processing_queue', 'videos'),
+            ]);
 
         return $video;
     }
@@ -383,8 +388,17 @@ class VideoService
     public function finalizeDirectUpload(Video $video, int $userId): Video
     {
         $dispatchProcessing = false;
+        $video = $video->fresh();
+        if (! $video || (int) $video->user_id !== $userId) {
+            throw ValidationException::withMessages(['video' => 'You are not allowed to update this video.']);
+        }
+        if ($video->upload_status?->value === 'uploaded') {
+            return $video;
+        }
 
-        $video = DB::transaction(function () use ($video, $userId, &$dispatchProcessing): Video {
+        $inspection = $this->inspectDirectUpload($video, $userId);
+
+        $video = DB::transaction(function () use ($video, $userId, $inspection, &$dispatchProcessing): Video {
             $video = Video::query()->lockForUpdate()->findOrFail($video->id);
 
             if ((int) $video->user_id !== (int) $userId) {
@@ -419,12 +433,16 @@ class VideoService
                 'upload_status' => 'uploaded',
                 'processing_status' => $requiresEditing ? 'initialized' : 'queued',
                 'uploaded_at' => now(),
+                'duration' => $inspection['duration'] !== null ? (int) round($inspection['duration']) : $video->duration,
+                'duration_ms' => $inspection['duration'] !== null ? (int) round($inspection['duration'] * 1000) : $video->duration_ms,
                 'progress_percentage' => 100,
                 'render_status' => $requiresEditing ? 'awaiting_edit' : $video->render_status,
                 'metadata' => array_merge($video->metadata ?? [], [
                     'upload_state' => 'uploaded',
                     'upload_completed_at' => now()->toISOString(),
                     'verified_size' => $actualSize,
+                    'verified_mime_type' => $inspection['mime_type'],
+                    'duration_seconds' => $inspection['duration'],
                     'processing_state' => $requiresEditing ? 'awaiting_edit' : 'queued',
                 ]),
             ]);
@@ -439,9 +457,92 @@ class VideoService
         return $video;
     }
 
+    /**
+     * @return array{mime_type:string,duration:?float}
+     */
+    private function inspectDirectUpload(Video $video, int $userId): array
+    {
+        $video = $video->fresh();
+        if (! $video || (int) $video->user_id !== $userId || ! $video->source_key) {
+            throw ValidationException::withMessages(['video' => 'The upload session is invalid.']);
+        }
+
+        if (! (bool) config('video.inspect_direct_uploads', true)) {
+            return [
+                'mime_type' => (string) ($video->mime_type ?: 'application/octet-stream'),
+                'duration' => null,
+            ];
+        }
+
+        $disk = $video->source_disk ?: data_get($video->metadata, 'storage_disk', config('video.storage_disk', 's3'));
+        $storage = Storage::disk($disk);
+        if (! $storage->exists($video->source_key)) {
+            throw ValidationException::withMessages(['video' => 'The uploaded file has not been received yet. Please finish the upload and try again.']);
+        }
+
+        $actualSize = $storage->size($video->source_key);
+        $maximumBytes = (int) config('video.max_upload_kb', 102400) * 1024;
+        if ($actualSize <= 0 || $actualSize > $maximumBytes) {
+            throw ValidationException::withMessages(['video' => 'The uploaded object has an invalid file size.']);
+        }
+        if ($video->file_size && (int) $video->file_size !== (int) $actualSize) {
+            throw ValidationException::withMessages(['video' => 'The uploaded object size does not match the initialized upload.']);
+        }
+
+        $stream = $storage->readStream($video->source_key);
+        if (! is_resource($stream)) {
+            throw ValidationException::withMessages(['video' => 'The uploaded video could not be inspected.']);
+        }
+
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'kulsah-direct-upload-');
+        if ($temporaryPath === false) {
+            fclose($stream);
+            throw new RuntimeException('Unable to allocate a temporary video inspection file.');
+        }
+
+        $target = fopen($temporaryPath, 'w+b');
+        if ($target === false) {
+            fclose($stream);
+            @unlink($temporaryPath);
+            throw new RuntimeException('Unable to open a temporary video inspection file.');
+        }
+
+        try {
+            stream_copy_to_stream($stream, $target);
+            fclose($stream);
+            fclose($target);
+
+            $mimeType = strtolower((string) (new \finfo(FILEINFO_MIME_TYPE))->file($temporaryPath));
+            if (! in_array($mimeType, (array) config('video.allowed_mimetypes', []), true)) {
+                throw ValidationException::withMessages(['video' => 'The uploaded object is not an allowed video type.']);
+            }
+
+            $duration = $this->videoInspectionService->getDurationSeconds($temporaryPath);
+            $maximumDuration = (int) config('video.max_duration_seconds', 120);
+            if ($duration === null || $duration <= 0) {
+                throw ValidationException::withMessages(['video' => 'The uploaded object is not a readable video.']);
+            }
+            if ($duration > $maximumDuration) {
+                throw ValidationException::withMessages(['video' => "Video duration must not exceed {$maximumDuration} seconds."]);
+            }
+
+            return ['mime_type' => $mimeType, 'duration' => $duration];
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+            if (is_resource($target)) {
+                fclose($target);
+            }
+            @unlink($temporaryPath);
+        }
+    }
+
     public function retryProcessing(Video $video, int $userId): Video
     {
-        $video = DB::transaction(function () use ($video, $userId): Video {
+        $retryEditTimeline = null;
+
+        $video = DB::transaction(function () use ($video, $userId, &$retryEditTimeline): Video {
             $video = Video::query()->lockForUpdate()->findOrFail($video->id);
             if ((int) $video->user_id !== (int) $userId) {
                 throw ValidationException::withMessages(['video' => 'You are not allowed to retry this video.']);
@@ -453,17 +554,38 @@ class VideoService
             if (! $video->source_key || ! Storage::disk($disk)->exists($video->source_key)) {
                 throw ValidationException::withMessages(['video' => 'The original source is unavailable for retry.']);
             }
+
+            $savedTimeline = data_get($video->metadata, 'render_timeline');
+            $isFailedEdit = data_get($video->metadata, 'edit_status') === 'failed'
+                || data_get($video->metadata, 'processing_state') === 'edit_failed';
+            if ($isFailedEdit && is_array($savedTimeline)) {
+                $retryEditTimeline = $savedTimeline;
+            }
+
             $video->update([
                 'status' => 'draft',
                 'processing_status' => 'queued',
+                'render_status' => $retryEditTimeline !== null ? 'queued' : $video->render_status,
                 'processing_error' => null,
                 'failed_at' => null,
+                'metadata' => array_merge($video->metadata ?? [], $retryEditTimeline !== null ? [
+                    'edit_status' => 'queued',
+                    'processing_state' => 'edit_queued',
+                    'edit_retry_requested_at' => now()->toISOString(),
+                ] : [
+                    'processing_state' => 'queued',
+                ]),
             ]);
 
             return $video->fresh();
         });
 
-        ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
+        if ($retryEditTimeline !== null) {
+            RenderVideoEditsJob::dispatch($video, $retryEditTimeline)
+                ->onQueue(config('video.processing_queue', 'videos'));
+        } else {
+            ProcessVideoJob::dispatch($video)->onQueue(config('video.processing_queue', 'videos'));
+        }
 
         return $video;
     }
@@ -631,7 +753,6 @@ class VideoService
             $contentTypes
         )));
     }
-
 
     /**
      * Persist a provider-aware sound snapshot; stream URLs remain disposable.

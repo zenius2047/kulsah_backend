@@ -17,6 +17,7 @@ class LiveSession extends Model
         'title',
         'description',
         'category',
+        'live_type',
         'cover_url',
         'visibility',
         'scheduled_at',
@@ -69,6 +70,7 @@ class LiveSession extends Model
             'notify_followers' => 'boolean',
             'age_restricted' => 'boolean',
             'stream_quality' => 'string',
+            'live_type' => 'string',
             'orientation' => 'string',
             'moderation' => 'array',
             'current_viewers' => 'integer',
@@ -164,6 +166,5 @@ class LiveSession extends Model
         return 'public_id';
     }
 }
-
 
 

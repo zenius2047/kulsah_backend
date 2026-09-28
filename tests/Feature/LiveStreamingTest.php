@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Contracts\LiveStreamingProviderInterface;
 use App\Enums\LiveStatus;
+use App\Events\LiveUpdated;
 use App\Models\KulCoinGift;
+use App\Models\LiveBattle;
 use App\Models\LiveSession;
 use App\Models\Role;
 use App\Models\Subscription;
@@ -20,6 +22,7 @@ use App\Services\LiveSessionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\Event;
 use Tests\Fakes\FakeLiveStreamingProvider;
 use Tests\TestCase;
 
@@ -52,6 +55,8 @@ class LiveStreamingTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('data.category', 'music')
+            ->assertJsonPath('data.live_type', 'regular')
+            ->assertJsonPath('data.is_battle', false)
             ->assertJsonPath('data.notify_followers', true)
             ->assertJsonPath('data.age_restricted', false)
             ->assertJsonPath('data.stream_quality', '1080p_30fps')
@@ -71,6 +76,7 @@ class LiveStreamingTest extends TestCase
             ->postJson('/api/v1/creator/live', [
                 'title' => 'Creator Q&A',
                 'category' => 'talk_show',
+                'live_type' => 'battle',
                 'visibility' => 'subscribers',
                 'scheduled_at' => $scheduledAt->toIso8601String(),
                 'notify_followers' => false,
@@ -90,6 +96,8 @@ class LiveStreamingTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('data.category', 'talk_show')
+            ->assertJsonPath('data.live_type', 'battle')
+            ->assertJsonPath('data.is_battle', true)
             ->assertJsonPath('data.visibility', 'subscribers')
             ->assertJsonPath('data.status', 'scheduled')
             ->assertJsonPath('data.notify_followers', false)
@@ -147,6 +155,34 @@ class LiveStreamingTest extends TestCase
         $ended = $service->end($live, 'creator_ended');
         $this->assertSame(LiveStatus::ENDED, $ended->status);
         $this->assertSame('creator_ended', $ended->termination_reason);
+    }
+
+    public function test_live_directory_searches_titles_descriptions_categories_and_creator_names(): void
+    {
+        $viewer = $this->creatorUser('live_search_viewer');
+        $matchingCreator = $this->creatorUser('midnight_session_host');
+        $otherCreator = $this->creatorUser('morning_session_host');
+
+        $matching = LiveSession::factory()->create([
+            'creator_id' => $matchingCreator->id,
+            'title' => 'Late night studio session',
+            'description' => 'Relaxed beats and listener requests.',
+            'category' => 'music',
+            'status' => LiveStatus::LIVE,
+        ]);
+        LiveSession::factory()->create([
+            'creator_id' => $otherCreator->id,
+            'title' => 'Morning gaming stream',
+            'category' => 'gaming',
+            'status' => LiveStatus::LIVE,
+        ]);
+
+        $this->actingAs($viewer, 'sanctum')
+            ->withoutMiddleware(RoleMiddleware::class)
+            ->getJson('/api/v1/general/live?search_query=night&per_page=20')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $matching->public_id);
     }
 
     public function test_confirming_a_live_session_notifies_active_subscribers(): void
@@ -293,6 +329,85 @@ class LiveStreamingTest extends TestCase
         $this->assertSame(12, (int) $live->refresh()->likes_count);
     }
 
+    public function test_live_comments_are_broadcast_to_the_live_channel_in_real_time(): void
+    {
+        Event::fake([LiveUpdated::class]);
+
+        $creator = $this->creatorUser('live_comment_creator');
+        $viewer = User::factory()->create(['activated' => true]);
+        $live = LiveSession::factory()->create([
+            'creator_id' => $creator->id,
+            'status' => LiveStatus::LIVE,
+            'chat_enabled' => true,
+            'comments_count' => 0,
+        ]);
+
+        $response = $this->actingAs($viewer, 'sanctum')
+            ->withoutMiddleware(RoleMiddleware::class)
+            ->postJson("/api/v1/general/live/{$live->public_id}/comments", [
+                'body' => 'Hello from the live chat.',
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.body', 'Hello from the live chat.')
+            ->assertJsonPath('data.user.id', $viewer->id);
+
+        $this->assertDatabaseHas('live_comments', [
+            'live_session_id' => $live->id,
+            'user_id' => $viewer->id,
+            'body' => 'Hello from the live chat.',
+        ]);
+        $this->assertSame(1, (int) $live->refresh()->comments_count);
+
+        Event::assertDispatched(LiveUpdated::class, function (LiveUpdated $event) use ($live, $viewer): bool {
+            return $event->type === 'chat_created'
+                && $event->live->is($live)
+                && data_get($event->data, 'comment.user_id') === $viewer->id
+                && data_get($event->data, 'comment.body') === 'Hello from the live chat.';
+        });
+    }
+
+    public function test_viewer_vote_debits_coins_updates_selected_battle_side_and_is_idempotent(): void
+    {
+        Event::fake([LiveUpdated::class]);
+        config(['kulcoin.vote_coin_price' => 10]);
+        $creator = $this->creatorUser('battle_vote_creator');
+        $opponent = $this->creatorUser('battle_vote_opponent');
+        $viewer = User::factory()->create(['activated' => true]);
+        $wallet = app(\App\Services\KulCoinService::class)->getOrCreateUserWallet($viewer);
+        $wallet->forceFill(['available_balance_kc' => 100, 'bonus_balance_kc' => 0])->save();
+        $live = LiveSession::factory()->create([
+            'creator_id' => $creator->id,
+            'visibility' => 'public',
+            'status' => LiveStatus::LIVE,
+            'live_type' => 'battle',
+        ]);
+        $battle = LiveBattle::create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(),
+            'creator_live_session_id' => $live->id,
+            'opponent_live_session_id' => $live->id,
+            'creator_id' => $creator->id,
+            'opponent_id' => $opponent->id,
+            'status' => 'active',
+            'creator_score' => 0,
+            'opponent_score' => 0,
+            'invited_by_id' => $creator->id,
+            'metadata' => ['shared_stage' => true],
+        ]);
+        $payload = ['target_user_id' => $opponent->id, 'vote_count' => 3, 'idempotency_key' => 'battle-vote-test'];
+        $url = "/api/v1/general/live/battles/{$battle->id}/votes";
+
+        $this->actingAs($viewer, 'sanctum')->postJson($url, $payload)
+            ->assertOk()->assertJsonPath('data.vote_count', 3)->assertJsonPath('data.target_user_id', $opponent->id);
+        $this->postJson($url, $payload)->assertOk();
+
+        $this->assertSame(3, (int) $battle->refresh()->opponent_score);
+        $this->assertSame(70, (int) $wallet->refresh()->available_balance_kc);
+        $this->assertDatabaseHas('live_battle_participants', ['live_battle_id' => $battle->id, 'user_id' => $opponent->id, 'score' => 3]);
+        Event::assertDispatched(LiveUpdated::class, fn (LiveUpdated $event) => $event->type === 'battle_vote'
+            && data_get($event->data, 'vote.target_user_id') === $opponent->id);
+    }
+
     public function test_live_gift_debits_kulcoin_wallet_and_updates_live_totals(): void
     {
         $creator = $this->creatorUser('live_creator_five');
@@ -342,14 +457,17 @@ class LiveStreamingTest extends TestCase
         ]);
 
         $cohostRequest = app(LiveCohostService::class)->request($live, $viewer, []);
+        app(LiveCohostService::class)->accept($cohostRequest, $creator);
         $result = app(LiveCohostService::class)->accept($cohostRequest, $viewer);
 
-        $this->assertSame('active', $result['cohost']->status->value);
+        $this->assertSame('active', $result['cohost']->status);
         $this->assertSame('broadcaster', $result['credentials']['role']);
     }
 
     public function test_battle_invite_accept_score_and_end_flow_persists_winner(): void
     {
+        Notification::fake();
+        $this->mock(\App\Services\RealtimePresenceService::class)->shouldReceive('isOnline')->andReturn(true);
         $creatorA = $this->creatorUser('battle_creator_a');
         $creatorB = $this->creatorUser('battle_creator_b');
 
@@ -398,4 +516,3 @@ class LiveStreamingTest extends TestCase
         return $user;
     }
 }
-

@@ -31,6 +31,8 @@
         <env name="DB_PASSWORD" value="password" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!-- Most storage fakes contain placeholder bytes, not probeable videos. -->
+        <env name="VIDEO_INSPECT_DIRECT_UPLOADS" value="false"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
@@ -38,5 +40,4 @@
         <env name="FASTAPI_ENABLED" value="false"/>
     </php>
 </phpunit>
-
 

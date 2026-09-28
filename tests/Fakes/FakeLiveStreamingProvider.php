@@ -8,6 +8,13 @@ use App\Models\User;
 
 class FakeLiveStreamingProvider implements LiveStreamingProviderInterface
 {
+    public function revokePublishing(LiveSession $live, User $user): int
+    {
+        return $user->id;
+    }
+
+    public function restorePublishing(int $ruleId): void {}
+
     public function channelName(LiveSession $live): string
     {
         return 'live-'.$live->public_id;

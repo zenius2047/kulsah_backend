@@ -58,14 +58,17 @@ class VideoRenderRequest extends FormRequest
             'filters' => ['sometimes', 'array'],
             'trim' => ['sometimes', 'array'],
             'audio' => ['sometimes', 'array'],
-            'output' => ['sometimes', 'array'],
-            'assets' => ['sometimes', 'array'],
             'assets.*.file_index' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'assets.*.asset_file_index' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'assets.*.url' => ['sometimes', 'nullable', 'string', 'max:8192'],
             'assets.*.asset_url' => ['sometimes', 'nullable', 'string', 'max:8192'],
             'asset_files' => ['sometimes', 'array', 'max:30'],
-            'asset_files.*' => ['required', 'file', 'image', 'mimes:png,jpg,jpeg,webp', 'max:10240'],
+            'asset_files.*' => [
+                'required',
+                'file',
+                'mimetypes:image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm,video/x-matroska,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-wav,audio/ogg,font/ttf,font/otf,font/woff,font/woff2,application/font-woff,application/x-font-ttf,application/x-font-opentype',
+                'max:102400',
+            ],
         ];
     }
 }

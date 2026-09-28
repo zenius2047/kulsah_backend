@@ -3,12 +3,15 @@
 namespace Tests\Feature;
 
 use App\Enums\ChallengeStatus;
+use App\Jobs\SendFcmNotificationJob;
 use App\Models\Challenge;
 use App\Models\ChallengeInvite;
+use App\Models\NotificationDevice;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Video;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Tests\TestCase;
 
 class CreatorBattleChallengeTest extends TestCase
@@ -17,12 +20,28 @@ class CreatorBattleChallengeTest extends TestCase
 
     public function test_creator_battle_challenge_creation_seeds_invites_and_starts_awaiting_participants(): void
     {
+        config(['broadcasting.default' => 'null']);
+        Bus::fake();
         $host = User::factory()->create();
         $inviteeA = $this->creatorUser('battle_creator_a');
         $inviteeB = $this->creatorUser('battle_creator_b');
         $this->assignCreatorRole($host);
 
         $payload = $this->battlePayload($inviteeA->id, $inviteeB->id);
+        NotificationDevice::query()->create([
+            'user_id' => $inviteeA->id,
+            'token' => 'battle-invite-token-a',
+            'platform' => 'android',
+            'provider' => 'fcm',
+            'last_seen_at' => now(),
+        ]);
+        NotificationDevice::query()->create([
+            'user_id' => $inviteeB->id,
+            'token' => 'battle-invite-token-b',
+            'platform' => 'android',
+            'provider' => 'fcm',
+            'last_seen_at' => now(),
+        ]);
 
         $this->actingAs($host)->withoutMiddleware()->postJson('/api/v1/creator/challenges', $payload)
             ->assertCreated();
@@ -48,6 +67,23 @@ class CreatorBattleChallengeTest extends TestCase
             'role' => 'owner',
             'status' => 'accepted',
         ]);
+        $inviteA = ChallengeInvite::query()->where('challenge_id', $challenge->id)->where('invited_user_id', $inviteeA->id)->firstOrFail();
+        $inviteB = ChallengeInvite::query()->where('challenge_id', $challenge->id)->where('invited_user_id', $inviteeB->id)->firstOrFail();
+
+        Bus::assertDispatched(SendFcmNotificationJob::class, function (SendFcmNotificationJob $job) use ($challenge, $inviteA, $inviteeA): bool {
+            return $job->userId === $inviteeA->id
+                && $job->tokens === ['battle-invite-token-a']
+                && $job->data['type'] === 'challenge.invited'
+                && $job->data['challenge_id'] === $challenge->id
+                && $job->data['invite_id'] === $inviteA->id;
+        });
+        Bus::assertDispatched(SendFcmNotificationJob::class, function (SendFcmNotificationJob $job) use ($challenge, $inviteB, $inviteeB): bool {
+            return $job->userId === $inviteeB->id
+                && $job->tokens === ['battle-invite-token-b']
+                && $job->data['type'] === 'challenge.invited'
+                && $job->data['challenge_id'] === $challenge->id
+                && $job->data['invite_id'] === $inviteB->id;
+        });
     }
 
     public function test_creator_battle_invites_accept_and_participants_can_submit(): void

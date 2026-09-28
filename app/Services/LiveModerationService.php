@@ -17,6 +17,12 @@ class LiveModerationService
         ?int $durationSeconds = null,
         ?\DateTimeInterface $expiresAt = null
     ): LiveModerationAction {
+        if (in_array($action, ['unmute', 'unban_from_live'], true)) {
+            $live->moderationActions()->where('target_id', $target->id)
+                ->where('action', $action === 'unmute' ? 'mute' : 'ban_from_live')
+                ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+                ->update(['expires_at' => now()]);
+        }
         return LiveModerationAction::query()->create([
             'live_session_id' => $live->id,
             'actor_id' => $actor->id,
@@ -28,4 +34,3 @@ class LiveModerationService
         ]);
     }
 }
-

@@ -156,6 +156,33 @@ class VideoEditRenderingServiceTest extends TestCase
         $this->assertStringContainsString('force_original_aspect_ratio=decrease', $graph);
         $this->assertStringContainsString('rotate=', $graph);
         $this->assertStringContainsString('colorchannelmixer=aa=0.5', $graph);
-        $this->assertStringContainsString("overlay=620:1280:eof_action=pass:enable='between(t,3,11)'", $graph);
+        $this->assertStringContainsString("overlay=620:1280:eof_action=pass:shortest=1:enable='between(t,3,11)'", $graph);
+    }
+
+    public function test_ffmpeg_graph_applies_shape_timing_text_size_and_global_filters(): void
+    {
+        $service = new VideoEditRenderingService(
+            $this->createMock(VideoStorageService::class),
+            $this->createMock(CloudinaryService::class),
+        );
+        $method = new \ReflectionMethod(VideoEditRenderingService::class, 'buildFilterGraph');
+        $method->setAccessible(true);
+
+        $graph = $method->invoke($service, [
+            [
+                'type' => 'shape', 'x' => 10, 'y' => 20, 'width' => 100, 'height' => 80,
+                'color' => '#FF0000', 'start' => 2, 'end' => 4,
+            ],
+            [
+                'type' => 'text', 'text' => 'Sized', 'size' => 64, 'start' => 0, 'end' => 5,
+            ],
+        ], [
+            'filters' => ['brightness' => 20, 'grayscale' => true],
+        ]);
+
+        $this->assertStringContainsString('eq=brightness=0.2', $graph);
+        $this->assertStringContainsString('hue=s=0', $graph);
+        $this->assertStringContainsString("drawbox=x=10:y=20:w=100:h=80:color=0xFF0000@1:t=fill:enable='between(t,2,4)'", $graph);
+        $this->assertStringContainsString('fontsize=64', $graph);
     }
 }

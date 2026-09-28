@@ -48,10 +48,19 @@ class ChallengeResource extends JsonResource
             'leaderboard' => ['enabled' => (bool) $this->show_leaderboard, 'mode' => $this->leaderboard_mode],
             'participant_limit' => $this->max_participants,
             'participant_count' => $participantCount, 'entry_count' => $entryCount,
+            'participant_avatars' => $this->entries()
+                ->with('creator:id,avatar')
+                ->latest('submitted_at')
+                ->limit(3)
+                ->get()
+                ->pluck('creator.avatar')
+                ->filter()
+                ->values(),
             'current_phase' => $this->enumValue($status), 'time_remaining_seconds' => $this->timeRemaining($status),
             'can_join' => $user && $this->isAcceptingSubmissions() && ($eligibility['eligible'] ?? false) && ! ($this->max_entries_per_creator <= $this->entries()->where('creator_id', $user->id)->count()),
             'can_vote' => $canVote, 'has_user_joined' => $hasJoined, 'has_user_voted' => $hasVoted,
             'eligibility' => $eligibility, 'official_sound_id' => $this->official_sound_id,
+            'cover_image' => $this->resolveCoverImage(),
             'official_video' => $this->formatOfficialVideo(),
             'reward' => $this->resolveReward(),
             'awards' => ChallengePrizeResource::collection($this->whenLoaded('prizes')),
@@ -71,6 +80,11 @@ class ChallengeResource extends JsonResource
         $mode = $this->resolveMode();
         $category = $this->resolveCategory();
         $coverImage = $this->resolveCoverImage();
+        $entryCount = isset($this->entries_count)
+            ? (int) $this->entries_count
+            : ($this->relationLoaded('entries')
+                ? $this->entries->where('status', 'active')->count()
+                : $this->entries()->where('status', 'active')->count());
         $participants = $this->resolveCreatorBattleParticipants($request);
         $ballots = $this->resolveCreatorBattleBallots($user);
         $voteCounts = $this->resolveCreatorBattleVoteCounts($participants, $ballots);
@@ -90,6 +104,9 @@ class ChallengeResource extends JsonResource
             ->values()
             ->all();
         $currentUserVote = $this->resolveCurrentUserVote($user, $ballots);
+        $pendingInviteId = $user
+            ? $this->invites()->where('invited_user_id', $user->id)->where('status', 'pending')->value('id')
+            : null;
         $hasVoted = $currentUserVote !== null;
         $votingOpen = $this->isVotingOpen();
         $canVote = (bool) ($user && $votingOpen && (! $hasVoted || (bool) data_get($this->voting_configuration, 'allow_vote_changes', false)));
@@ -98,15 +115,27 @@ class ChallengeResource extends JsonResource
             'id' => $this->id,
             'creator_id' => $this->created_by_user_id,
             'mode' => $this->enumValue($mode),
+            'is_creator_battle' => true,
             'title' => $this->title,
             'description' => $this->description,
+            'instructions' => $this->instructions,
             'category' => $category,
             'hashtag' => $this->resolveHashtag(),
             'cover_image' => $coverImage,
             'status' => $this->enumValue($status),
             'participant_limit' => $this->max_participants,
             'participant_count' => count($participants),
+            'participant_avatars' => $participants
+                ->pluck('creator.avatar')
+                ->filter()
+                ->take(3)
+                ->values(),
+            'entry_count' => $entryCount,
             'winner_selection_method' => $this->winner_selection_method,
+            'official_sound_id' => $this->official_sound_id,
+            'schedule' => collect(['registration_starts_at', 'registration_ends_at', 'submission_starts_at', 'submission_ends_at', 'voting_starts_at', 'voting_ends_at', 'judging_starts_at', 'judging_ends_at', 'results_publish_at'])
+                ->mapWithKeys(fn ($key) => [$key => optional($this->{$key})?->toIso8601String()])
+                ->all(),
             'submission' => [
                 'starts_at' => optional($this->submission_starts_at)?->toIso8601String(),
                 'ends_at' => optional($this->submission_ends_at)?->toIso8601String(),
@@ -123,7 +152,6 @@ class ChallengeResource extends JsonResource
                 'current_user_has_voted' => $hasVoted,
                 'current_user_voted_entry_id' => $currentUserVote,
             ],
-            'viewVote' => $viewVote,
             'viewVote' => $viewVote,
             'participants' => $participants->values()->map(function (array $participant) use ($voteCounts, $totalVotes): array {
                 $votes = (int) ($voteCounts[$participant['creator']['id']] ?? 0);
@@ -154,8 +182,15 @@ class ChallengeResource extends JsonResource
                 'can_vote' => $canVote,
                 'can_submit' => $this->resolveCanCurrentUserSubmit($user, $participants),
                 'can_manage' => $this->resolveCanCurrentUserManage($user),
+                'pending_invite_id' => $pendingInviteId,
             ],
             'result' => $this->formatCreatorBattleResult($request),
+            'reward' => $this->resolveReward(),
+            'awards' => ChallengePrizeResource::collection($this->whenLoaded('prizes')),
+            'prizes' => ChallengePrizeResource::collection($this->whenLoaded('prizes')),
+            'rules' => $this->formatRules(),
+            'reward_pools' => $this->formatRewardPools(),
+            'media' => ChallengeMediaResource::collection($this->whenLoaded('media')),
             'created_at' => optional($this->created_at)?->toIso8601String(),
             'updated_at' => optional($this->updated_at)?->toIso8601String(),
         ];
@@ -762,7 +797,3 @@ class ChallengeResource extends JsonResource
         return $target ? max(0, now()->diffInSeconds($target, false)) : null;
     }
 }
-
-
-
-

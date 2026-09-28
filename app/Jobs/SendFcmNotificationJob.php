@@ -18,6 +18,8 @@ use Kreait\Firebase\Exception\Messaging\ServerError;
 use Kreait\Firebase\Exception\Messaging\ServerUnavailable;
 use Kreait\Firebase\Exception\MessagingException;
 use Kreait\Firebase\Messaging\CloudMessage;
+use Kreait\Firebase\Messaging\AndroidConfig;
+use Kreait\Firebase\Messaging\ApnsConfig;
 use Kreait\Firebase\Messaging\Notification as FcmNotification;
 use Throwable;
 
@@ -38,7 +40,6 @@ class SendFcmNotificationJob implements ShouldQueue
         public readonly array $data,
         public readonly array $tokens,
     ) {
-        $this->onConnection('redis');
         $this->onQueue('notifications');
     }
 
@@ -61,6 +62,17 @@ class SendFcmNotificationJob implements ShouldQueue
 
         $message = CloudMessage::new()
             ->withNotification(FcmNotification::create($this->title, $this->body))
+            ->withAndroidConfig(AndroidConfig::fromArray([
+                'priority' => 'high',
+                'notification' => [
+                    'channel_id' => 'messages',
+                    'sound' => 'default',
+                ],
+            ]))
+            ->withApnsConfig(ApnsConfig::fromArray([
+                'headers' => ['apns-priority' => '10'],
+                'payload' => ['aps' => ['sound' => 'default']],
+            ]))
             ->withData($this->stringifyData($this->data));
 
         foreach ($tokens as $token) {

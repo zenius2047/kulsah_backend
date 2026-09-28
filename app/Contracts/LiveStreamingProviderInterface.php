@@ -13,6 +13,10 @@ interface LiveStreamingProviderInterface
 
     public function renewCredentials(LiveSession $live, User $user, string $role): array;
 
+    public function revokePublishing(LiveSession $live, User $user): int;
+
+    public function restorePublishing(int $ruleId): void;
+
     public function startRecording(LiveSession $live): array;
 
     public function stopRecording(LiveSession $live, ?string $resourceId = null, ?string $sid = null): array;
@@ -21,4 +25,3 @@ interface LiveStreamingProviderInterface
 
     public function end(LiveSession $live): void;
 }
-

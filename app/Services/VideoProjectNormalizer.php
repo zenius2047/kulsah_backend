@@ -106,6 +106,42 @@ class VideoProjectNormalizer
         $renderLayers = $this->normalizeRenderPlanTransforms($renderLayers, $canvas, $output);
 
         $globalAudioTracks = $this->normalizeV3GlobalAudioTracks(is_array($payload['globalAudioTracks'] ?? null) ? $payload['globalAudioTracks'] : []);
+        foreach ($globalAudioTracks as $audioIndex => $audioTrack) {
+            if (! is_array($audioTrack)) {
+                continue;
+            }
+
+            $source = is_array($audioTrack['source'] ?? null) ? $audioTrack['source'] : $audioTrack;
+            $asset = $this->resolveV3AssetSource($source, $assetIndex);
+            if (($asset['public_id'] ?? '') === '' && ($asset['asset_key'] ?? '') === '') {
+                throw ValidationException::withMessages([
+                    "globalAudioTracks.{$audioIndex}.source" => 'Global audio tracks require a managed assetId.',
+                ]);
+            }
+
+            $start = max(0.0, (float) ($audioTrack['start'] ?? data_get($audioTrack, 'timeline.start', 0)));
+            $end = $audioTrack['end'] ?? null;
+            if ($end === null && is_numeric(data_get($audioTrack, 'timeline.duration'))) {
+                $end = $start + (float) data_get($audioTrack, 'timeline.duration');
+            }
+            $renderLayers[] = array_filter([
+                'id' => (string) ($audioTrack['id'] ?? 'global-audio-'.($audioIndex + 1)),
+                'type' => 'audio',
+                'public_id' => $asset['public_id'] ?? null,
+                'asset_public_id' => $asset['asset_public_id'] ?? null,
+                'asset_disk' => $asset['asset_disk'] ?? null,
+                'asset_key' => $asset['asset_key'] ?? null,
+                'start' => $start,
+                'end' => is_numeric($end) ? max($start, (float) $end) : null,
+                'trim_start' => max(0.0, (float) data_get($audioTrack, 'timeline.trimStart', 0)),
+                'trim_end' => is_numeric(data_get($audioTrack, 'timeline.trimEnd')) ? (float) data_get($audioTrack, 'timeline.trimEnd') : null,
+                'volume' => max(0.0, min(4.0, (float) ($audioTrack['volume'] ?? data_get($audioTrack, 'audio.volume', 1)))),
+                'fade_in' => max(0.0, (float) ($audioTrack['fadeIn'] ?? $audioTrack['fade_in'] ?? 0)),
+                'fade_out' => max(0.0, (float) ($audioTrack['fadeOut'] ?? $audioTrack['fade_out'] ?? 0)),
+                'enabled' => filter_var($audioTrack['enabled'] ?? true, FILTER_VALIDATE_BOOLEAN),
+                'z_index' => PHP_INT_MAX - 100 + $audioIndex,
+            ], static fn ($value) => $value !== null && $value !== '');
+        }
         $globalEffects = $this->normalizeV3GlobalEffects(is_array($payload['globalEffects'] ?? null) ? $payload['globalEffects'] : []);
         $guides = $this->normalizeV3Guides(is_array($payload['guides'] ?? null) ? $payload['guides'] : []);
         $derivedDuration = $projectDuration;
@@ -467,9 +503,74 @@ class VideoProjectNormalizer
             ];
         }
 
+        if ($type === 'shape') {
+            $transform = is_array($legacyTrack['transform'] ?? null) ? $legacyTrack['transform'] : [];
+            $fill = is_array($track['fill'] ?? null) ? $track['fill'] : [];
+            $shape = [
+                'type' => (string) ($track['shapeType'] ?? $track['shape_type'] ?? 'rectangle'),
+                'color' => $this->normalizeHexColor((string) ($fill['color'] ?? $track['color'] ?? '#FFFFFF')),
+                'opacity' => isset($fill['opacity']) ? max(0.0, min(1.0, (float) $fill['opacity'])) : 1.0,
+                'points' => is_array($track['points'] ?? null) ? array_values($track['points']) : [],
+            ];
+
+            $renderLayer = array_filter([
+                'id' => $legacyTrack['id'] ?? null,
+                'type' => 'shape',
+                'shape' => $shape,
+                'color' => $shape['color'],
+                'opacity' => max(0.0, min(1.0, (float) ($transform['opacity'] ?? 1.0) * (float) $shape['opacity'])),
+                'x' => $transform['x'] ?? 0,
+                'y' => $transform['y'] ?? 0,
+                'width' => $transform['width'] ?? 1,
+                'height' => $transform['height'] ?? 1,
+                'start' => $legacyTrack['start'],
+                'end' => $legacyTrack['end'],
+                'enabled' => $legacyTrack['enabled'] ?? true,
+                'visible' => $legacyTrack['visible'] ?? true,
+                'z_index' => $legacyTrack['z_index'] ?? $trackIndex,
+                'raw' => $track,
+            ], static fn ($value) => $value !== null && $value !== '');
+
+            $legacyTrack['shape'] = $shape;
+
+            return [
+                'track' => $legacyTrack,
+                'render_layer' => $renderLayer,
+            ];
+        }
+
         if ($type === 'audio') {
-            $legacyTrack['source'] = is_array($track['source'] ?? null) ? $track['source'] : [];
-            $legacyTrack['audio'] = is_array($track['audio'] ?? null) ? $track['audio'] : [];
+            $source = is_array($track['source'] ?? null) ? $track['source'] : [];
+            $asset = $this->resolveV3AssetSource($source, $assetIndex);
+            $audio = is_array($track['audio'] ?? null) ? $track['audio'] : [];
+
+            if (($asset['public_id'] ?? '') === '' && ($asset['asset_key'] ?? '') === '') {
+                throw ValidationException::withMessages([
+                    "scenes.{$sceneIndex}.tracks.{$trackIndex}.source" => 'Audio tracks require an assetId that resolves to managed storage or Cloudinary.',
+                ]);
+            }
+
+            $renderLayer = array_filter([
+                'id' => $legacyTrack['id'] ?? null,
+                'type' => 'audio',
+                'public_id' => $asset['public_id'] ?? null,
+                'asset_public_id' => $asset['asset_public_id'] ?? null,
+                'asset_disk' => $asset['asset_disk'] ?? null,
+                'asset_key' => $asset['asset_key'] ?? null,
+                'start' => $legacyTrack['start'],
+                'end' => $legacyTrack['end'],
+                'trim_start' => data_get($legacyTrack, 'timeline.trimStart', 0),
+                'trim_end' => data_get($legacyTrack, 'timeline.trimEnd'),
+                'volume' => isset($audio['volume']) ? max(0.0, min(4.0, (float) $audio['volume'])) : 1.0,
+                'fade_in' => isset($audio['fadeIn']) ? max(0.0, (float) $audio['fadeIn']) : (isset($audio['fade_in']) ? max(0.0, (float) $audio['fade_in']) : 0.0),
+                'fade_out' => isset($audio['fadeOut']) ? max(0.0, (float) $audio['fadeOut']) : (isset($audio['fade_out']) ? max(0.0, (float) $audio['fade_out']) : 0.0),
+                'enabled' => $legacyTrack['enabled'] ?? true,
+                'z_index' => $legacyTrack['z_index'] ?? $trackIndex,
+            ], static fn ($value) => $value !== null && $value !== '');
+
+            $legacyTrack['source'] = $source;
+            $legacyTrack['asset'] = $asset;
+            $legacyTrack['audio'] = $audio;
             $legacyTrack['metadata'] = [
                 'source' => 'v3',
                 'scene_index' => $sceneIndex,
@@ -479,7 +580,7 @@ class VideoProjectNormalizer
 
             return [
                 'track' => $legacyTrack,
-                'render_layer' => null,
+                'render_layer' => $renderLayer,
             ];
         }
 
