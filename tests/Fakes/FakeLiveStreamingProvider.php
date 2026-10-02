@@ -33,6 +33,11 @@ class FakeLiveStreamingProvider implements LiveStreamingProviderInterface
         ];
     }
 
+    public function voiceCredentials(string $channel, User $user): array
+    {
+        return ['provider' => 'fake', 'app_id' => 'fake', 'channel' => $channel, 'uid' => (int) $user->id, 'token' => 'voice-token', 'expires_at' => now()->addHour()->toIso8601String(), 'role' => 'broadcaster'];
+    }
+
     public function renewCredentials(LiveSession $live, User $user, string $role): array
     {
         return $this->credentials($live, $user, $role);

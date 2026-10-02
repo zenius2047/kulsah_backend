@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Video;
 use App\Services\CloudinaryVideoRendererService;
+use App\Services\DuetVideoRenderingService;
 use App\Services\VideoEditRenderingService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -34,6 +35,7 @@ class RenderVideoEditsJob implements ShouldQueue
     public function handle(
         CloudinaryVideoRendererService $cloudinaryRenderer,
         VideoEditRenderingService $ffmpegRenderer,
+        DuetVideoRenderingService $duetRenderer,
     ): void {
         $video = $this->video->fresh();
 
@@ -75,7 +77,17 @@ class RenderVideoEditsJob implements ShouldQueue
             $rendered = null;
 
             if ($shouldUseFfmpeg) {
-                $rendered = $ffmpegRenderer->renderTimeline($video, $this->timeline);
+                $duetSourcePath = null;
+                try {
+                    if ($video->duet_source_video_id) {
+                        $duetSourcePath = $duetRenderer->renderToLocal($video);
+                    }
+                    $rendered = $ffmpegRenderer->renderTimeline($video, $this->timeline, $duetSourcePath);
+                } finally {
+                    if ($duetSourcePath) {
+                        @unlink($duetSourcePath);
+                    }
+                }
             } else {
                 try {
                     $rendered = $cloudinaryRenderer->startRender($video, $this->timeline);
@@ -125,6 +137,9 @@ class RenderVideoEditsJob implements ShouldQueue
                 'metadata' => array_merge($video->metadata ?? [], [
                     'edit_status' => $isReady ? 'ready' : 'rendering',
                     'processing_state' => $isReady ? 'ready' : 'rendering_edit',
+                    'duet_render_status' => $video->duet_source_video_id
+                        ? ($isReady ? 'ready' : 'rendering')
+                        : data_get($video->metadata, 'duet_render_status'),
                     'render_requested_at' => now()->toISOString(),
                     'render_completed_at' => $isReady ? now()->toISOString() : null,
                     'render_plan' => $rendered['metadata'] ?? [],
@@ -154,6 +169,9 @@ class RenderVideoEditsJob implements ShouldQueue
                     'edit_status' => 'failed',
                     'processing_state' => 'edit_failed',
                     'edit_error' => $throwable->getMessage(),
+                    'duet_render_status' => $video->duet_source_video_id
+                        ? 'failed'
+                        : data_get($video->metadata, 'duet_render_status'),
                 ]),
             ]);
 

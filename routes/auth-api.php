@@ -16,6 +16,7 @@ Route::post('/login', [AuthController::class, 'login'])->name('api.login');
 Route::post('/forgotton-password', [AuthController::class, 'forgottonPassword']);
 Route::post('/verify-reset-otp', [AuthController::class, 'verifyResetOtp']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('auth:sanctum');
 
 // Temporary compatibility route
 Route::post('/{endpoint}', [AuthController::class, 'socialLogin'])
@@ -29,6 +30,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/activate', [AuthController::class, 'activateAccount']);
     Route::post('/resend', [AuthController::class, 'resendOtp']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/logout-all', [AuthController::class, 'logoutAll']);
+    Route::delete('/account', [AuthController::class, 'deleteAccount']);
     Route::post('/switch-role', [AuthController::class, 'switchRole']);
     Route::post('/update-vibe', [AuthController::class, 'updateVibe']);
     Route::post('/notification-devices', [NotificationDeviceController::class, 'store']);

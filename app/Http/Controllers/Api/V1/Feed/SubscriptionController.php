@@ -9,6 +9,7 @@ use App\Models\Subscription;
 use App\Models\SubscriptionAction;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
+use App\Models\UserFollow;
 use App\Services\WalletService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -36,6 +37,61 @@ class SubscriptionController extends Controller
                 'cache_key' => $this->creatorPrivatePlansCacheKey($request->user()->id),
             ],
         ]);
+    }
+
+    public function audience(Request $request)
+    {
+        $user = $request->user();
+        $subscribers = Subscription::query()
+            ->where('creator_id', $user->id)
+            ->with(['subscriber:id,name,username,avatar', 'plan:id,name,price,currency'])
+            ->latest('created_at')
+            ->get()
+            ->map(fn (Subscription $subscription) => [
+                'id' => (string) $subscription->id,
+                'user_id' => (string) $subscription->subscriber_id,
+                'name' => $subscription->subscriber?->name,
+                'handle' => $subscription->subscriber?->username,
+                'avatar' => $subscription->subscriber?->avatar,
+                'tier' => $subscription->plan?->name,
+                'status' => $subscription->status,
+                'joined_at' => $subscription->starts_at?->toISOString() ?? $subscription->created_at?->toISOString(),
+                'expires_at' => $subscription->expires_at?->toISOString(),
+                'value' => $subscription->plan ? [
+                    'amount' => $subscription->plan->price,
+                    'currency' => $subscription->plan->currency,
+                ] : null,
+            ])->values();
+
+        $followers = UserFollow::query()
+            ->where('followed_id', $user->id)
+            ->with('follower:id,name,username,avatar')
+            ->latest('created_at')
+            ->get()
+            ->map(fn (UserFollow $follow) => [
+                'id' => (string) $follow->id,
+                'user_id' => (string) $follow->follower_id,
+                'name' => $follow->follower?->name,
+                'handle' => $follow->follower?->username,
+                'avatar' => $follow->follower?->avatar,
+                'followed_at' => $follow->created_at?->toISOString(),
+            ])->values();
+
+        $following = UserFollow::query()
+            ->where('follower_id', $user->id)
+            ->with('followed:id,name,username,avatar')
+            ->latest('created_at')
+            ->get()
+            ->map(fn (UserFollow $follow) => [
+                'id' => (string) $follow->id,
+                'user_id' => (string) $follow->followed_id,
+                'name' => $follow->followed?->name,
+                'handle' => $follow->followed?->username,
+                'avatar' => $follow->followed?->avatar,
+                'followed_at' => $follow->created_at?->toISOString(),
+            ])->values();
+
+        return response()->json(['data' => compact('subscribers', 'followers', 'following')]);
     }
 
     // Return any creator's public plans, also cached so fan-facing reads stay fast.

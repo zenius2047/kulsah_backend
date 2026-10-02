@@ -22,6 +22,8 @@ use App\Http\Controllers\Api\V1\Live\LiveController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\StickerController;
 use App\Http\Controllers\Api\V1\UserNotificationController;
+use App\Http\Controllers\Api\V1\VoiceCallController;
+use App\Http\Controllers\Api\V1\AiController;
 use Illuminate\Support\Facades\Route;
 
 Route::pattern('video', '[0-9]+');
@@ -75,7 +77,9 @@ Route::prefix('general')
 Route::prefix('general')
     ->middleware(['auth:sanctum', 'role:admin|fan|creator'])
     ->group(function () {
+        Route::post('/ai/generate', [AiController::class, 'generate'])->middleware('throttle:20,1');
         Route::get('/discovery', [DiscoveryController::class, 'index'])->middleware('cache.api:60');
+        Route::get('/discovery/hashtags', [DiscoveryController::class, 'hashtags'])->middleware('cache.api:60');
         Route::post('/discovery/view', [DiscoveryController::class, 'view']);
 
         Route::get('/conversations/unread-count', [ConversationController::class, 'unreadCount']);
@@ -106,6 +110,12 @@ Route::prefix('general')
         Route::post('/conversations/{conversation}/read', [ConversationController::class, 'read']);
         Route::post('/conversations/{conversation}/typing/start', [ConversationController::class, 'typingStart']);
         Route::post('/conversations/{conversation}/typing/stop', [ConversationController::class, 'typingStop']);
+        Route::post('/conversations/{conversation}/calls', [VoiceCallController::class, 'start'])->middleware('throttle:10,1');
+        Route::get('/voice-calls/{voiceCall}', [VoiceCallController::class, 'show']);
+        Route::post('/voice-calls/{voiceCall}/accept', [VoiceCallController::class, 'accept']);
+        Route::post('/voice-calls/{voiceCall}/decline', [VoiceCallController::class, 'decline']);
+        Route::post('/voice-calls/{voiceCall}/end', [VoiceCallController::class, 'end']);
+        Route::post('/voice-calls/{voiceCall}/credentials', [VoiceCallController::class, 'credentials'])->middleware('throttle:live-token');
 
         Route::prefix('challenges')
             ->group(function () {
@@ -114,6 +124,7 @@ Route::prefix('general')
                 Route::put('/{challenge}/ballot', [ChallengeController::class, 'ballot'])->middleware('throttle:challenge-ballots');
                 Route::get('/{challenge}/leaderboard', [ChallengeController::class, 'leaderboard']);
             });
+        Route::get('/challenge-rewards', [ChallengeController::class, 'myRewards']);
 
         Route::get('/community/posts', [CommunityPostController::class, 'index'])->middleware('cache.api:30');
         Route::get('/community/history', [CommunityPostController::class, 'history']);
@@ -215,9 +226,11 @@ Route::prefix('creator')
         Route::post('/community/posts', [CommunityPostController::class, 'store']);
 
         Route::prefix('challenges')->group(function () {
+            Route::get('/', [ChallengeController::class, 'creatorIndex']);
             Route::post('/', [ChallengeController::class, 'store']);
             Route::post('/draft', [ChallengeController::class, 'draft']);
             Route::patch('/{challenge}', [ChallengeController::class, 'update']);
+            Route::delete('/{challenge}', [ChallengeController::class, 'destroyDraft']);
             Route::post('/{challenge}/transition', [ChallengeController::class, 'transition']);
             Route::post('/{challenge}/entries', [ChallengeController::class, 'submitEntry'])->middleware('throttle:challenge-entries');
             Route::delete('/{challenge}/entries/{entry}', [ChallengeController::class, 'withdraw']);
@@ -238,6 +251,7 @@ Route::prefix('creator')
         Route::patch('/events/{event}', [EventController::class, 'update']);
 
         Route::get('/subscription-plans', [SubscriptionController::class, 'index']);
+        Route::get('/audience', [SubscriptionController::class, 'audience']);
         Route::post('/subscription-plans', [SubscriptionController::class, 'store']);
         Route::patch('/subscription-plans/{subscriptionPlan}', [SubscriptionController::class, 'update']);
         Route::post('/subscription-plans/{subscriptionPlan}/disable', [SubscriptionController::class, 'disablePlan']);

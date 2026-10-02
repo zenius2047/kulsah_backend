@@ -34,6 +34,11 @@ class VideoEditRenderingServiceTest extends TestCase
                     'source' => '/tmp/overlay-video.mp4',
                     'loop' => false,
                 ],
+                [
+                    'source' => '/tmp/selected-sound.mp3',
+                    'loop' => true,
+                    'type' => 'audio',
+                ],
             ],
             [],
             '/tmp/output.mp4',
@@ -43,13 +48,20 @@ class VideoEditRenderingServiceTest extends TestCase
         $this->assertContains('1', $command);
         $this->assertContains('/tmp/overlay.png', $command);
         $this->assertContains('/tmp/overlay-video.mp4', $command);
+        $this->assertContains('/tmp/selected-sound.mp3', $command);
+        $this->assertContains('-stream_loop', $command);
 
         $loopIndex = array_search('-loop', $command, true);
         $imageInputIndex = array_search('/tmp/overlay.png', $command, true);
+        $streamLoopIndex = array_search('-stream_loop', $command, true);
+        $audioInputIndex = array_search('/tmp/selected-sound.mp3', $command, true);
 
         $this->assertIsInt($loopIndex);
         $this->assertIsInt($imageInputIndex);
+        $this->assertIsInt($streamLoopIndex);
+        $this->assertIsInt($audioInputIndex);
         $this->assertLessThan($imageInputIndex, $loopIndex);
+        $this->assertLessThan($audioInputIndex, $streamLoopIndex);
     }
 
     public function test_overlay_assets_are_materialized_to_local_temp_files_before_rendering(): void
@@ -184,5 +196,30 @@ class VideoEditRenderingServiceTest extends TestCase
         $this->assertStringContainsString('hue=s=0', $graph);
         $this->assertStringContainsString("drawbox=x=10:y=20:w=100:h=80:color=0xFF0000@1:t=fill:enable='between(t,2,4)'", $graph);
         $this->assertStringContainsString('fontsize=64', $graph);
+    }
+
+    public function test_audio_track_is_trimmed_to_the_video_timeline_before_mixing(): void
+    {
+        $service = new VideoEditRenderingService(
+            $this->createMock(VideoStorageService::class),
+            $this->createMock(CloudinaryService::class),
+        );
+        $method = new \ReflectionMethod(VideoEditRenderingService::class, 'buildAudioFilterGraph');
+        $method->setAccessible(true);
+
+        $graph = $method->invoke($service, [[
+            'type' => 'audio',
+            'input_index' => 1,
+            'start' => 0,
+            'end' => 5,
+            'volume' => 1,
+            'replace_original' => true,
+        ]], '/tmp/source-without-audio.mp4');
+
+        $this->assertIsString($graph);
+        $this->assertStringContainsString('[1:a]atrim=start=0:end=5', $graph);
+        $this->assertStringContainsString('volume=1', $graph);
+        $this->assertStringContainsString('[aout]', $graph);
+        $this->assertStringNotContainsString('[0:a]', $graph);
     }
 }

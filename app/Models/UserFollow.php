@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Services\FeedService;
+use App\Services\VideoCacheService;
 use Illuminate\Database\Eloquent\Model;
 
 class UserFollow extends Model
@@ -14,12 +14,12 @@ class UserFollow extends Model
 
     protected static function booted(): void
     {
-        static::saved(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::saved(static function (self $follow): void {
+            app(VideoCacheService::class)->invalidateViewer((int) $follow->follower_id);
         });
 
-        static::deleted(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::deleted(static function (self $follow): void {
+            app(VideoCacheService::class)->invalidateViewer((int) $follow->follower_id);
         });
     }
 

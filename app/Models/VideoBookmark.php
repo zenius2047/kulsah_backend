@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Services\FeedService;
 use Illuminate\Database\Eloquent\Model;
 
 class VideoBookmark extends Model
@@ -14,12 +13,15 @@ class VideoBookmark extends Model
 
     protected static function booted(): void
     {
-        static::saved(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::created(static function (self $bookmark): void {
+            Video::query()->whereKey($bookmark->video_id)->increment('bookmarks_count');
         });
 
-        static::deleted(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::deleted(static function (self $bookmark): void {
+            Video::query()
+                ->whereKey($bookmark->video_id)
+                ->where('bookmarks_count', '>', 0)
+                ->decrement('bookmarks_count');
         });
     }
 

@@ -23,18 +23,19 @@ class VideoEditRenderingService
      *
      * @param  array<string, mixed>  $timeline
      */
-    public function renderTimeline(Video $video, array $timeline): array
+    public function renderTimeline(Video $video, array $timeline, ?string $preparedSourcePath = null): array
     {
-        return $this->render($video, (array) ($timeline['layers'] ?? []), $timeline);
+        return $this->render($video, (array) ($timeline['layers'] ?? []), $timeline, $preparedSourcePath);
     }
 
     /**
      * @param  array<int, array<string, mixed>>  $overlays
      */
-    public function render(Video $video, array $overlays, array $timeline = []): array
+    public function render(Video $video, array $overlays, array $timeline = [], ?string $preparedSourcePath = null): array
     {
         $sourceDisk = data_get($video->metadata, 'storage_disk', config('video.storage_disk', 's3'));
-        $sourcePath = $this->copyStorageFileToTemp($sourceDisk, (string) $video->source_key, 'kulsah-edit-source-', '.mp4');
+        $sourcePath = $preparedSourcePath
+            ?: $this->copyStorageFileToTemp($sourceDisk, (string) $video->source_key, 'kulsah-edit-source-', '.mp4');
         $outputPath = $this->makeTempPath('kulsah-edit-render-', '.mp4');
         $overlayInputs = [];
         $preparedOverlays = [];
@@ -92,7 +93,9 @@ class VideoEditRenderingService
                 originalName: pathinfo((string) $video->source_key, PATHINFO_FILENAME).'-edited.mp4'
             );
         } finally {
-            @unlink($sourcePath);
+            if ($preparedSourcePath === null) {
+                @unlink($sourcePath);
+            }
             @unlink($outputPath);
             foreach ($overlayTempFiles as $overlayTempFile) {
                 if (is_string($overlayTempFile) && $overlayTempFile !== '') {
@@ -124,7 +127,7 @@ class VideoEditRenderingService
 
         foreach ($overlayInputs as $overlayInput) {
             if (($overlayInput['loop'] ?? false) === true) {
-                if (($overlayInput['type'] ?? '') === 'video') {
+                if (in_array(($overlayInput['type'] ?? ''), ['video', 'audio'], true)) {
                     array_push($command, '-stream_loop', '-1');
                 } else {
                     array_push($command, '-loop', '1');
@@ -519,8 +522,11 @@ class VideoEditRenderingService
 
         $filters = [];
         $mixInputs = [];
+        $replaceOriginalAudio = collect($audioLayers)->contains(
+            static fn (array $layer): bool => filter_var($layer['replace_original'] ?? false, FILTER_VALIDATE_BOOLEAN)
+        );
 
-        if ($this->sourceHasAudio($sourcePath)) {
+        if (! $replaceOriginalAudio && $this->sourceHasAudio($sourcePath)) {
             $filters[] = '[0:a]asetpts=PTS-STARTPTS[abase]';
             $mixInputs[] = '[abase]';
         }
@@ -536,6 +542,9 @@ class VideoEditRenderingService
             $trimStart = max(0.0, (float) ($layer['trim_start'] ?? 0));
             $trimEnd = isset($layer['trim_end']) ? max($trimStart, (float) $layer['trim_end']) : null;
             $duration = $end !== null ? max(0.0, $end - $start) : null;
+            if ($trimEnd === null && $duration !== null) {
+                $trimEnd = $trimStart + $duration;
+            }
             $chain = [];
 
             if ($trimStart > 0 || $trimEnd !== null) {

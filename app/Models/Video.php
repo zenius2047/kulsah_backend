@@ -61,6 +61,9 @@ class Video extends Model
         'progress_percentage',
         'render_completed_at',
         'views_count',
+        'likes_count',
+        'comments_count',
+        'bookmarks_count',
         'metadata',
     ];
 
@@ -81,6 +84,9 @@ class Video extends Model
             'allow_duet' => 'boolean',
             'progress_percentage' => 'integer',
             'views_count' => 'integer',
+            'likes_count' => 'integer',
+            'comments_count' => 'integer',
+            'bookmarks_count' => 'integer',
             'render_completed_at' => 'datetime',
             'uploaded_at' => 'datetime',
             'processing_started_at' => 'datetime',

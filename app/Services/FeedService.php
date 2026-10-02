@@ -22,8 +22,7 @@ class FeedService
 
     public function __construct(
         private readonly FastApiRecommendationService $fastApiRecommendationService,
-    ) {
-    }
+    ) {}
 
     public function getFeed(int|string $viewerKey, int $limit = 20, int $page = 1, array $context = []): array
     {
@@ -198,7 +197,7 @@ class FeedService
 
         if ($favoriteCreatorIds !== []) {
             $candidateIds = $candidateIds->merge($this->collectCandidateIds(
-                (clone $base)->whereNotIn('user_id', $favoriteCreatorIds)->latest('created_at')->latest('id'),
+                (clone $base)->whereIn('user_id', $favoriteCreatorIds)->latest('created_at')->latest('id'),
                 $bucketSize
             ));
         }
@@ -212,7 +211,6 @@ class FeedService
         $candidateIds = $candidateIds
             ->filter()
             ->map(static fn ($id) => (int) $id)
-
 
             ->unique()
             ->take($candidateLimit)
@@ -235,7 +233,6 @@ class FeedService
 
         $videos = Video::query()
             ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user:id,name,username,avatar,banner'])
-            ->withCount(['likes', 'comments', 'bookmarks'])
             ->withExists(['challengeEntries'])
             ->whereIn('id', $candidateIds->all())
             ->get()
@@ -252,16 +249,12 @@ class FeedService
         $query = Video::query()
             ->ready()
             ->where('visibility', 'public')
-            ->with(['user:id,name,username,avatar,banner'])
-            ->withCount(['likes', 'comments', 'bookmarks'])
-            ->withExists(['challengeEntries']);
-
+            ->select('videos.*');
 
         $blockedCreatorIds = array_map('intval', $context['blocked_creator_ids'] ?? []);
         if ($blockedCreatorIds !== []) {
             $query->whereNotIn('user_id', $blockedCreatorIds);
         }
-
 
         return $query;
     }
@@ -317,6 +310,7 @@ class FeedService
             return [];
         }
     }
+
     private function interestQuery(Builder $query, array $interestTerms, array $vibeTerms): Builder
     {
         $terms = array_values(array_unique(array_merge($interestTerms, $vibeTerms)));
@@ -336,7 +330,6 @@ class FeedService
 
         return Video::query()
             ->with(['user:id,name,username,avatar,banner', 'duetSourceVideo.user:id,name,username,avatar,banner'])
-            ->withCount(['likes', 'comments', 'bookmarks'])
             ->withExists(['challengeEntries'])
             ->whereIn('id', $this->collectCandidateIds((clone $base)->latest('created_at')->latest('id'), $candidateLimit))
             ->get();
@@ -589,4 +582,3 @@ class FeedService
         return ['feed:user', 'feed:user:'.(string) $viewerKey];
     }
 }
-

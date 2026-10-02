@@ -778,6 +778,9 @@ class VideoController extends Controller
             'content_type.*' => ['required', 'string', 'max:120', 'distinct'],
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
             'allow_duet' => ['sometimes', 'boolean'],
+            'duet_layout' => ['sometimes', 'string', 'in:side_by_side,stacked,picture_in_picture'],
+            'duet_source_audio' => ['sometimes', 'boolean'],
+            'duet_response_audio' => ['sometimes', 'boolean'],
             'music' => ['sometimes', 'nullable', 'array'],
             'sound' => ['sometimes', 'nullable', 'array'],
         ]);
@@ -1098,6 +1101,10 @@ class VideoController extends Controller
                 'duet_source_video_id' => $sourceVideo->id,
                 'duet_source_user_id' => $sourceVideo->user_id,
                 'duet_source_title' => $sourceVideo->title,
+                'duet_layout' => 'side_by_side',
+                'duet_source_audio' => true,
+                'duet_response_audio' => true,
+                'duet_render_status' => 'draft',
             ]),
         ]);
 

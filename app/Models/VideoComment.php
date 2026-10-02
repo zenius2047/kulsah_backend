@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Services\FeedService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -20,12 +19,19 @@ class VideoComment extends Model
 
     protected static function booted(): void
     {
-        static::saved(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::created(static function (self $comment): void {
+            Video::query()->whereKey($comment->video_id)->increment('comments_count');
         });
 
-        static::deleted(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::deleted(static function (self $comment): void {
+            Video::query()
+                ->whereKey($comment->video_id)
+                ->where('comments_count', '>', 0)
+                ->decrement('comments_count');
+        });
+
+        static::restored(static function (self $comment): void {
+            Video::query()->whereKey($comment->video_id)->increment('comments_count');
         });
     }
 
@@ -54,4 +60,3 @@ class VideoComment extends Model
         return $this->hasMany(VideoCommentLike::class, 'video_comment_id');
     }
 }
-

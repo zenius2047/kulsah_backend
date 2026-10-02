@@ -14,11 +14,15 @@ class CommunityPost extends Model
         'type',
         'content',
         'audience',
+        'location_name',
         'status',
+        'scheduled_at',
+        'published_at',
         'views_count',
         'last_activity_at',
         'media_ids',
         'poll',
+        'hashtags',
     ];
 
     protected function casts(): array
@@ -26,8 +30,11 @@ class CommunityPost extends Model
         return [
             'views_count' => 'integer',
             'last_activity_at' => 'datetime',
+            'scheduled_at' => 'datetime',
+            'published_at' => 'datetime',
             'media_ids' => 'array',
             'poll' => 'array',
+            'hashtags' => 'array',
         ];
     }
 
@@ -69,5 +76,10 @@ class CommunityPost extends Model
     public function views()
     {
         return $this->hasMany(CommunityPostView::class, 'community_post_id');
+    }
+
+    public function taggedUsers()
+    {
+        return $this->belongsToMany(User::class, 'community_post_user_tags')->withTimestamps();
     }
 }

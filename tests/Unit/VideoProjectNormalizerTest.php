@@ -8,6 +8,46 @@ use Tests\TestCase;
 
 class VideoProjectNormalizerTest extends TestCase
 {
+    public function test_v3_audio_track_preserves_looping_in_the_render_plan(): void
+    {
+        $result = app(VideoProjectNormalizer::class)->normalize([
+            'video_id' => 42,
+            'schemaVersion' => '3.0.0',
+            'metadata' => ['duration' => 8],
+            'canvas' => ['width' => 1080, 'height' => 1920],
+            'output' => ['format' => 'mp4', 'width' => 1080, 'height' => 1920],
+            'assets' => [[
+                'id' => 'selected-sound',
+                'type' => 'audio',
+                'storageProvider' => 'cloudinary',
+                'storageKey' => 'kulsah/music/selected-sound',
+                'mimeType' => 'audio/mpeg',
+            ]],
+            'scenes' => [[
+                'id' => 'main-scene',
+                'order' => 0,
+                'timeline' => ['start' => 0, 'duration' => 8],
+                'tracks' => [[
+                    'id' => 'music-track',
+                    'type' => 'audio',
+                    'layer' => 1,
+                    'timeline' => ['start' => 0, 'duration' => 8, 'loop' => true],
+                    'source' => ['assetId' => 'selected-sound'],
+                    'audio' => ['volume' => 1, 'replaceOriginal' => true],
+                ]],
+            ]],
+            'globalAudioTracks' => [],
+            'globalEffects' => [],
+        ], 7);
+
+        $audioLayer = collect($result['timeline']['layers'])->firstWhere('type', 'audio');
+
+        $this->assertIsArray($audioLayer);
+        $this->assertTrue($audioLayer['loop']);
+        $this->assertTrue($audioLayer['replace_original']);
+        $this->assertSame('kulsah/music/selected-sound', $audioLayer['public_id']);
+    }
+
     public function test_v3_project_builds_an_ordered_anchor_aware_render_plan_in_seconds(): void
     {
         $result = app(VideoProjectNormalizer::class)->normalize([

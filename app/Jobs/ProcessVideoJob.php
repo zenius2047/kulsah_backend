@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Video;
 use App\Services\CloudinaryService;
+use App\Services\DuetVideoRenderingService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -20,14 +21,16 @@ class ProcessVideoJob implements ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 180;
+    public int $timeout = 900;
 
     public array $backoff = [30, 60, 120];
 
     public function __construct(public Video $video) {}
 
-    public function handle(CloudinaryService $cloudinaryService): void
-    {
+    public function handle(
+        CloudinaryService $cloudinaryService,
+        ?DuetVideoRenderingService $duetRenderer = null,
+    ): void {
         $video = $this->video->fresh();
 
         if (! $video) {
@@ -79,6 +82,8 @@ class ProcessVideoJob implements ShouldQueue
             throw new RuntimeException('Video source_key is missing.');
         }
 
+        $renderTokenAtStart = (string) data_get($video->metadata, 'edit_render_token', '');
+
         try {
             $disk = $video->source_disk ?: data_get($video->metadata, 'storage_disk', config('video.storage_disk', 's3'));
             if (! Storage::disk($disk)->exists($video->source_key)) {
@@ -104,6 +109,15 @@ class ProcessVideoJob implements ShouldQueue
                 return;
             }
             $video = $video->fresh();
+            if ($video->duet_source_video_id) {
+                $video->update([
+                    'metadata' => array_merge($video->metadata ?? [], [
+                        'duet_render_status' => 'rendering',
+                        'duet_render_started_at' => now()->toISOString(),
+                    ]),
+                ]);
+                $video = $video->fresh();
+            }
 
             Log::info('ProcessVideoJob uploading video to Cloudinary.', [
                 'video_id' => $video->id,
@@ -115,10 +129,23 @@ class ProcessVideoJob implements ShouldQueue
                 'size_bytes' => data_get($video->metadata, 'size'),
             ]);
 
-            $result = $cloudinaryService->uploadVideoFromS3Key($video->source_key, $disk);
+            $result = $video->duet_source_video_id
+                ? ($duetRenderer ?? app(DuetVideoRenderingService::class))->renderAndUpload($video)
+                : $cloudinaryService->uploadVideoFromS3Key($video->source_key, $disk);
             $maxDuration = (int) config('video.max_duration_seconds', 120);
             $resultMetadata = array_merge($video->metadata ?? [], $result['metadata'] ?? []);
             $duration = $this->resolveDurationSeconds($result, $resultMetadata, $video);
+
+            $video = $video->fresh() ?? $video;
+            $currentRenderToken = (string) data_get($video->metadata, 'edit_render_token', '');
+            if ($currentRenderToken !== '' && $currentRenderToken !== $renderTokenAtStart) {
+                Log::info('ProcessVideoJob result ignored because an edit render superseded it.', [
+                    'video_id' => $video->id,
+                    'edit_render_token' => $currentRenderToken,
+                ]);
+
+                return;
+            }
 
             if ($duration > 0 && $duration > $maxDuration) {
                 $video->update([
@@ -163,6 +190,8 @@ class ProcessVideoJob implements ShouldQueue
                     'streaming_url' => $result['streaming_url'] ?? $result['stream_url'] ?? $result['cdn_url'] ?? null,
                     'poster_url' => $result['poster_url'] ?? $result['thumbnail_url'] ?? null,
                     'streaming_profile' => $result['streaming_profile'] ?? null,
+                    'duet_render_status' => $video->duet_source_video_id ? 'ready' : data_get($resultMetadata, 'duet_render_status'),
+                    'duet_render_completed_at' => $video->duet_source_video_id ? now()->toISOString() : data_get($resultMetadata, 'duet_render_completed_at'),
                 ]),
                 'status' => 'ready',
             ]);
@@ -174,6 +203,17 @@ class ProcessVideoJob implements ShouldQueue
                 'cdn_url' => $video->cdn_url,
             ]);
         } catch (Throwable $throwable) {
+            $video = $video->fresh() ?? $video;
+            $currentRenderToken = (string) data_get($video->metadata, 'edit_render_token', '');
+            if ($currentRenderToken !== '' && $currentRenderToken !== $renderTokenAtStart) {
+                Log::info('ProcessVideoJob failure ignored because an edit render superseded it.', [
+                    'video_id' => $video->id,
+                    'edit_render_token' => $currentRenderToken,
+                ]);
+
+                return;
+            }
+
             $video->update([
                 'status' => 'failed',
                 'processing_status' => 'processing_failed',
@@ -181,6 +221,7 @@ class ProcessVideoJob implements ShouldQueue
                 'failed_at' => now(),
                 'metadata' => array_merge($video->metadata ?? [], [
                     'error' => $throwable->getMessage(),
+                    'duet_render_status' => $video->duet_source_video_id ? 'failed' : data_get($video->metadata, 'duet_render_status'),
                 ]),
             ]);
 

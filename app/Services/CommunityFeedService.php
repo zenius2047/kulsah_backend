@@ -105,6 +105,9 @@ class CommunityFeedService
 
         return $query
             ->where('status', 'published')
+            ->where(function (Builder $query): void {
+                $query->whereNull('scheduled_at')->orWhere('scheduled_at', '<=', now());
+            })
             ->where(function (Builder $query) use ($viewer, $subscribedCreatorIds): void {
                 $query->where('audience', 'public')
                     ->orWhere('user_id', $viewer->id)
@@ -122,6 +125,7 @@ class CommunityFeedService
                 'user.roles:id,name',
                 'media',
                 'pollVotes',
+                'taggedUsers:id,name,username,avatar',
                 'comments' => function ($query): void {
                     $query->whereNull('parent_id')
                         ->latest()

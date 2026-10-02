@@ -20,6 +20,7 @@ use App\Services\CommunityFeedService;
 use App\Services\CommunityMediaService;
 use App\Services\CommunityPostViewService;
 use App\Services\KulCoinService;
+use App\Services\VideoCaptionParserService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -35,6 +36,7 @@ class CommunityPostController extends Controller
         private readonly CommunityMediaService $communityMediaService,
         private readonly CommunityFeedService $communityFeedService,
         private readonly CommunityPostViewService $communityPostViewService,
+        private readonly VideoCaptionParserService $captionParser,
     ) {}
 
     public function index(Request $request)
@@ -111,20 +113,28 @@ class CommunityPostController extends Controller
                 $uploadedMedia[] = $this->communityMediaService->storeMediaForPost(
                     $file,
                     $request->user(),
-                    $index
+                    $index,
+                    $validated['media_options'][$index] ?? [],
                 );
             }
 
             $post = DB::transaction(function () use ($request, $validated, $uploadedMedia): CommunityPost {
+                $scheduledAt = isset($validated['scheduled_at']) ? Carbon::parse($validated['scheduled_at']) : null;
+                $isScheduled = $scheduledAt?->isFuture() ?? false;
+                $captionData = $this->captionParser->parse($validated['content'] ?? null);
                 $post = CommunityPost::query()->create([
                     'user_id' => $request->user()->id,
                     'type' => $validated['type'],
                     'content' => $validated['content'] ?? null,
                     'audience' => $validated['audience'],
-                    'status' => 'published',
+                    'location_name' => $validated['location_name'] ?? null,
+                    'status' => $isScheduled ? 'scheduled' : 'published',
+                    'scheduled_at' => $isScheduled ? $scheduledAt : null,
+                    'published_at' => $isScheduled ? null : now(),
                     'views_count' => 0,
                     'media_ids' => $validated['media_ids'] ?? [],
                     'poll' => $validated['poll'] ?? null,
+                    'hashtags' => $captionData['hashtags'],
                 ]);
 
                 foreach ($uploadedMedia as $index => $media) {
@@ -133,7 +143,9 @@ class CommunityPostController extends Controller
                     ]));
                 }
 
-                return $post->load(['user.roles:id,name', 'media']);
+                $post->taggedUsers()->sync($validated['tagged_user_ids'] ?? []);
+
+                return $post->load(['user.roles:id,name', 'media', 'taggedUsers:id,name,username,avatar']);
             });
         } catch (Throwable $throwable) {
             foreach ($uploadedMedia as $media) {
@@ -143,7 +155,7 @@ class CommunityPostController extends Controller
             throw $throwable;
         }
 
-        $post->load(['user.roles:id,name', 'media']);
+        $post->load(['user.roles:id,name', 'media', 'taggedUsers:id,name,username,avatar']);
         $post->loadCount(['likes', 'comments', 'shares', 'gifts']);
         $post->setAttribute('is_liked', false);
         $post->setAttribute('is_shared', false);
@@ -151,7 +163,9 @@ class CommunityPostController extends Controller
         $post->setAttribute('community_count', 0);
 
         return response()->json([
-            'message' => 'Community post created successfully.',
+            'message' => $post->status === 'scheduled'
+                ? 'Community post scheduled successfully.'
+                : 'Community post created successfully.',
             'data' => new CommunityPostResource($post),
         ], 201);
     }
@@ -491,6 +505,17 @@ class CommunityPostController extends Controller
             'poll.options' => ['required_with:poll', 'array', 'min:2'],
             'poll.options.*' => ['required_with:poll.options', 'string', 'min:1', 'max:255', 'distinct'],
             'poll.closes_at' => ['nullable', 'date', 'after:now'],
+            'location_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'scheduled_at' => ['sometimes', 'nullable', 'date', 'after:now'],
+            'tagged_user_ids' => ['sometimes', 'array', 'max:20'],
+            'tagged_user_ids.*' => ['integer', 'distinct', Rule::exists('users', 'id')->where(fn ($query) => $query->where('id', '!=', $request->user()->id))],
+            'media_options' => ['sometimes', 'array'],
+            'media_options.*' => ['array'],
+            'media_options.*.filter' => ['sometimes', Rule::in(['original', 'warm', 'cool', 'vivid', 'mono', 'fade'])],
+            'media_options.*.cover_frame_ms' => ['sometimes', 'integer', 'min:0', 'max:86400000'],
+            'media_options.*.trim_start_ms' => ['sometimes', 'integer', 'min:0', 'max:86400000'],
+            'media_options.*.trim_end_ms' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:86400000'],
+            'media_options.*.captions_enabled' => ['sometimes', 'boolean'],
         ]);
 
         if ($validated['type'] === 'text') {
@@ -539,7 +564,7 @@ class CommunityPostController extends Controller
 
     private function postState(Request $request, CommunityPost $post, bool $isLiked, bool $isShared): array
     {
-        $post->loadMissing(['user.roles:id,name', 'media', 'pollVotes']);
+        $post->loadMissing(['user.roles:id,name', 'media', 'pollVotes', 'taggedUsers:id,name,username,avatar']);
         $post->loadCount(['likes', 'comments', 'shares', 'gifts']);
         $post->setAttribute('is_liked', $isLiked);
         $post->setAttribute('is_shared', $isShared);
@@ -610,7 +635,6 @@ class CommunityPostController extends Controller
 
     private function findCommunityPost(string|int $communityPost): CommunityPost
     {
-        return CommunityPost::query()->with(['user.roles:id,name', 'media', 'pollVotes'])->findOrFail($communityPost);
+        return CommunityPost::query()->with(['user.roles:id,name', 'media', 'pollVotes', 'taggedUsers:id,name,username,avatar'])->findOrFail($communityPost);
     }
 }
-

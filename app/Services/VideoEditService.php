@@ -133,6 +133,11 @@ class VideoEditService
      */
     private function resolveRenderEngine(array $timeline): string
     {
+        $videoId = (int) ($timeline['video_id'] ?? 0);
+        if ($videoId > 0 && Video::query()->whereKey($videoId)->whereNotNull('duet_source_video_id')->exists()) {
+            return 'ffmpeg';
+        }
+
         $forced = strtolower(trim((string) config('video.edit_renderer', 'auto')));
 
         if (in_array($forced, ['cloudinary', 'ffmpeg'], true)) {

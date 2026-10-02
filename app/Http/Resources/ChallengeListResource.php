@@ -27,6 +27,7 @@ class ChallengeListResource extends JsonResource
             'category' => $this->resolveCategory($challenge, $metadata),
             'title' => $challenge->title,
             'description' => $challenge->description,
+            'status' => $this->enumValue($challenge->status),
             'reward' => $this->resolveReward($challenge),
             'deadline' => optional($challenge->submission_ends_at)?->toIso8601String(),
             'mode' => $this->enumValue($mode),

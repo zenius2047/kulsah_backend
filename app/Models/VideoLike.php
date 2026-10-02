@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Services\FeedService;
 use Illuminate\Database\Eloquent\Model;
 
 class VideoLike extends Model
@@ -14,12 +13,15 @@ class VideoLike extends Model
 
     protected static function booted(): void
     {
-        static::saved(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::created(static function (self $like): void {
+            Video::query()->whereKey($like->video_id)->increment('likes_count');
         });
 
-        static::deleted(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::deleted(static function (self $like): void {
+            Video::query()
+                ->whereKey($like->video_id)
+                ->where('likes_count', '>', 0)
+                ->decrement('likes_count');
         });
     }
 

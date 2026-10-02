@@ -11,6 +11,8 @@ interface LiveStreamingProviderInterface
 
     public function credentials(LiveSession $live, User $user, string $role): array;
 
+    public function voiceCredentials(string $channel, User $user): array;
+
     public function renewCredentials(LiveSession $live, User $user, string $role): array;
 
     public function revokePublishing(LiveSession $live, User $user): int;

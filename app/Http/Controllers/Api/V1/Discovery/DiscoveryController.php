@@ -8,6 +8,8 @@ use App\Http\Resources\DiscoveryEventResource;
 use App\Http\Resources\DiscoveryVideoResource;
 use App\Services\ContentViewStateService;
 use App\Services\DiscoveryService;
+use App\Models\CommunityPost;
+use App\Models\Video;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -80,5 +82,54 @@ class DiscoveryController extends Controller
                 'item_id' => (int) $validated['item_id'],
             ],
         ]);
+    }
+
+    public function hashtags(Request $request)
+    {
+        $validated = $request->validate([
+            'query' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'limit' => ['sometimes', 'integer', 'min:1', 'max:50'],
+        ]);
+        $query = mb_strtolower(ltrim(trim((string) ($validated['query'] ?? '')), '#'));
+        $limit = (int) ($validated['limit'] ?? 30);
+        $counts = collect();
+
+        Video::query()
+            ->where('status', 'published')
+            ->whereNotNull('metadata')
+            ->select(['id', 'metadata'])
+            ->latest('id')
+            ->limit(500)
+            ->get()
+            ->each(function (Video $video) use ($counts): void {
+                foreach ((array) data_get($video->metadata, 'caption_hashtags', []) as $tag) {
+                    $normalized = mb_strtolower(ltrim(trim((string) $tag), '#'));
+                    if ($normalized !== '') $counts->put($normalized, (int) $counts->get($normalized, 0) + 1);
+                }
+            });
+
+        CommunityPost::query()
+            ->where('status', 'published')
+            ->where('audience', 'public')
+            ->whereNotNull('hashtags')
+            ->select(['id', 'hashtags'])
+            ->latest('id')
+            ->limit(500)
+            ->get()
+            ->each(function (CommunityPost $post) use ($counts): void {
+                foreach ((array) $post->hashtags as $tag) {
+                    $normalized = mb_strtolower(ltrim(trim((string) $tag), '#'));
+                    if ($normalized !== '') $counts->put($normalized, (int) $counts->get($normalized, 0) + 1);
+                }
+            });
+
+        $hashtags = $counts
+            ->filter(fn (int $count, string $tag) => $query === '' || str_contains($tag, $query))
+            ->map(fn (int $count, string $tag) => ['tag' => $tag, 'posts_count' => $count])
+            ->sortByDesc('posts_count')
+            ->take($limit)
+            ->values();
+
+        return response()->json(['data' => $hashtags]);
     }
 }

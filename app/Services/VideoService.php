@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Jobs\ProcessVideoJob;
+use App\Jobs\RecordRecommendationEvent;
 use App\Jobs\RenderVideoEditsJob;
 use App\Models\User;
 use App\Models\Video;
@@ -24,8 +25,6 @@ class VideoService
         private readonly VideoStorageService $videoStorageService,
         private readonly VideoInspectionService $videoInspectionService,
         private readonly VideoCaptionParserService $videoCaptionParserService,
-        private readonly FastApiRecommendationService $fastApiRecommendationService,
-        private readonly FeedService $feedService,
         private readonly MusicReferenceService $musicReferenceService,
     ) {}
 
@@ -676,6 +675,25 @@ class VideoService
             $updates['allow_duet'] = (bool) $data['allow_duet'];
         }
 
+        if ($video->duet_source_video_id && (
+            array_key_exists('duet_layout', $data)
+            || array_key_exists('duet_source_audio', $data)
+            || array_key_exists('duet_response_audio', $data)
+        )) {
+            $updates['metadata'] = array_merge(
+                $updates['metadata'] ?? $currentMetadata,
+                array_filter([
+                    'duet_layout' => $data['duet_layout'] ?? data_get($currentMetadata, 'duet_layout', 'side_by_side'),
+                    'duet_source_audio' => array_key_exists('duet_source_audio', $data)
+                        ? (bool) $data['duet_source_audio']
+                        : (bool) data_get($currentMetadata, 'duet_source_audio', true),
+                    'duet_response_audio' => array_key_exists('duet_response_audio', $data)
+                        ? (bool) $data['duet_response_audio']
+                        : (bool) data_get($currentMetadata, 'duet_response_audio', true),
+                ], static fn ($value) => $value !== null),
+            );
+        }
+
         if (array_key_exists('music', $data) || array_key_exists('sound', $data)) {
             $updates['metadata'] = array_merge(
                 $updates['metadata'] ?? $currentMetadata,
@@ -720,13 +738,12 @@ class VideoService
                 'viewed_at' => now(),
             ]);
 
-            $this->fastApiRecommendationService->recordEvent(
+            RecordRecommendationEvent::dispatch(
                 userId: $viewerId,
                 eventType: 'watch',
                 videoId: (int) $video->id,
                 value: 1.0
             );
-            $this->feedService->invalidateFeedCaches();
         }
 
         return $video->refresh();

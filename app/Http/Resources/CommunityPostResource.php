@@ -24,6 +24,18 @@ class CommunityPostResource extends JsonResource
             'content' => $post->content,
             'audience' => $post->audience,
             'status' => $post->status ?? 'published',
+            'location_name' => $post->location_name,
+            'hashtags' => is_array($post->hashtags) ? $post->hashtags : [],
+            'scheduled_at' => optional($post->scheduled_at)?->toIso8601String(),
+            'published_at' => optional($post->published_at)?->toIso8601String(),
+            'tagged_users' => $post->relationLoaded('taggedUsers')
+                ? $post->taggedUsers->map(fn ($user) => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'handle' => ltrim((string) ($user->username ?: $user->name), '@'),
+                    'avatar_url' => $user->avatar,
+                ])->values()->all()
+                : [],
             'author' => [
                 'id' => $post->user_id,
                 'name' => $author?->name,
@@ -96,6 +108,7 @@ class CommunityPostResource extends JsonResource
                     'thumbnail_url' => $media->cloudinary_thumbnail_url,
                     'mime_type' => $media->mime_type,
                     'sort_order' => (int) ($media->sort_order ?? 0),
+                    'metadata' => is_array($media->metadata) ? $media->metadata : [],
                 ];
             })->all();
         }

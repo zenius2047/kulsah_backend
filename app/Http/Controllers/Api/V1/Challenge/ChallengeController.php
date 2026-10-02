@@ -40,11 +40,83 @@ use Illuminate\Validation\Rule;
 
 class ChallengeController extends Controller
 {
+    public function myRewards(Request $request)
+    {
+        $allocations = ChallengeRewardAllocation::query()
+            ->where('recipient_user_id', $request->user()->id)
+            ->with([
+                'prize',
+                'winner.entry.challenge',
+                'winner.entry.creator:id,name,username,avatar',
+                'winner.entry.video',
+            ])
+            ->latest('allocated_at')
+            ->paginate(min(100, max(1, $request->integer('per_page', 50))));
+
+        return response()->json([
+            'data' => collect($allocations->items())->map(function (ChallengeRewardAllocation $allocation) {
+                $entry = $allocation->winner?->entry;
+                $prize = $allocation->prize;
+
+                return [
+                    'id' => $allocation->id,
+                    'status' => $allocation->status,
+                    'amount' => $allocation->amount,
+                    'currency' => $allocation->currency,
+                    'allocated_at' => $allocation->allocated_at?->toISOString(),
+                    'processed_at' => $allocation->processed_at?->toISOString(),
+                    'challenge' => [
+                        'id' => $entry?->challenge?->id,
+                        'title' => $entry?->challenge?->title,
+                    ],
+                    'entry' => [
+                        'id' => $entry?->id,
+                        'score' => $entry?->current_score,
+                        'video_thumbnail' => $entry?->video?->poster_url ?: $entry?->video?->thumbnail_url,
+                    ],
+                    'creator' => [
+                        'id' => $entry?->creator?->id,
+                        'name' => $entry?->creator?->name,
+                        'handle' => $entry?->creator?->username,
+                        'avatar' => $entry?->creator?->avatar,
+                    ],
+                    'prize' => [
+                        'title' => $prize?->title,
+                        'description' => $prize?->description,
+                        'reward_type' => $prize?->reward_type?->value,
+                    ],
+                ];
+            })->values(),
+            'meta' => [
+                'current_page' => $allocations->currentPage(),
+                'last_page' => $allocations->lastPage(),
+                'total' => $allocations->total(),
+            ],
+        ]);
+    }
     public function index(Request $request)
     {
         $validated = $request->validate(['status' => ['nullable', Rule::enum(ChallengeStatus::class)], 'per_page' => ['nullable', 'integer', 'min:1', 'max:100']]);
         $query = Challenge::query()
             ->whereNotIn('status', [ChallengeStatus::Draft, ChallengeStatus::PendingReview, ChallengeStatus::Rejected])
+            ->with(['creator:id,name,username,avatar', 'prizes', 'media.video'])
+            ->withCount('entries')
+            ->latest();
+        if (isset($validated['status'])) {
+            $query->where('status', $validated['status']);
+        }
+
+        return ChallengeListResource::collection($query->paginate($validated['per_page'] ?? 20));
+    }
+
+    public function creatorIndex(Request $request)
+    {
+        $validated = $request->validate([
+            'status' => ['nullable', Rule::enum(ChallengeStatus::class)],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+        $query = Challenge::query()
+            ->where('created_by_user_id', $request->user()->id)
             ->with(['creator:id,name,username,avatar', 'prizes', 'media.video'])
             ->withCount('entries')
             ->latest();
@@ -121,6 +193,15 @@ class ChallengeController extends Controller
         $this->authorize('update', $challenge);
 
         return ChallengeResource::make($action->execute($challenge, $request->user(), $request->validated()));
+    }
+
+    public function destroyDraft(Request $request, Challenge $challenge)
+    {
+        $this->authorize('update', $challenge);
+        abort_unless($challenge->status === ChallengeStatus::Draft, 422, 'Only draft challenges can be deleted.');
+        $challenge->delete();
+
+        return response()->noContent();
     }
 
     public function transition(Request $request, Challenge $challenge, ChallengeLifecycleService $lifecycle)
@@ -224,4 +305,3 @@ class ChallengeController extends Controller
         return response()->json(['data' => $action->execute($challenge, $entry, $request->user(), $data['rank'], $data['reason'])], 201);
     }
 }
-

@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\User;
 use App\Models\Video;
+use App\Models\VideoLike;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -137,7 +138,7 @@ class DuetSeeder extends Seeder
                 ]);
 
                 $viewer = $viewers->get(($number - 1) % $viewers->count());
-                DB::table('video_likes')->updateOrInsert(
+                VideoLike::query()->updateOrCreate(
                     ['video_id' => $video->id, 'user_id' => $viewer->id],
                     ['created_at' => $createdAt->copy()->addHour(), 'updated_at' => $createdAt->copy()->addHour()],
                 );

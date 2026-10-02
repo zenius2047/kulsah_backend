@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Services\FeedService;
 use Illuminate\Database\Eloquent\Model;
 
 class VideoCommentLike extends Model
@@ -11,17 +10,6 @@ class VideoCommentLike extends Model
         'video_comment_id',
         'user_id',
     ];
-
-    protected static function booted(): void
-    {
-        static::saved(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
-        });
-
-        static::deleted(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
-        });
-    }
 
     public function comment()
     {

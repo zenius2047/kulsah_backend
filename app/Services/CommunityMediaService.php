@@ -22,7 +22,7 @@ class CommunityMediaService
     /**
      * @return array<string, mixed>
      */
-    public function storeMediaForPost(UploadedFile $file, User $user, int $sortOrder = 0): array
+    public function storeMediaForPost(UploadedFile $file, User $user, int $sortOrder = 0, array $options = []): array
     {
         $mimeType = (string) $file->getMimeType();
         $isImage = str_starts_with($mimeType, 'image/');
@@ -45,6 +45,10 @@ class CommunityMediaService
             throw new RuntimeException('Unable to upload community media to Cloudinary: '.$throwable->getMessage(), previous: $throwable);
         }
 
+        $publicId = $cloudinary['cloudinary_public_id'] ?? null;
+        $filter = $isImage ? (string) ($options['filter'] ?? 'original') : 'original';
+        $coverFrameMs = $isVideo ? max(0, (int) ($options['cover_frame_ms'] ?? 0)) : 0;
+
         return [
             'media_type' => $isImage ? 'image' : 'video',
             'disk' => $stored['disk'],
@@ -55,10 +59,20 @@ class CommunityMediaService
             'sort_order' => $sortOrder,
             'cloudinary_public_id' => $cloudinary['cloudinary_public_id'] ?? null,
             'cloudinary_asset_id' => $cloudinary['cloudinary_asset_id'] ?? null,
-            'cloudinary_url' => $cloudinary['rendered_url'] ?? $cloudinary['cdn_url'] ?? null,
+            'cloudinary_url' => $isImage && is_string($publicId)
+                ? $this->cloudinaryService->generateFilteredImageUrl($publicId, $filter)
+                : ($cloudinary['rendered_url'] ?? $cloudinary['cdn_url'] ?? null),
             'cloudinary_stream_url' => $cloudinary['streaming_url'] ?? $cloudinary['stream_url'] ?? null,
-            'cloudinary_thumbnail_url' => $cloudinary['thumbnail_url'] ?? $cloudinary['poster_url'] ?? null,
-            'metadata' => $cloudinary['metadata'] ?? [],
+            'cloudinary_thumbnail_url' => $isVideo && is_string($publicId)
+                ? $this->cloudinaryService->generatePosterAtTimeUrl($publicId, $coverFrameMs)
+                : ($cloudinary['thumbnail_url'] ?? $cloudinary['poster_url'] ?? null),
+            'metadata' => array_merge($cloudinary['metadata'] ?? [], [
+                'filter' => $filter,
+                'cover_frame_ms' => $coverFrameMs,
+                'trim_start_ms' => max(0, (int) ($options['trim_start_ms'] ?? 0)),
+                'trim_end_ms' => isset($options['trim_end_ms']) ? max(0, (int) $options['trim_end_ms']) : null,
+                'captions_enabled' => (bool) ($options['captions_enabled'] ?? false),
+            ]),
         ];
     }
 

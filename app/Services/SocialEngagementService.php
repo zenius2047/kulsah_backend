@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Http\Resources\VideoCommentResource;
+use App\Jobs\RecordRecommendationEvent;
 use App\Models\User;
 use App\Models\UserFollow;
 use App\Models\Video;
@@ -9,20 +11,16 @@ use App\Models\VideoBookmark;
 use App\Models\VideoComment;
 use App\Models\VideoCommentLike;
 use App\Models\VideoLike;
-use App\Http\Resources\VideoCommentResource;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class SocialEngagementService
 {
     public function __construct(
-        private readonly FastApiRecommendationService $fastApiRecommendationService,
-        private readonly FeedService $feedService,
         private readonly VideoCacheService $videoCacheService,
-    ) {
-    }
+    ) {}
 
     public function likeVideo(User $user, Video $video): array
     {
@@ -58,7 +56,8 @@ class SocialEngagementService
         VideoLike::query()
             ->where('video_id', $videoId)
             ->where('user_id', $user->id)
-            ->delete();
+            ->first()
+            ?->delete();
 
         $this->invalidateVideoState($user, $video);
 
@@ -103,7 +102,8 @@ class SocialEngagementService
         VideoBookmark::query()
             ->where('video_id', $videoId)
             ->where('user_id', $user->id)
-            ->delete();
+            ->first()
+            ?->delete();
 
         $this->invalidateVideoState($user, $video);
 
@@ -138,9 +138,6 @@ class SocialEngagementService
             $this->recordFollowEvent($user, $creator);
         }
 
-        $this->invalidateViewerState($user);
-        $this->feedService->invalidateFeedCaches();
-
         return [
             'message' => $created ? 'Creator followed successfully.' : 'You were already following this creator.',
             'data' => [
@@ -157,10 +154,8 @@ class SocialEngagementService
         UserFollow::query()
             ->where('follower_id', $user->id)
             ->where('followed_id', $creator->id)
-            ->delete();
-
-        $this->invalidateViewerState($user);
-        $this->feedService->invalidateFeedCaches();
+            ->first()
+            ?->delete();
 
         return [
             'message' => 'Creator unfollowed successfully.',
@@ -179,8 +174,7 @@ class SocialEngagementService
         string $body,
         ?int $parentId = null,
         ?int $stickerId = null,
-    ): array
-    {
+    ): array {
         $videoId = (int) $video->getKey();
 
         if ($parentId !== null) {
@@ -190,7 +184,7 @@ class SocialEngagementService
                 ->first();
 
             if (! $parentComment) {
-                throw (new ModelNotFoundException())->setModel(VideoComment::class, [$parentId]);
+                throw (new ModelNotFoundException)->setModel(VideoComment::class, [$parentId]);
             }
         }
 
@@ -291,9 +285,9 @@ class SocialEngagementService
             'data' => [
                 'video_id' => $video->id,
                 'user_id' => $user->id,
-                'likes_count' => (int) $video->likes()->count(),
-                'comments_count' => (int) $video->comments()->count(),
-                'bookmarks_count' => (int) $video->bookmarks()->count(),
+                'likes_count' => (int) $video->likes_count,
+                'comments_count' => (int) $video->comments_count,
+                'bookmarks_count' => (int) $video->bookmarks_count,
                 'isLiked' => (bool) ($payload['isLiked'] ?? false),
                 'isBookmarked' => (bool) ($payload['isBookmarked'] ?? false),
             ],
@@ -302,7 +296,7 @@ class SocialEngagementService
 
     private function recordVideoEvent(User $user, string $eventType, Video $video, float $value = 1.0): void
     {
-        $this->fastApiRecommendationService->recordEvent(
+        RecordRecommendationEvent::dispatch(
             userId: (int) $user->id,
             eventType: $eventType,
             videoId: (int) $video->id,
@@ -312,7 +306,7 @@ class SocialEngagementService
 
     private function recordFollowEvent(User $user, User $creator): void
     {
-        $this->fastApiRecommendationService->recordEvent(
+        RecordRecommendationEvent::dispatch(
             userId: (int) $user->id,
             eventType: 'follow',
             value: 1.0,
@@ -328,11 +322,5 @@ class SocialEngagementService
         $this->videoCacheService->invalidateViewer((int) $user->id);
         $this->videoCacheService->invalidateCreator((int) $video->user_id);
         $this->videoCacheService->invalidateVideo((int) $video->id);
-        $this->feedService->invalidateFeedCaches();
-    }
-
-    private function invalidateViewerState(User $user): void
-    {
-        $this->videoCacheService->invalidateViewer((int) $user->id);
     }
 }

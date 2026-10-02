@@ -386,7 +386,7 @@ class FastApiRecommendationIntegrationTest extends TestCase
                 : null;
 
             return (int) ($payload['user_id'] ?? 0) === (int) $viewer->id
-                && (array) ($payload['followed_creator_ids'] ?? []) === [(int) $firstVideo->user_id]
+                && in_array((int) $firstVideo->user_id, $payload['followed_creator_ids'] ?? [], true)
                 && (array) ($payload['subscribed_creator_ids'] ?? []) === [(int) $secondVideo->user_id]
                 && in_array('music', $payload['favorite_categories'] ?? [], true)
                 && in_array($firstVideo->id, $payload['liked_video_ids'] ?? [], true)

@@ -44,7 +44,7 @@ class VideoCacheService
     {
         $version = $this->creatorVersion($creatorId) + 1;
 
-        $this->taggedCache($this->creatorTags($creatorId))->forever($this->creatorVersionKey($creatorId), $version);
+        $this->cacheStore()->forever($this->creatorVersionKey($creatorId), $version);
 
         return $version;
     }
@@ -68,7 +68,7 @@ class VideoCacheService
     {
         $version = $this->viewerVersion($viewerId) + 1;
 
-        $this->taggedCache($this->viewerTags($viewerId))->forever($this->viewerVersionKey($viewerId), $version);
+        $this->cacheStore()->forever($this->viewerVersionKey($viewerId), $version);
 
         return $version;
     }
@@ -87,7 +87,7 @@ class VideoCacheService
     {
         $version = $this->videoVersion($videoId) + 1;
 
-        $this->taggedCache($this->videoTags($videoId))->forever($this->videoVersionKey($videoId), $version);
+        $this->cacheStore()->forever($this->videoVersionKey($videoId), $version);
 
         return $version;
     }
@@ -217,4 +217,3 @@ class VideoCacheService
         return self::VIDEO_VERSION_PREFIX.$videoId;
     }
 }
-

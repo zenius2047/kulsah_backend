@@ -100,12 +100,16 @@ class FcmChannel
 
     private function canSendToUser(User $user, array $data, ?int $conversationId): bool
     {
-        if ($conversationId !== null && $this->presenceService->shouldSuppressPush($user, $conversationId)) {
+        $type = (string) ($data['type'] ?? '');
+        if (
+            $conversationId !== null
+            && ! str_starts_with($type, 'voice_call.')
+            && $this->presenceService->shouldSuppressPush($user, $conversationId)
+        ) {
             return false;
         }
 
         $preference = $user->notificationPreference()->first();
-        $type = (string) ($data['type'] ?? '');
 
         if (! $this->preferenceAllowsType($preference, $type)) {
             return false;
@@ -123,6 +127,7 @@ class FcmChannel
         $channel = match (true) {
             str_starts_with($type, 'conversation.message.'),
             str_starts_with($type, 'signal.message_request.'),
+            str_starts_with($type, 'voice_call.'),
             $type === 'video.mentioned' => 'messages',
             str_starts_with($type, 'challenge.') => 'challenge_updates',
             str_starts_with($type, 'live.') => 'live_events',

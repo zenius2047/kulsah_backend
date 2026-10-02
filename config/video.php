@@ -24,6 +24,7 @@ return [
     'cache_ttl_seconds' => (int) env('VIDEO_CACHE_TTL_SECONDS', 300),
     'direct_upload_ttl_minutes' => (int) env('VIDEO_DIRECT_UPLOAD_TTL_MINUTES', 60),
     'feed_cache_ttl_seconds' => (int) env('FEED_CACHE_TTL_SECONDS', 600),
+    'feed_profile_history_limit' => (int) env('FEED_PROFILE_HISTORY_LIMIT', 500),
     'trending_pool_key' => env('FEED_TRENDING_POOL_KEY', 'feed:trending:videos'),
     'trending_pool_size' => (int) env('FEED_TRENDING_POOL_SIZE', 500),
     'trending_pool_ttl_seconds' => (int) env('FEED_TRENDING_POOL_TTL_SECONDS', 900),
@@ -31,6 +32,9 @@ return [
     'edit_renderer' => env('VIDEO_EDIT_RENDERER', 'auto'),
     'cloudinary_upload_timeout_seconds' => (int) env('CLOUDINARY_UPLOAD_TIMEOUT_SECONDS', 120),
     'edit_render_timeout_seconds' => (int) env('VIDEO_EDIT_RENDER_TIMEOUT_SECONDS', 900),
+    'duet_render_timeout_seconds' => (int) env('VIDEO_DUET_RENDER_TIMEOUT_SECONDS', 900),
+    'duet_render_preset' => env('VIDEO_DUET_RENDER_PRESET', 'veryfast'),
+    'duet_render_crf' => (int) env('VIDEO_DUET_RENDER_CRF', 25),
     'edit_overlay_fetch_timeout_seconds' => (int) env('VIDEO_EDIT_OVERLAY_FETCH_TIMEOUT_SECONDS', 45),
     'ffmpeg_font_file' => env('VIDEO_FFMPEG_FONT_FILE'),
 ];

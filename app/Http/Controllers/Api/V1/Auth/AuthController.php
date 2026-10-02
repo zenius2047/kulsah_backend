@@ -28,10 +28,14 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 use Jenssegers\Agent\Agent;
+use Laravel\Sanctum\PersonalAccessToken;
 
 
 class AuthController extends Controller
 {
+
+    private const ACCESS_TOKEN_TTL_MINUTES = 60;
+    private const REFRESH_TOKEN_TTL_DAYS = 30;
 
     protected $firebase;
 
@@ -269,7 +273,7 @@ public function updateVibe(Request $request)
         }
 
         // generate access token
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = $user->createToken('activation_token', ['activate'], now()->addMinutes(15))->plainTextToken;
 
         return response()->json([
             'message' => 'User registered successfully. Please verify your account with the OTP sent to your email or phone number.',
@@ -354,7 +358,7 @@ public function login(Request $request)
         if ($user->phone) {
             $this->sendOtpSms($user->phone, $otp);
         }
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = $user->createToken('activation_token', ['activate'], now()->addMinutes(15))->plainTextToken;
 
         return response()->json([
             'message' => 'Account not activated. OTP has been sent to your email or phone.',
@@ -368,7 +372,7 @@ public function login(Request $request)
     // =====================
     Auth::login($user);
 
-    $token = $user->createToken('auth_token')->plainTextToken;
+    $session = $this->issueSession($user, $request);
 
     // =====================
     // DEVICE INFO
@@ -427,7 +431,7 @@ public function login(Request $request)
     // =====================
     return response()->json([
         'message' => 'User logged in successfully',
-        'access_token' => $token,
+        ...$session,
         'user' => new UserResource($user),
     ]);
 }
@@ -464,9 +468,13 @@ public function login(Request $request)
         DB::table('users')->where('id', $user->id)->update(['activated' => true, 'activated_at' => now()]);
         // delete OTP record
         DB::table('activation_otp')->where('user_id', $user->id)->delete();
+        $request->user()->currentAccessToken()?->delete();
+        $session = $this->issueSession($user, $request);
+
         return response()->json([
             'message' => 'User account activated successfully',
             'user' => new UserResource($user),
+            ...$session,
             ]);
     }
 
@@ -555,11 +563,11 @@ public function login(Request $request)
         }
 
         // 5. Create Laravel token (Sanctum)
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $session = $this->issueSession($user, $request);
 
         return response()->json([
             'message' => 'Social login successful',
-            'access_token' => $token,
+            ...$session,
             'user' => new UserResource($user),
         ]);
     }
@@ -744,11 +752,118 @@ public function login(Request $request)
     // logout user
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
-        // delete otp and otp_activate,activated field for user
-        DB::table('activation_otp')->where('user_id', $request->user()->id)->delete();
-        DB::table('users')->where('id', $request->user()->id)->update(['activated_at' => null, 'activated' => false]);
+        $request->validate(['refresh_token' => ['nullable', 'string']]);
+        $request->user()->currentAccessToken()?->delete();
+
+        if ($request->filled('refresh_token')) {
+            $refreshToken = PersonalAccessToken::findToken($request->string('refresh_token')->toString());
+            if ($refreshToken && (int) $refreshToken->tokenable_id === (int) $request->user()->id) {
+                $refreshToken->delete();
+            }
+        }
+
         return response()->json(['message' => 'Successfully logged out']);
+    }
+
+    public function logoutAll(Request $request)
+    {
+        $request->user()->tokens()->delete();
+
+        return response()->json(['message' => 'Successfully logged out from every device']);
+    }
+
+    public function deleteAccount(Request $request)
+    {
+        $validated = $request->validate([
+            'confirmation' => ['required', 'string', Rule::in(['DELETE'])],
+            'password' => ['nullable', 'string'],
+        ]);
+
+        $user = $request->user();
+        if (! $user->provider_id) {
+            abort_unless(
+                filled($validated['password'] ?? null) && Hash::check($validated['password'], $user->password),
+                422,
+                'Your password is incorrect.'
+            );
+        }
+
+        DB::transaction(function () use ($user) {
+            $anonymousId = $user->id.'-'.Str::lower(Str::random(12));
+            $user->tokens()->delete();
+            $user->roles()->detach();
+            $user->onboarding()->delete();
+            NotificationDevice::query()->where('user_id', $user->id)->delete();
+
+            // Financial and moderation records retain their foreign keys, while
+            // all directly identifying account fields are irreversibly removed.
+            $user->forceFill([
+                'name' => 'Deleted user',
+                'username' => '@deleted_'.$anonymousId,
+                'email' => "deleted-{$anonymousId}@deleted.invalid",
+                'phone' => null,
+                'dob' => null,
+                'gender' => null,
+                'provider' => null,
+                'provider_id' => null,
+                'password' => Hash::make(Str::random(64)),
+                'avatar' => null,
+                'banner' => null,
+                'bio' => null,
+                'location' => null,
+                'country_code' => null,
+                'country' => null,
+                'currency' => null,
+                'activated' => false,
+                'activated_at' => null,
+                'verified' => false,
+                'verified_at' => null,
+                'remember_token' => null,
+            ])->save();
+        });
+
+        return response()->json(['message' => 'Your account has been deleted.']);
+    }
+
+    public function refresh(Request $request)
+    {
+        $currentToken = $request->user()->currentAccessToken();
+        abort_unless(
+            $currentToken && in_array('refresh', $currentToken->abilities ?? [], true),
+            403,
+            'A refresh token is required.'
+        );
+
+        $user = $request->user();
+        $currentToken->delete();
+
+        return response()->json([
+            'message' => 'Session refreshed successfully.',
+            ...$this->issueSession($user, $request),
+        ]);
+    }
+
+    /** @return array{access_token: string, refresh_token: string, token_type: string, expires_in: int} */
+    private function issueSession(User $user, Request $request): array
+    {
+        $deviceName = trim((string) $request->header('X-Device-Name', 'mobile')) ?: 'mobile';
+        $accessToken = $user->createToken(
+            $deviceName.'-access',
+            ['*'],
+            now()->addMinutes(self::ACCESS_TOKEN_TTL_MINUTES)
+        );
+        $refreshToken = $user->createToken(
+            $deviceName.'-refresh',
+            ['refresh'],
+            now()->addDays(self::REFRESH_TOKEN_TTL_DAYS)
+        );
+
+        return [
+            'access_token' => $accessToken->plainTextToken,
+            'refresh_token' => $refreshToken->plainTextToken,
+            'token_type' => 'Bearer',
+            'expires_in' => self::ACCESS_TOKEN_TTL_MINUTES * 60,
+        ];
     }
 
     // private function createNewToken($token)
@@ -901,4 +1016,3 @@ public function login(Request $request)
 
 
 }
-

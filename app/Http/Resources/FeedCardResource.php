@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\VideoPurpose;
 use App\Models\ChallengeEntry;
 use App\Models\User;
 use App\Models\Video;
@@ -24,13 +25,13 @@ class FeedCardResource extends JsonResource
 
         $creatorName = $creator?->name ?: $creator?->username ?: 'Unknown Creator';
         $creatorHandle = $creator?->username ? ltrim((string) $creator->username, '@') : null;
-        $purpose = $video->purpose instanceof \App\Enums\VideoPurpose
+        $purpose = $video->purpose instanceof VideoPurpose
             ? $video->purpose->value
             : (string) $video->purpose;
         $isChallengeVideo = in_array($purpose, [
-            \App\Enums\VideoPurpose::ChallengeVideo->value,
-            \App\Enums\VideoPurpose::ChallengeInstructionVideo->value,
-            \App\Enums\VideoPurpose::ChallengeEntry->value,
+            VideoPurpose::ChallengeVideo->value,
+            VideoPurpose::ChallengeInstructionVideo->value,
+            VideoPurpose::ChallengeEntry->value,
         ], true) || (bool) data_get($video, 'challenge_entries_exists', data_get($video, 'challengeEntries_exists', false)) || $challengeContext !== null;
 
         return [
@@ -47,6 +48,15 @@ class FeedCardResource extends JsonResource
             'mentions' => data_get($metadata, 'caption_mentions', []),
             'background' => $video->thumbnail_url ?: data_get($metadata, 'background'),
             'video' => $video->playback_url,
+            'streaming_url' => $video->playback_url,
+            'cdn_url' => $video->cdn_url,
+            'rendered_url' => $video->rendered_url ?: $video->fallback_mp4_url,
+            'playback' => [
+                'type' => $video->playback_type ?: 'hls',
+                'url' => $video->playback_url,
+                'fallbackUrl' => $video->fallback_mp4_url ?: $video->rendered_url ?: $video->cdn_url,
+                'posterUrl' => $video->poster_url ?: $video->thumbnail_url,
+            ],
             'likes' => $this->formatCount($video->likes_count ?? data_get($metadata, 'likes', data_get($metadata, 'likes_count', 0))),
             'comments' => $this->formatCount($video->comments_count ?? data_get($metadata, 'comments', data_get($metadata, 'comments_count', 0))),
             'shares' => $this->formatCount(data_get($metadata, 'shares', data_get($metadata, 'shares_count', 0))),

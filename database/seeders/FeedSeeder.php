@@ -4,7 +4,9 @@ namespace Database\Seeders;
 
 use App\Models\User;
 use App\Models\Video;
+use App\Models\VideoBookmark;
 use App\Models\VideoComment;
+use App\Models\VideoLike;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -153,14 +155,14 @@ class FeedSeeder extends Seeder
             ['naledi.fit', 'dog-reaction'], ['kwame.frames', 'bathroom-design'], ['amina.designs', 'ship-travel'],
         ];
         foreach ($likes as [$username, $videoKey]) {
-            DB::table('video_likes')->updateOrInsert(
+            VideoLike::query()->updateOrCreate(
                 ['video_id' => $videos->get($videoKey)->id, 'user_id' => $users->get($username)->id],
                 ['created_at' => now()->subHours(2), 'updated_at' => now()->subHours(2)],
             );
         }
 
         foreach ([['fan', 'ship-travel'], ['fan', 'bathroom-design'], ['fans', 'coastal-style'], ['fans', 'ski-freestyle']] as [$username, $videoKey]) {
-            DB::table('video_bookmarks')->updateOrInsert(
+            VideoBookmark::query()->updateOrCreate(
                 ['video_id' => $videos->get($videoKey)->id, 'user_id' => $users->get($username)->id],
                 ['created_at' => now()->subHour(), 'updated_at' => now()->subHour()],
             );

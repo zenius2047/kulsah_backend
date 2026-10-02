@@ -2,7 +2,8 @@
 
 namespace App\Models;
 
-use App\Services\FeedService;
+use App\Services\SignalMessagingService;
+use App\Services\VideoCacheService;
 use Illuminate\Database\Eloquent\Model;
 
 class Subscription extends Model
@@ -28,18 +29,18 @@ class Subscription extends Model
     protected static function booted(): void
     {
         static::saved(static function (self $subscription): void {
-            app(FeedService::class)->invalidateFeedCaches();
+            app(VideoCacheService::class)->invalidateViewer((int) $subscription->subscriber_id);
 
             if ($subscription->isActiveSubscription()) {
-                app(\App\Services\SignalMessagingService::class)->ensureSubscriptionPromotesFan(
+                app(SignalMessagingService::class)->ensureSubscriptionPromotesFan(
                     User::find($subscription->subscriber_id),
                     User::find($subscription->creator_id)
                 );
             }
         });
 
-        static::deleted(static function (): void {
-            app(FeedService::class)->invalidateFeedCaches();
+        static::deleted(static function (self $subscription): void {
+            app(VideoCacheService::class)->invalidateViewer((int) $subscription->subscriber_id);
         });
     }
 
@@ -68,4 +69,3 @@ class Subscription extends Model
         return $this->status === 'active' && (! $this->expires_at || $this->expires_at->isFuture());
     }
 }
-

@@ -338,6 +338,20 @@ class CloudinaryService
         return "https://res.cloudinary.com/{$this->getCloudName()}/image/upload/{$publicId}";
     }
 
+    public function generateFilteredImageUrl(string $publicId, string $filter): string
+    {
+        $transformation = match ($filter) {
+            'warm' => 'e_vibrance:22,e_red:8,e_blue:-6,q_auto,f_auto',
+            'cool' => 'e_blue:10,e_red:-5,e_contrast:6,q_auto,f_auto',
+            'vivid' => 'e_saturation:32,e_contrast:12,q_auto,f_auto',
+            'mono' => 'e_grayscale,e_contrast:10,q_auto,f_auto',
+            'fade' => 'e_saturation:-28,e_brightness:8,e_contrast:-8,q_auto,f_auto',
+            default => 'q_auto,f_auto',
+        };
+
+        return 'https://res.cloudinary.com/'.$this->getCloudName().'/image/upload/'.$transformation.'/'.$publicId;
+    }
+
     public function generatePosterUrlFromPublicId(string $publicId): string
     {
         $cloudName = $this->getCloudName();

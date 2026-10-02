@@ -54,6 +54,37 @@ class AgoraLiveStreamingProvider implements LiveStreamingProviderInterface
         ];
     }
 
+    public function voiceCredentials(string $channel, User $user): array
+    {
+        $identity = LiveProviderIdentity::query()->firstOrCreate(
+            ['provider' => 'agora', 'user_id' => $user->id],
+            ['provider_uid' => $this->uid($user)]
+        );
+        $ttl = (int) config('agora.token_ttl', 3600);
+        $this->assertConfigured();
+        $this->loadOfficialTokenBuilder();
+
+        $token = \RtcTokenBuilder2::buildTokenWithUid(
+            (string) config('agora.app_id'),
+            (string) config('agora.app_certificate'),
+            $channel,
+            (int) $identity->provider_uid,
+            \RtcTokenBuilder2::ROLE_PUBLISHER,
+            $ttl,
+            $ttl,
+        );
+
+        return [
+            'provider' => 'agora',
+            'app_id' => config('agora.app_id'),
+            'channel' => $channel,
+            'uid' => (int) $identity->provider_uid,
+            'token' => $token,
+            'expires_at' => now()->addSeconds($ttl)->toIso8601String(),
+            'role' => 'broadcaster',
+        ];
+    }
+
     public function renewCredentials(LiveSession $live, User $user, string $role): array
     {
         return $this->credentials($live, $user, $role);
