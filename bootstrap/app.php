@@ -26,6 +26,11 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->group(base_path('routes/kulsah-api.php'));
 
             Route::middleware('api')
+                ->prefix('api/v1/admin')
+                ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+                ->group(base_path('routes/admin-console.php'));
+
+            Route::middleware('api')
                 ->prefix('api/v1/developer')
                 ->group(base_path('routes/developer-api.php'));
         }
@@ -35,6 +40,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ])
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->statefulApi();
+        $middleware->appendToGroup('api', \App\Http\Middleware\ConsolePlatformPolicy::class);
 
         $middleware->alias([
             'role' => RoleMiddleware::class,

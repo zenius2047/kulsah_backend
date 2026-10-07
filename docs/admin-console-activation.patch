@@ -1,0 +1,33 @@
+diff --git a/bootstrap/app.php b/bootstrap/app.php
+--- a/bootstrap/app.php
++++ b/bootstrap/app.php
+@@ -28,2 +28,7 @@
+-            Route::middleware('api')
+-                ->prefix('api/v1/developer')
++            Route::middleware('api')
++                ->prefix('api/v1/admin')
++                ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
++                ->group(base_path('routes/admin-console.php'));
++
++            Route::middleware('api')
++                ->prefix('api/v1/developer')
+diff --git a/bootstrap/app.php b/bootstrap/app.php
+--- a/bootstrap/app.php
++++ b/bootstrap/app.php
+@@ -37,1 +37,2 @@
+-        $middleware->statefulApi();
++        $middleware->statefulApi();
++        $middleware->appendToGroup('api', \App\Http\Middleware\ConsolePlatformPolicy::class);
+diff --git a/app/Http/Controllers/Api/V1/Auth/AuthController.php b/app/Http/Controllers/Api/V1/Auth/AuthController.php
+--- a/app/Http/Controllers/Api/V1/Auth/AuthController.php
++++ b/app/Http/Controllers/Api/V1/Auth/AuthController.php
+@@ -335,1 +335,2 @@
+-    $user =User::find($user->id);
++    $user =User::find($user->id);
++    abort_unless(($user->console_status ?? 'Active') === 'Active', 403, 'This account is suspended.');
+diff --git a/app/Services/KulCoinService.php b/app/Services/KulCoinService.php
+--- a/app/Services/KulCoinService.php
++++ b/app/Services/KulCoinService.php
+@@ -218,1 +218,1 @@
+-        $creatorEarningsUsd = $this->calculateCreatorEarningsUsd($coinAmount);
++        $creatorEarningsUsd = round($coinAmount * (float) config('kulcoin.coin_to_usd_rate') * ((int) ($gift->metadata['creatorShare'] ?? config('kulcoin.creator_share_percent')) / 100), 4);

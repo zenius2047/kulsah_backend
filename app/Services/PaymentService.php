@@ -17,6 +17,7 @@ class PaymentService
         private readonly PaystackService $paystack,
         private readonly MoneyService $money,
         private readonly PaymentFulfillmentService $fulfillment,
+        private readonly RevenueRuleCalculator $revenueRules,
     ) {
     }
 
@@ -24,6 +25,26 @@ class PaymentService
     {
         $purpose = $input['purpose'];
         [$payable, $amount, $currency, $metadata] = $this->resolvePurchase($user, $purpose, $input);
+        $source = match ($purpose) {
+            'subscription' => 'creator_subscription',
+            'event_ticket' => 'event_ticket',
+            'kulcoin' => 'kulcoin_transaction',
+        };
+        $context = ['country' => $user->country];
+        if ($purpose === 'subscription') $context['creator_id'] = $payable->creator_id;
+        if ($purpose === 'event_ticket') $context['organizer_id'] = $payable->user_id;
+        $ruleCalculation = $this->revenueRules->calculate($source, (float) $amount, strtoupper($currency), $context);
+        if ($ruleCalculation['deductions'] !== []) {
+            if (count($ruleCalculation['remainingRecipients']) > 1) {
+                throw ValidationException::withMessages(['revenue_rules' => 'Matching revenue rules disagree about who receives the remaining amount.']);
+            }
+            $metadata = array_merge($metadata, [
+                'base_amount' => $amount,
+                'base_currency' => strtoupper($currency),
+                'revenue_rule_calculation' => $ruleCalculation,
+            ]);
+            $amount = $ruleCalculation['totalCharged'];
+        }
 
         $existing = Payment::query()
             ->where('user_id', $user->id)

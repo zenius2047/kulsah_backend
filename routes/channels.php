@@ -4,6 +4,7 @@ use App\Models\Challenge;
 use App\Models\Conversation;
 use App\Models\LiveSession;
 use App\Models\User;
+use App\Services\AdminConsoleAccess;
 use Illuminate\Support\Facades\Broadcast;
 
 $canAccessChallenge = function (User $user, Challenge $challenge): bool {
@@ -13,6 +14,15 @@ $canAccessChallenge = function (User $user, Challenge $challenge): bool {
 
 Broadcast::channel('users.{userId}', function (User $user, int $userId): bool {
     return (int) $user->id === (int) $userId;
+});
+
+Broadcast::channel('admin-console', function (User $user): bool {
+    try {
+        app(AdminConsoleAccess::class)->role($user);
+        return true;
+    } catch (\Symfony\Component\HttpKernel\Exception\HttpException) {
+        return false;
+    }
 });
 
 Broadcast::channel('lives.{livePublicId}', function (User $user, string $livePublicId): bool {

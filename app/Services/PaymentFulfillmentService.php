@@ -48,9 +48,9 @@ class PaymentFulfillmentService
             'idempotency_key' => 'payment:'.$payment->reference,
             'payment_reference' => $payment->reference,
             'local_currency' => $payment->currency,
-            'local_amount' => $payment->amount_minor / 100,
-            'usd_amount' => $payment->amount_minor / 100,
-            'metadata' => ['payment_id' => $payment->id],
+            'local_amount' => (float) ($payment->metadata['base_amount'] ?? ($payment->amount_minor / 100)),
+            'usd_amount' => (float) ($payment->metadata['base_amount'] ?? ($payment->amount_minor / 100)),
+            'metadata' => ['payment_id' => $payment->id, 'revenue_rule_calculation' => $payment->metadata['revenue_rule_calculation'] ?? null],
         ], $payment->user);
     }
 
@@ -84,9 +84,13 @@ class PaymentFulfillmentService
             throw ValidationException::withMessages(['ticket' => 'The selected ticket is no longer available.']);
         }
 
+        $ruleCalculation = $payment->metadata['revenue_rule_calculation'] ?? null;
+        $organizerNet = $ruleCalculation
+            ? (in_array($ruleCalculation['remainingRecipient'] ?? null, ['organizer', 'creator'], true) ? (float) $ruleCalculation['recipientNet'] : 0)
+            : null;
         $purchase = EventTicketPurchase::query()->firstOrCreate(
             ['reference' => 'pay:'.$payment->reference],
-            ['event_id' => $event->id, 'buyer_id' => $payment->user_id, 'ticket_type_code' => $type['code'], 'ticket_type_name' => $type['name'], 'ticket_type_snapshot' => $type, 'quantity' => $quantity, 'unit_price' => $type['price'], 'total_amount' => $type['price'] * $quantity, 'currency' => $event->currency, 'status' => 'completed', 'metadata' => ['payment_id' => $payment->id], 'purchased_at' => now()]
+            ['event_id' => $event->id, 'buyer_id' => $payment->user_id, 'ticket_type_code' => $type['code'], 'ticket_type_name' => $type['name'], 'ticket_type_snapshot' => $type, 'quantity' => $quantity, 'unit_price' => $type['price'], 'total_amount' => $type['price'] * $quantity, 'currency' => $event->currency, 'status' => 'completed', 'metadata' => ['payment_id' => $payment->id, 'revenue_rule_calculation' => $ruleCalculation, 'organizer_net_amount' => $organizerNet], 'purchased_at' => now()]
         );
         if ($purchase->wasRecentlyCreated) {
             $this->eventTicketService->issueTickets($purchase, $event, $quantity);

@@ -49,7 +49,7 @@ class CreatorDashboardController extends Controller
             $monthlyEarnings = array_fill(0, count($months), 0.0);
             $monthlyOrders = array_fill(0, count($months), 0);
 
-            $purchaseQuery->get(['id', 'total_amount', 'quantity', 'purchased_at', 'created_at'])
+            $purchaseQuery->get(['id', 'total_amount', 'quantity', 'metadata', 'purchased_at', 'created_at'])
                 ->each(function (EventTicketPurchase $purchase) use (&$monthlyEarnings, &$monthlyOrders, $months): void {
                     $date = $purchase->purchased_at ?? $purchase->created_at;
 
@@ -64,7 +64,7 @@ class CreatorDashboardController extends Controller
                         return;
                     }
 
-                    $monthlyEarnings[$index] += (float) $purchase->total_amount;
+                    $monthlyEarnings[$index] += (float) ($purchase->metadata['organizer_net_amount'] ?? $purchase->total_amount);
                     $monthlyOrders[$index] += (int) $purchase->quantity;
                 });
 

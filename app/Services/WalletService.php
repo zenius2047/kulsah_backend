@@ -163,6 +163,52 @@ class WalletService
 
             $usdAmount = $this->toDecimal($localAmount / $fxRateUsed);
             $netUsd = $this->toDecimal($usdAmount - $platformFeeUsd - $processorFeeUsd);
+            $ruleCalculation = null;
+            $chargedUsd = $usdAmount;
+            $chargedLocal = $localAmount;
+            $platformDebitUsd = 0.0;
+            $taxFeeUsd = 0.0;
+            $platformCreditUsd = $platformFeeUsd;
+            $gatewayCreditUsd = $processorFeeUsd;
+            $remainingRecipient = 'creator';
+
+            if (($metadata['revenue_source'] ?? null) && strtoupper($localCurrency) === 'GHS') {
+                $ruleCalculation = app(RevenueRuleCalculator::class)->calculate(
+                    (string) $metadata['revenue_source'], $localAmount, 'GHS',
+                    ['creator_id' => $creator->id, 'country' => $creator->country]
+                );
+
+                if ($ruleCalculation['deductions'] !== []) {
+                    $sumDeductions = fn (callable $filter): float => array_sum(array_map(
+                        fn (array $deduction) => $filter($deduction) ? (float) $deduction['amount'] : 0,
+                        $ruleCalculation['deductions']
+                    ));
+                    $creatorPaid = $sumDeductions(fn ($d) => in_array($d['payer'], ['creator', 'organizer'], true));
+                    $creatorReceived = $sumDeductions(fn ($d) => in_array($d['recipient'], ['creator', 'organizer'], true));
+                    if (count($ruleCalculation['remainingRecipients']) > 1) {
+                        throw ValidationException::withMessages(['revenue_rules' => 'Matching revenue rules disagree about who receives the remaining amount.']);
+                    }
+                    $remainingRecipient = $ruleCalculation['remainingRecipient'] ?? 'creator';
+                    $customerPaid = $sumDeductions(fn ($d) => $d['payer'] === 'customer');
+                    $platformDebitUsd = $sumDeductions(fn ($d) => $d['payer'] === 'platform' && $d['recipient'] !== 'platform') / $fxRateUsed;
+                    $platformCreditUsd = $sumDeductions(fn ($d) => $d['recipient'] === 'platform' && $d['payer'] !== 'platform') / $fxRateUsed;
+                    $gatewayCreditUsd = $sumDeductions(fn ($d) => $d['recipient'] === 'gateway') / $fxRateUsed;
+                    $taxFeeUsd = $sumDeductions(fn ($d) => $d['recipient'] === 'tax_authority') / $fxRateUsed;
+                    $chargedLocal = $this->normalizeAmount($localAmount + $customerPaid);
+                    $chargedUsd = $this->toDecimal($usdAmount + ($customerPaid / $fxRateUsed));
+                    $netUsd = $this->toDecimal($usdAmount - ($creatorPaid / $fxRateUsed) + ($creatorReceived / $fxRateUsed));
+                    $platformFeeUsd = $this->toDecimal($platformCreditUsd);
+                    $processorFeeUsd = $this->toDecimal($gatewayCreditUsd + $taxFeeUsd);
+                    if ($netUsd < 0) {
+                        throw ValidationException::withMessages(['fees' => 'Creator-paid revenue deductions cannot exceed the transaction amount.']);
+                    }
+                    $metadata = array_merge($metadata, [
+                        'gross_amount' => $localAmount,
+                        'total_charged' => $chargedLocal,
+                        'revenue_rule_calculation' => $ruleCalculation,
+                    ]);
+                }
+            }
 
             if ($netUsd < 0) {
                 throw ValidationException::withMessages([
@@ -175,17 +221,23 @@ class WalletService
             $platformWallet = $this->getOrCreateSystemWallet('platform', 'Kulsah Platform Wallet');
             $processorWallet = $this->getOrCreateSystemWallet('processor', 'Kulsah Processor Wallet');
 
-            $this->assertWalletCanDebit($payerWallet, 'available', $usdAmount);
+            $this->assertWalletCanDebit($payerWallet, 'available', $chargedUsd);
+            if ($platformDebitUsd > 0) $this->assertWalletCanDebit($platformWallet, 'available', $platformDebitUsd);
 
+            $remainingWallet = match ($remainingRecipient) {
+                'platform' => $platformWallet,
+                'customer' => $payerWallet,
+                default => $creatorWallet,
+            };
             $transaction = WalletTransaction::create([
                 'reference' => (string) Str::uuid(),
                 'type' => 'payment',
                 'status' => 'completed',
                 'user_id' => $payer->id,
-                'counterparty_wallet_id' => $creatorWallet->id,
+                'counterparty_wallet_id' => $remainingWallet->id,
                 'local_currency' => strtoupper($localCurrency),
-                'local_amount' => $localAmount,
-                'usd_amount' => $usdAmount,
+                'local_amount' => $chargedLocal,
+                'usd_amount' => $chargedUsd,
                 'fx_rate_used' => $fxRateUsed,
                 'platform_fee_usd' => $platformFeeUsd,
                 'processor_fee_usd' => $processorFeeUsd,
@@ -196,24 +248,25 @@ class WalletService
                 'processed_at' => now(),
             ]);
 
-            $this->recordEntry($transaction, $payerWallet, 'debit', 'available', $usdAmount, $description, $metadata);
-            $this->recordEntry(
-                $transaction,
-                $creatorWallet,
-                'credit',
-                'pending',
-                $netUsd,
-                $description,
-                $metadata,
-                now()->addDays($this->holdingPeriodDays())
-            );
+            $this->recordEntry($transaction, $payerWallet, 'debit', 'available', $chargedUsd, $description, $metadata);
+            $payoutBucket = in_array($remainingRecipient, ['creator', 'organizer'], true) ? 'pending' : 'available';
+            $this->recordEntry($transaction, $remainingWallet, 'credit', $payoutBucket, $netUsd, $description, $metadata,
+                $payoutBucket === 'pending' ? now()->addDays($this->holdingPeriodDays()) : null);
 
             if ($platformFeeUsd > 0) {
                 $this->recordEntry($transaction, $platformWallet, 'credit', 'available', $platformFeeUsd, 'Platform fee', $metadata);
             }
 
+            if ($platformDebitUsd > 0) {
+                $this->recordEntry($transaction, $platformWallet, 'debit', 'available', $platformDebitUsd, 'Platform-paid deduction', $metadata);
+            }
+
             if ($processorFeeUsd > 0) {
-                $this->recordEntry($transaction, $processorWallet, 'credit', 'available', $processorFeeUsd, 'Processor fee', $metadata);
+                if ($gatewayCreditUsd > 0) $this->recordEntry($transaction, $processorWallet, 'credit', 'available', $gatewayCreditUsd, 'Payment gateway fee', $metadata);
+                if ($taxFeeUsd > 0) {
+                    $taxWallet = $this->getOrCreateSystemWallet('tax_authority', 'Tax Authority Payable');
+                    $this->recordEntry($transaction, $taxWallet, 'credit', 'available', $taxFeeUsd, 'Tax deduction', $metadata);
+                }
             }
 
             $this->assertTransactionBalanced($transaction);

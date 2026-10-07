@@ -19,8 +19,8 @@ class KulCoinService
 {
     public function __construct(
         private readonly WalletService $walletService,
-    ) {
-    }
+        private readonly RevenueRuleCalculator $revenueRules,
+    ) {}
 
     public function getOrCreateUserWallet(User $user): KulCoinWallet
     {
@@ -128,6 +128,7 @@ class KulCoinService
                 'package_code' => $package->code,
                 'package_name' => $package->name,
                 'payment_reference' => $data['payment_reference'] ?? null,
+                'revenue_rule_calculation' => $data['metadata']['revenue_rule_calculation'] ?? null,
                 'ip_address' => $data['ip_address'] ?? null,
                 'device_info' => $data['device_info'] ?? null,
             ], static fn ($value) => $value !== null && $value !== '');
@@ -215,12 +216,19 @@ class KulCoinService
         );
 
         $coinAmount = (int) $gift->coin_cost * $quantity;
-        $creatorEarningsUsd = $this->calculateCreatorEarningsUsd($coinAmount);
+        $ruleCalculation = app(RevenueRuleCalculator::class)->calculate('virtual_gift', (float) $coinAmount, 'Kulcoin', ['creator_id' => $creator->id]);
+        if (count($ruleCalculation['remainingRecipients']) > 1) {
+            throw ValidationException::withMessages(['revenue_rules' => 'Matching gift rules disagree about who receives the remaining amount.']);
+        }
+        $creatorShare = $ruleCalculation['deductions'] !== []
+            ? (in_array($ruleCalculation['remainingRecipient'], ['creator', 'organizer'], true) && $coinAmount > 0 ? $ruleCalculation['recipientNet'] / $coinAmount : 0)
+            : (int) ($gift->metadata['creatorShare'] ?? config('kulcoin.creator_share_percent')) / 100;
+        $creatorEarningsUsd = round($coinAmount * (float) config('kulcoin.coin_to_usd_rate') * $creatorShare, 4);
         $description = $quantity > 1
             ? "{$quantity} x {$gift->name} gift"
             : "{$gift->name} gift";
 
-        return DB::transaction(function () use ($sender, $creator, $gift, $quantity, $data, $actor, $idempotencyKey, $senderWallet, $treasuryWallet, $coinAmount, $creatorEarningsUsd, $description) {
+        return DB::transaction(function () use ($sender, $creator, $gift, $quantity, $data, $actor, $idempotencyKey, $senderWallet, $treasuryWallet, $coinAmount, $creatorEarningsUsd, $description, $ruleCalculation) {
             $senderWallet = $this->lockWallet($senderWallet);
             $treasuryWallet = $this->lockWallet($treasuryWallet);
 
@@ -243,6 +251,7 @@ class KulCoinService
                     'quantity' => $quantity,
                     'creator_id' => $creator->id,
                     'creator_earnings_usd' => $creatorEarningsUsd,
+                    'revenue_rule_calculation' => $ruleCalculation['deductions'] !== [] ? $ruleCalculation : null,
                     'message' => $data['message'] ?? null,
                     'ip_address' => $data['ip_address'] ?? null,
                     'device_info' => $data['device_info'] ?? null,
@@ -299,6 +308,19 @@ class KulCoinService
         $votePrice = max(1, (int) config('kulcoin.vote_coin_price', 10));
         $voteCount = max(1, (int) ($data['vote_count'] ?? 1));
         $coinAmount = $votePrice * $voteCount;
+        $revenueCalculation = null;
+        $chargeAmount = $coinAmount;
+        if (($data['contest_type'] ?? null) === 'live_battle') {
+            $revenueCalculation = $this->revenueRules->calculate(
+                'live_battle',
+                (float) $coinAmount,
+                'Kulcoin',
+                ['creator_id' => $data['target_id'] ?? null]
+            );
+            // Kulcoin is an integer unit; round customer-paid fractional deductions up so
+            // the actual charge never falls below the approved rule calculation.
+            $chargeAmount += (int) ceil((float) $revenueCalculation['customerSurcharge']);
+        }
 
         $idempotencyKey = $data['idempotency_key'] ?? null;
         if (is_string($idempotencyKey) && $idempotencyKey !== '') {
@@ -317,7 +339,7 @@ class KulCoinService
             'KulCoin Treasury Wallet'
         );
 
-        return DB::transaction(function () use ($user, $wallet, $treasuryWallet, $data, $actor, $idempotencyKey, $votePrice, $voteCount, $coinAmount) {
+        return DB::transaction(function () use ($user, $wallet, $treasuryWallet, $data, $actor, $idempotencyKey, $votePrice, $voteCount, $coinAmount, $chargeAmount, $revenueCalculation) {
             $wallet = $this->lockWallet($wallet);
             $treasuryWallet = $this->lockWallet($treasuryWallet);
 
@@ -330,8 +352,8 @@ class KulCoinService
                 'counterparty_wallet_id' => $treasuryWallet->id,
                 'local_currency' => null,
                 'local_amount' => null,
-                'usd_amount' => round($coinAmount * (float) config('kulcoin.coin_to_usd_rate', 0.01), 4),
-                'coin_amount' => $coinAmount,
+                'usd_amount' => round($chargeAmount * (float) config('kulcoin.coin_to_usd_rate', 0.01), 4),
+                'coin_amount' => $chargeAmount,
                 'bonus_coin_amount' => 0,
                 'net_coin_amount' => $coinAmount,
                 'description' => 'Challenge vote purchase',
@@ -341,6 +363,8 @@ class KulCoinService
                     'target_id' => $data['target_id'] ?? null,
                     'vote_price_kc' => $votePrice,
                     'vote_count' => $voteCount,
+                    'base_vote_amount_kc' => $coinAmount,
+                    'revenue_rule_calculation' => $revenueCalculation,
                     'ip_address' => $data['ip_address'] ?? null,
                     'device_info' => $data['device_info'] ?? null,
                 ], static fn ($value) => $value !== null && $value !== ''),
@@ -348,14 +372,14 @@ class KulCoinService
                 'processed_at' => now(),
             ]);
 
-            $allocation = $this->allocateDebitBuckets($wallet, $coinAmount);
+            $allocation = $this->allocateDebitBuckets($wallet, $chargeAmount);
             foreach ($allocation as $bucket => $amount) {
                 if ($amount > 0) {
                     $this->recordEntry($transaction, $wallet, 'debit', $bucket, $amount, 'Vote purchase', $transaction->metadata ?? []);
                 }
             }
 
-            $this->recordEntry($transaction, $treasuryWallet, 'credit', 'available', $coinAmount, 'Vote received by treasury', $transaction->metadata ?? []);
+            $this->recordEntry($transaction, $treasuryWallet, 'credit', 'available', $chargeAmount, 'Vote received by treasury', $transaction->metadata ?? []);
             $this->assertTransactionBalanced($transaction);
 
             return $transaction->load(['entries.wallet', 'entries.kulCoinTransaction', 'wallet', 'counterpartyWallet', 'package', 'gift']);

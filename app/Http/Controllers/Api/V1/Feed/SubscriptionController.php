@@ -182,8 +182,6 @@ class SubscriptionController extends Controller
 
         $validated = $request->validate([
             'fx_rate_used' => ['nullable', 'numeric', 'gt:0'],
-            'platform_fee_usd' => ['nullable', 'numeric', 'min:0'],
-            'processor_fee_usd' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $existingSubscription = Subscription::query()
@@ -219,14 +217,15 @@ class SubscriptionController extends Controller
                     localAmount: $subscriptionPlan->price,
                     localCurrency: $subscriptionPlan->currency,
                     fxRateUsed: $fxRateUsed,
-                    platformFeeUsd: $validated['platform_fee_usd'] ?? 0,
-                    processorFeeUsd: $validated['processor_fee_usd'] ?? 0,
+                    platformFeeUsd: 0,
+                    processorFeeUsd: 0,
                     description: "Subscription payment for {$subscriptionPlan->name}",
                     metadata: [
                         'subscription_plan_id' => $subscriptionPlan->id,
                         'creator_id' => $subscriptionPlan->creator_id,
                         'subscriber_id' => $request->user()->id,
                         'subscription_action' => 'subscribe',
+                        'revenue_source' => 'creator_subscription',
                     ],
                     actor: $request->user(),
                     useTransaction: false

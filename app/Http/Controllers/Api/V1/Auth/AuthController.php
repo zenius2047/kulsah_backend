@@ -333,6 +333,7 @@ public function login(Request $request)
 
     // Convert stdClass to model (needed for Sanctum)
     $user =User::find($user->id);
+    abort_unless(($user->console_status ?? 'Active') === 'Active', 403, 'This account is suspended.');
 
     // =====================
     // OTP ACTIVATION CHECK

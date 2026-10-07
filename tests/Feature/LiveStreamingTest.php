@@ -12,6 +12,7 @@ use App\Models\Role;
 use App\Models\Subscription;
 use App\Models\User;
 use App\Notifications\CreatorLiveStartedNotification;
+use App\Services\KulCoinService;
 use App\Services\LiveAuthorizationService;
 use App\Services\LiveBattleService;
 use App\Services\LiveCohostService;
@@ -19,10 +20,14 @@ use App\Services\LiveGiftService;
 use App\Services\LiveLikeService;
 use App\Services\LivePresenceService;
 use App\Services\LiveSessionService;
+use App\Services\RealtimePresenceService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Redis;
-use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Tests\Fakes\FakeLiveStreamingProvider;
 use Tests\TestCase;
 
@@ -30,11 +35,22 @@ class LiveStreamingTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function createApplication()
+    {
+        $app = parent::createApplication();
+        $app['config']->set('database.default', 'testing');
+        if (PHP_OS_FAMILY === 'Windows') {
+            $app['config']->set('database.connections.testing.host', '127.0.0.1');
+        }
+
+        return $app;
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
 
-        app()->instance(LiveStreamingProviderInterface::class, new FakeLiveStreamingProvider());
+        app()->instance(LiveStreamingProviderInterface::class, new FakeLiveStreamingProvider);
         config()->set('agora.enabled', false);
     }
 
@@ -228,6 +244,7 @@ class LiveStreamingTest extends TestCase
             'watch_seconds' => 253,
         ]);
     }
+
     public function test_stale_live_enters_reconnecting_before_it_is_ended(): void
     {
         $creator = $this->creatorUser('live_creator_timeout');
@@ -266,6 +283,7 @@ class LiveStreamingTest extends TestCase
             'termination_reason' => 'system_timeout',
         ]);
     }
+
     public function test_viewer_cannot_join_subscriber_only_live_without_active_subscription(): void
     {
         $creator = $this->creatorUser('live_creator_two');
@@ -279,7 +297,7 @@ class LiveStreamingTest extends TestCase
             'provider_channel' => 'live-'.$creator->id,
         ]);
 
-        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $this->expectException(ValidationException::class);
         app(LiveAuthorizationService::class)->assertViewerCanJoin($viewer, $live);
     }
 
@@ -374,7 +392,7 @@ class LiveStreamingTest extends TestCase
         $creator = $this->creatorUser('battle_vote_creator');
         $opponent = $this->creatorUser('battle_vote_opponent');
         $viewer = User::factory()->create(['activated' => true]);
-        $wallet = app(\App\Services\KulCoinService::class)->getOrCreateUserWallet($viewer);
+        $wallet = app(KulCoinService::class)->getOrCreateUserWallet($viewer);
         $wallet->forceFill(['available_balance_kc' => 100, 'bonus_balance_kc' => 0])->save();
         $live = LiveSession::factory()->create([
             'creator_id' => $creator->id,
@@ -383,7 +401,7 @@ class LiveStreamingTest extends TestCase
             'live_type' => 'battle',
         ]);
         $battle = LiveBattle::create([
-            'public_id' => (string) \Illuminate\Support\Str::uuid(),
+            'public_id' => (string) Str::uuid(),
             'creator_live_session_id' => $live->id,
             'opponent_live_session_id' => $live->id,
             'creator_id' => $creator->id,
@@ -394,6 +412,22 @@ class LiveStreamingTest extends TestCase
             'invited_by_id' => $creator->id,
             'metadata' => ['shared_stage' => true],
         ]);
+        $ruleId = (string) Str::uuid();
+        $versionId = (string) Str::uuid();
+        DB::table('revenue_rules')->insert([
+            'id' => $ruleId, 'source_key' => 'live_battle', 'scope' => json_encode(['creatorId' => $opponent->id]),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('revenue_rule_versions')->insert([
+            'id' => $versionId, 'revenue_rule_id' => $ruleId, 'version' => 1, 'deduction_type' => 'percentage',
+            'value' => 10, 'currency' => 'Kulcoin', 'payer' => 'customer', 'recipient' => 'platform',
+            'remaining_recipient' => 'platform', 'minimum' => null, 'maximum' => null, 'effective_at' => now()->subMinute(),
+            'status' => 'active', 'description' => 'Live battle vote surcharge.', 'created_by' => null, 'last_modified_by' => null,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('revenue_rule_reviews')->insert([
+            'revenue_rule_version_id' => $versionId, 'reviewed_by' => $creator->id, 'decision' => 'approved', 'created_at' => now(),
+        ]);
         $payload = ['target_user_id' => $opponent->id, 'vote_count' => 3, 'idempotency_key' => 'battle-vote-test'];
         $url = "/api/v1/general/live/battles/{$battle->id}/votes";
 
@@ -402,7 +436,10 @@ class LiveStreamingTest extends TestCase
         $this->postJson($url, $payload)->assertOk();
 
         $this->assertSame(3, (int) $battle->refresh()->opponent_score);
-        $this->assertSame(70, (int) $wallet->refresh()->available_balance_kc);
+        $this->assertSame(67, (int) $wallet->refresh()->available_balance_kc);
+        $vote = DB::table('kul_coin_transactions')->where('idempotency_key', 'battle-vote-test')->first();
+        $this->assertSame(33, (int) $vote->coin_amount);
+        $this->assertSame(3, (int) data_get(json_decode($vote->metadata, true), 'revenue_rule_calculation.customerSurcharge'));
         $this->assertDatabaseHas('live_battle_participants', ['live_battle_id' => $battle->id, 'user_id' => $opponent->id, 'score' => 3]);
         Event::assertDispatched(LiveUpdated::class, fn (LiveUpdated $event) => $event->type === 'battle_vote'
             && data_get($event->data, 'vote.target_user_id') === $opponent->id);
@@ -421,7 +458,7 @@ class LiveStreamingTest extends TestCase
             'is_active' => true,
             'metadata' => [],
         ]);
-        $wallet = app(\App\Services\KulCoinService::class)->getOrCreateUserWallet($viewer);
+        $wallet = app(KulCoinService::class)->getOrCreateUserWallet($viewer);
         $wallet->forceFill(['available_balance_kc' => 100, 'bonus_balance_kc' => 0])->save();
 
         $live = LiveSession::factory()->create([
@@ -467,7 +504,7 @@ class LiveStreamingTest extends TestCase
     public function test_battle_invite_accept_score_and_end_flow_persists_winner(): void
     {
         Notification::fake();
-        $this->mock(\App\Services\RealtimePresenceService::class)->shouldReceive('isOnline')->andReturn(true);
+        $this->mock(RealtimePresenceService::class)->shouldReceive('isOnline')->andReturn(true);
         $creatorA = $this->creatorUser('battle_creator_a');
         $creatorB = $this->creatorUser('battle_creator_b');
 
