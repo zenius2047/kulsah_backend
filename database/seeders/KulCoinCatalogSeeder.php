@@ -26,7 +26,7 @@ class KulCoinCatalogSeeder extends Seeder
         foreach ($packages as $package) {
             KulCoinPackage::updateOrCreate(
                 ['code' => $package['code']],
-                $package + ['currency_code' => 'USD', 'is_active' => true, 'metadata' => []]
+                $package + ['currency_code' => 'GHS', 'is_active' => true, 'metadata' => []]
             );
         }
 

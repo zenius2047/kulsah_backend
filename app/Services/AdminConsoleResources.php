@@ -9,6 +9,8 @@ use Illuminate\Support\Str;
 
 class AdminConsoleResources
 {
+    public function __construct(private readonly KulCoinConversionService $conversion) {}
+
     public const READ_PERMISSIONS = [
         'users' => 'users.view', 'creators' => 'creators.view', 'videos' => 'content.view', 'community-posts' => 'content.view',
         'streams' => 'content.view', 'challenges' => 'content.view', 'featured' => 'content.view',
@@ -206,10 +208,11 @@ class AdminConsoleResources
     public function giftTransaction($t): array
     {
         $creator = User::find($t->metadata['creator_id'] ?? null);
-        $creatorValue = (float) ($t->metadata['creator_earnings_usd'] ?? $t->usd_amount);
+        $creatorValue = (float) ($t->metadata['creator_earnings_ghs'] ?? $t->metadata['creator_earnings_usd'] ?? $t->usd_amount);
+        $coinValueGhs = (float) ($t->metadata['coin_value_ghs'] ?? ($this->conversion->ghsPerCoin() ?: config('kulcoin.coin_to_usd_rate', 0.01)));
         return ['id' => (string) $t->id, 'sender' => $t->wallet?->user?->name ?? 'Deleted user', 'creator' => $creator?->name ?? 'Deleted user',
             'gift' => $t->gift?->name ?? $t->metadata['gift_name'] ?? 'Deleted gift', 'quantity' => (int) ($t->metadata['quantity'] ?? 1), 'coins' => $t->coin_amount,
-            'creatorValue' => $creatorValue, 'platformValue' => max(0, $t->coin_amount * (float) config('kulcoin.coin_to_usd_rate') - $creatorValue),
+            'creatorValue' => $creatorValue, 'platformValue' => max(0, $t->coin_amount * $coinValueGhs - $creatorValue),
             'context' => isset($t->metadata['live_session_id']) ? 'Live Stream' : 'Video', 'contextRef' => (string) ($t->metadata['live_session_id'] ?? $t->metadata['video_id'] ?? ''),
             'status' => $t->metadata['console_flagged'] ?? false ? 'Flagged' : $this->title($t->status), 'date' => $this->iso($t->created_at),
         ];
@@ -218,12 +221,13 @@ class AdminConsoleResources
     public function giftEarnings(): Collection
     {
         $gifts = KulCoinTransaction::where('type', 'gift')->where('status', 'completed')->with(['wallet.user', 'gift'])->get();
-        return $gifts->groupBy(fn ($t) => $t->metadata['creator_id'] ?? '')->filter(fn ($items, $id) => $id !== '')->map(function ($items, $id) {
+        $currentCoinValueGhs = $this->conversion->ghsPerCoin() ?: (float) config('kulcoin.coin_to_usd_rate', 0.01);
+        return $gifts->groupBy(fn ($t) => $t->metadata['creator_id'] ?? '')->filter(fn ($items, $id) => $id !== '')->map(function ($items, $id) use ($currentCoinValueGhs) {
             $u = User::find($id); $wallet = $u?->wallet;
-            $earnings = (float) $items->sum(fn ($t) => (float) ($t->metadata['creator_earnings_usd'] ?? $t->usd_amount));
+            $earnings = (float) $items->sum(fn ($t) => (float) ($t->metadata['creator_earnings_ghs'] ?? $t->metadata['creator_earnings_usd'] ?? $t->usd_amount));
             $pending = (float) DB::table('wallet_ledger_entries')->where('wallet_id', $wallet?->id)->where('balance_bucket', 'pending')->where('entry_type', 'credit')->whereNull('settled_at')->sum('amount_usd');
             return ['id' => (string) $id, 'creator' => $u?->name ?? 'Deleted user', 'giftsReceived' => $items->sum(fn ($t) => (int) ($t->metadata['quantity'] ?? 1)),
-                'coinsReceived' => $items->sum('coin_amount'), 'grossValue' => $items->sum('coin_amount') * (float) config('kulcoin.coin_to_usd_rate'),
+                'coinsReceived' => $items->sum('coin_amount'), 'grossValue' => $items->sum(fn ($t) => (int) $t->coin_amount * (float) ($t->metadata['coin_value_ghs'] ?? $currentCoinValueGhs)),
                 'creatorEarnings' => $earnings, 'pendingSettlement' => min($pending, $earnings), 'settled' => max(0, $earnings - $pending),
                 'topGift' => $items->groupBy('gift_id')->sortByDesc(fn ($group) => $group->sum('coin_amount'))->first()?->first()?->gift?->name ?? '',
                 'supporters' => $items->pluck('user_id')->unique()->count(),

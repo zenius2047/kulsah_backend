@@ -22,6 +22,7 @@ class KulCoinService
         private readonly WalletService $walletService,
         private readonly RevenueRuleCalculator $revenueRules,
         private readonly CountrySettingsService $countrySettings,
+        private readonly KulCoinConversionService $conversion,
     ) {}
 
     public function getOrCreateUserWallet(User $user): KulCoinWallet
@@ -226,12 +227,16 @@ class KulCoinService
         $creatorShare = $ruleCalculation['deductions'] !== []
             ? (in_array($ruleCalculation['remainingRecipient'], ['creator', 'organizer'], true) && $coinAmount > 0 ? $ruleCalculation['recipientNet'] / $coinAmount : 0)
             : (int) ($gift->metadata['creatorShare'] ?? config('kulcoin.creator_share_percent')) / 100;
-        $creatorEarningsUsd = round($coinAmount * (float) config('kulcoin.coin_to_usd_rate') * $creatorShare, 4);
+        $coinValueGhs = $this->conversion->ghsPerCoin();
+        if ($coinValueGhs <= 0) {
+            throw ValidationException::withMessages(['gift_id' => 'Gift sending is unavailable until an active GHS Kulcoin package is configured.']);
+        }
+        $creatorEarningsGhs = round($coinAmount * $coinValueGhs * $creatorShare, 4);
         $description = $quantity > 1
             ? "{$quantity} x {$gift->name} gift"
             : "{$gift->name} gift";
 
-        return DB::transaction(function () use ($sender, $creator, $gift, $quantity, $data, $actor, $idempotencyKey, $senderWallet, $treasuryWallet, $coinAmount, $creatorEarningsUsd, $description, $ruleCalculation) {
+        return DB::transaction(function () use ($sender, $creator, $gift, $quantity, $data, $actor, $idempotencyKey, $senderWallet, $treasuryWallet, $coinAmount, $coinValueGhs, $creatorEarningsGhs, $description, $ruleCalculation) {
             $senderWallet = $this->lockWallet($senderWallet);
             $treasuryWallet = $this->lockWallet($treasuryWallet);
 
@@ -243,7 +248,7 @@ class KulCoinService
                 'user_id' => $sender->id,
                 'counterparty_wallet_id' => $treasuryWallet->id,
                 'gift_id' => $gift->id,
-                'usd_amount' => $creatorEarningsUsd,
+                'usd_amount' => $creatorEarningsGhs,
                 'coin_amount' => $coinAmount,
                 'bonus_coin_amount' => 0,
                 'net_coin_amount' => $coinAmount,
@@ -253,7 +258,10 @@ class KulCoinService
                     'gift_name' => $gift->name,
                     'quantity' => $quantity,
                     'creator_id' => $creator->id,
-                    'creator_earnings_usd' => $creatorEarningsUsd,
+                    'coin_value_ghs' => $coinValueGhs,
+                    'creator_earnings_ghs' => $creatorEarningsGhs,
+                    // Keep the legacy field for older clients reading existing transaction metadata.
+                    'creator_earnings_usd' => $creatorEarningsGhs,
                     'revenue_rule_calculation' => $ruleCalculation['deductions'] !== [] ? $ruleCalculation : null,
                     'message' => $data['message'] ?? null,
                     'ip_address' => $data['ip_address'] ?? null,
@@ -274,7 +282,7 @@ class KulCoinService
 
             $this->assertTransactionBalanced($transaction);
 
-            if ($creatorEarningsUsd > 0) {
+            if ($creatorEarningsGhs > 0) {
                 $earningsPool = $this->walletService->getOrCreateSystemWallet(
                     config('kulcoin.creator_earnings_account_key', 'kulcoin_creator_earnings_pool'),
                     'KulCoin Creator Earnings Pool'
@@ -283,7 +291,7 @@ class KulCoinService
                 $this->walletService->transferBetweenWallets(
                     fromWallet: $earningsPool,
                     toWallet: $this->walletService->getOrCreateUserWallet($creator),
-                    amountUsd: $creatorEarningsUsd,
+                    amountUsd: $creatorEarningsGhs,
                     type: 'kulcoin_gift_earnings',
                     description: "Creator earnings from {$gift->name}",
                     metadata: [

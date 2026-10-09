@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\{AdminConsoleAudit, AdminConsoleRecord, Event, KulCoinTransaction, LiveSession, SignalReport, User, Video, WalletTransaction};
-use App\Services\{AdminConsoleAccess, AdminConsoleMutations, AdminConsoleResources};
+use App\Services\{AdminConsoleAccess, AdminConsoleMutations, AdminConsoleResources, KulCoinConversionService};
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{DB, Hash, Storage};
@@ -248,12 +248,15 @@ class ConsoleController extends Controller
         ]]);
     }
 
-    public function coinConfig(Request $request)
+    public function coinConfig(Request $request, KulCoinConversionService $conversion)
     {
         $u = $this->actor($request);
         $permissions = $this->access->permissions($this->access->role($u));
         abort_unless(in_array('kulcoin.view', $permissions, true) || in_array('gifts.view', $permissions, true), 403);
-        return response()->json(['data' => ['coinValueGhs' => (float) config('kulcoin.coin_to_usd_rate'), 'creatorShare' => (int) config('kulcoin.creator_share_percent')]]);
+        $coinValueGhs = $conversion->ghsPerCoin();
+        abort_if($coinValueGhs <= 0, 422, 'Add an active GHS Kulcoin package to calculate gift values.');
+
+        return response()->json(['data' => ['coinValueGhs' => $coinValueGhs, 'creatorShare' => (int) config('kulcoin.creator_share_percent')]]);
     }
 
     public function search(Request $request)
