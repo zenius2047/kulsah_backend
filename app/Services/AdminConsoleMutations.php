@@ -76,7 +76,9 @@ class AdminConsoleMutations
 
                     $imagePath = 'kulsah/gifts/'.Str::uuid().'.'.$extensions[$mime];
                     $imageDisk = Storage::disk('s3');
-                    abort_unless($imageDisk->put($imagePath, $imageBytes, ['visibility' => 'public']), 500, 'The gift image could not be stored in primary media storage.');
+                    // Match the existing S3 profile-image uploads: the bucket policy controls public reads,
+                    // so this write does not require a per-object ACL permission.
+                    abort_unless($imageDisk->put($imagePath, $imageBytes), 500, 'The gift image could not be stored in primary media storage.');
                     $image = $imageDisk->url($imagePath);
                 } else {
                     abort_if($image && ! preg_match('~^https?://~i', $image), 422, 'Use a raster image or an HTTP image URL.');
