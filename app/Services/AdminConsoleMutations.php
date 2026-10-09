@@ -28,6 +28,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -64,12 +65,30 @@ class AdminConsoleMutations
                     'rarity' => 'required|in:Common,Rare,Epic,Legendary,Mythic', 'coinPrice' => 'required|integer|min:1|max:100000000',
                     'creatorShare' => 'required|integer|min:0|max:100', 'animation' => 'required|in:Static,Animated,Full-screen',
                     'contexts' => 'required|array|min:1', 'contexts.*' => 'in:Live Stream,Video,Live Battle,Profile,Event', 'status' => 'required|in:Active,Inactive,Scheduled,Archived']);
-                abort_if(isset($v['image']) && ! preg_match('~^(https?://|data:image/(png|jpeg|webp|gif);base64,)~', $v['image']), 422, 'Use a raster image or an HTTP image URL.');
+                $image = $v['image'] ?? null;
+                if ($image && preg_match('~^data:image/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$~D', $image, $imageMatch)) {
+                    $imageBytes = base64_decode($imageMatch[2], true);
+                    abort_if($imageBytes === false, 422, 'The gift image data is invalid. Please choose the image again.');
+                    $imageInfo = @getimagesizefromstring($imageBytes);
+                    $mime = $imageInfo['mime'] ?? null;
+                    $extensions = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp', 'image/gif' => 'gif'];
+                    abort_unless(isset($extensions[$mime]), 422, 'Use a valid PNG, JPG, WebP or GIF image.');
+
+                    $imagePath = 'kulsah/gifts/'.Str::uuid().'.'.$extensions[$mime];
+                    $imageDisk = Storage::disk('s3');
+                    abort_unless($imageDisk->put($imagePath, $imageBytes, ['visibility' => 'public']), 500, 'The gift image could not be stored in primary media storage.');
+                    $image = $imageDisk->url($imagePath);
+                } else {
+                    abort_if($image && ! preg_match('~^https?://~i', $image), 422, 'Use a raster image or an HTTP image URL.');
+                    abort_if($image && strlen($image) > 255, 422, 'The image URL is too long. Upload the image file instead.');
+                }
                 $model = $id ? KulCoinGift::lockForUpdate()->findOrFail($id) : new KulCoinGift;
                 $before = $model->getAttributes();
+                $giftMetadata = $v;
+                unset($giftMetadata['image']);
                 $model->fill(['code' => $model->code ?: 'console-'.Str::uuid(), 'name' => $v['name'], 'category' => $v['category'], 'coin_cost' => $v['coinPrice'],
-                    'icon_url' => $v['image'] ?? null, 'is_active' => $v['status'] === 'Active',
-                    'metadata' => [...($model->metadata ?? []), ...$v, 'console_status' => $v['status']]])->save();
+                    'icon_url' => $image, 'is_active' => $v['status'] === 'Active',
+                    'metadata' => [...($model->metadata ?? []), ...$giftMetadata, 'console_status' => $v['status']]])->save();
             } elseif ($resource === 'admins') {
                 $v = $request->validate(['name' => 'required|string|max:255', 'email' => 'required|string|email|max:255', 'role' => ['required', Rule::in(AdminConsoleAccess::ROLES)]]);
                 $email = mb_strtolower(trim($v['email']));
