@@ -59,7 +59,7 @@ class AdminConsoleMutations
                     'metadata' => [...($model->metadata ?? []), 'discount' => $v['discount'], 'console_status' => $v['status']]])->save();
             } elseif ($resource === 'gifts') {
                 $v = $request->validate(['name' => 'required|string|max:255', 'emoji' => 'required|string|max:30', 'image' => 'nullable|string|max:2800000',
-                    'description' => 'nullable|string|max:2000', 'category' => 'required|in:Basic,Love,Celebration,African Culture,Premium,Seasonal,Battle',
+                    'description' => 'nullable|string|max:2000', 'category' => 'required|in:romance,hype,achievement,premium,featured,fashion,food',
                     'rarity' => 'required|in:Common,Rare,Epic,Legendary,Mythic', 'coinPrice' => 'required|integer|min:1|max:100000000',
                     'creatorShare' => 'required|integer|min:0|max:100', 'animation' => 'required|in:Static,Animated,Full-screen',
                     'contexts' => 'required|array|min:1', 'contexts.*' => 'in:Live Stream,Video,Live Battle,Profile,Event', 'status' => 'required|in:Active,Inactive,Scheduled,Archived']);

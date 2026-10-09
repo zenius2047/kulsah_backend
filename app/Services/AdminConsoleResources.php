@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{AdminConsoleAudit, AdminConsoleRecord, Challenge, Event, EventTicket, KulCoinGift, KulCoinLedgerEntry, KulCoinPackage, KulCoinTransaction, KulCoinWallet, LiveSession, SignalReport, Subscription, User, Wallet, WalletTransaction};
+use App\Models\{AdminConsoleAudit, AdminConsoleRecord, Challenge, CommunityPost, Event, EventTicket, KulCoinGift, KulCoinLedgerEntry, KulCoinPackage, KulCoinTransaction, KulCoinWallet, LiveSession, SignalReport, Subscription, User, Wallet, WalletTransaction};
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 class AdminConsoleResources
 {
     public const READ_PERMISSIONS = [
-        'users' => 'users.view', 'creators' => 'creators.view', 'videos' => 'content.view',
+        'users' => 'users.view', 'creators' => 'creators.view', 'videos' => 'content.view', 'community-posts' => 'content.view',
         'streams' => 'content.view', 'challenges' => 'content.view', 'featured' => 'content.view',
         'events' => 'events.view', 'tickets' => 'tickets.view', 'subscriptions' => 'subscriptions.view',
         'transactions' => 'finance.view', 'withdrawals' => 'finance.payout', 'wallets' => 'finance.view',
@@ -28,6 +28,16 @@ class AdminConsoleResources
             'users' => User::with('roles')->withCount(['followers', 'videos'])->get()->map(fn ($u) => $this->user($u)),
             'creators' => User::whereHas('roles', fn ($q) => $q->where('name', 'creator'))->withCount(['followers', 'videos', 'events', 'subscribers'])->with('wallet')->get()->map(fn ($u) => $this->creator($u)),
             'videos' => \App\Models\Video::with('user')->get()->map(fn ($v) => $this->video($v)),
+            'community-posts' => CommunityPost::with(['user', 'media'])->withCount(['likes', 'comments', 'shares'])->latest()->get()->map(fn ($post) => [
+                'id' => (string) $post->id, 'type' => (string) $post->type, 'content' => (string) ($post->content ?? ''),
+                'creator' => $post->user?->name ?? 'Deleted user', 'audience' => $this->title((string) ($post->audience ?? 'public')),
+                'status' => $this->title((string) ($post->status ?? 'published')),
+                'media' => $post->media->map(fn ($media) => $media->cloudinary_url ?: $media->source_url)->filter()->values()->all(),
+                'hashtags' => is_array($post->hashtags) ? $post->hashtags : [], 'location' => (string) ($post->location_name ?? ''),
+                'views' => (int) ($post->views_count ?? $post->views_count_count ?? 0), 'likes' => (int) $post->likes_count,
+                'comments' => (int) $post->comments_count, 'shares' => (int) $post->shares_count,
+                'publishedAt' => $this->iso($post->published_at), 'createdAt' => $this->iso($post->created_at),
+            ]),
             'streams' => LiveSession::with('creator')->get()->map(fn ($s) => $this->stream($s)),
             'challenges' => Challenge::with('creator')->withCount(['entries', 'participants'])->get()->map(fn ($c) => [
                 'id' => (string) $c->id, 'title' => $c->title, 'creator' => $c->creator?->name ?? 'Deleted user',
@@ -127,7 +137,7 @@ class AdminConsoleResources
 
     public function user(User $u): array
     {
-        return ['id' => (string) $u->id, 'name' => $u->name, 'username' => $u->username ?? '', 'email' => $u->email,
+        return ['id' => (string) $u->id, 'name' => $u->name, 'avatar' => $u->avatar, 'username' => $u->username ?? '', 'email' => $u->email,
             'phone' => $u->phone ?? '', 'country' => $u->country ?? $u->country_code ?? '',
             'accountType' => $u->roles->contains('name', 'creator') ? 'Creator' : 'Viewer',
             'verification' => $u->verified ? 'Verified' : ($u->console_verification === 'Pending' ? 'Pending' : 'Unverified'),
@@ -139,7 +149,7 @@ class AdminConsoleResources
     public function creator(User $u): array
     {
         $views = (int) $u->videos()->sum('views_count');
-        return ['id' => (string) $u->id, 'name' => $u->name, 'username' => $u->username ?? '', 'country' => $u->country ?? '',
+        return ['id' => (string) $u->id, 'name' => $u->name, 'avatar' => $u->avatar, 'username' => $u->username ?? '', 'country' => $u->country ?? '',
             'verification' => $u->console_verification ?? ($u->verified ? 'Approved' : 'Pending'), 'status' => $u->console_status,
             'followers' => $u->followers_count ?? $u->followers()->count(), 'views' => $views,
             'engagement' => $views ? round($u->videos()->sum('likes_count') / $views * 100, 2) : 0,
