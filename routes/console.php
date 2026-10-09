@@ -32,6 +32,11 @@ Schedule::command('notification-devices:prune-stale')
     ->withoutOverlapping()
     ->onOneServer();
 
+Schedule::command('kyc:prune-sensitive-data')
+    ->dailyAt('03:45')
+    ->withoutOverlapping()
+    ->onOneServer();
+
 Schedule::call(function (): void {
     CommunityPost::query()
         ->where('status', 'scheduled')

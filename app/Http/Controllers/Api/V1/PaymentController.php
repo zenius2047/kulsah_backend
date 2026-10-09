@@ -17,11 +17,12 @@ class PaymentController extends \App\Http\Controllers\Controller
     {
         abort_if(! $request->user()->email, 422, 'A customer email is required to initialize payment.');
         $input = $request->validate([
-            'purpose' => ['required', Rule::in(['kulcoin', 'subscription', 'event_ticket'])],
+            'purpose' => ['required', Rule::in(['kulcoin', 'subscription', 'event_ticket', 'video_boost'])],
             'method' => ['required', Rule::in(['card', 'mobile_money'])],
             'package_id' => ['required_if:purpose,kulcoin', 'integer', 'exists:kulcoin_packages,id'],
             'subscription_plan_id' => ['required_if:purpose,subscription', 'integer', 'exists:subscription_plans,id'],
             'event_id' => ['required_if:purpose,event_ticket', 'integer', 'exists:events,id'],
+            'boost_campaign_id' => ['required_if:purpose,video_boost', 'integer', 'exists:video_boost_campaigns,id'],
             'ticket_type_code' => ['required_if:purpose,event_ticket', 'string', 'max:80'],
             'quantity' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'idempotency_key' => ['sometimes', 'string', 'max:120'],

@@ -7,6 +7,7 @@ use App\Jobs\RecordRecommendationEvent;
 use App\Jobs\RenderVideoEditsJob;
 use App\Models\User;
 use App\Models\Video;
+use App\Models\VideoBoostCampaign;
 use App\Models\VideoView;
 use App\Notifications\VideoMentionedNotification;
 use Illuminate\Http\UploadedFile;
@@ -731,6 +732,7 @@ class VideoService
 
         if (Cache::add($cacheKey, true, now()->addMinutes($cooldownMinutes))) {
             $video->increment('views_count');
+            VideoBoostCampaign::recordMetric((int) $video->id, 'views_count');
 
             VideoView::query()->create([
                 'video_id' => $video->id,

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\VideoBoostCampaign;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Arr;
@@ -11,6 +12,7 @@ class VideoResource extends JsonResource
     public function toArray(Request $request): array
     {
         $metadata = is_array($this->metadata) ? $this->metadata : [];
+        $isSponsored = VideoBoostCampaign::isVideoSponsored((int) $this->id);
         $processingStatus = $this->processing_status?->value ?? ($this->status === 'ready' ? 'ready' : 'initialized');
         $uploadStatus = $this->upload_status?->value ?? data_get($metadata, 'upload_state', 'initialized');
         $isReady = $processingStatus === 'ready';
@@ -58,6 +60,8 @@ class VideoResource extends JsonResource
             'aspectRatio' => $this->aspect_ratio,
             'fps' => $this->fps,
             'status' => $this->status,
+            'is_sponsored' => $isSponsored,
+            'sponsored_label' => $isSponsored ? 'Sponsored' : null,
             'upload_status' => $uploadStatus,
             'processing_status' => $processingStatus,
             'render_status' => $this->render_status,

@@ -53,7 +53,7 @@ class RevenueRuleController extends Controller
             ->values();
 
         return response()->json(['data' => ['rules' => $rules, 'sources' => RevenueRuleCalculator::SOURCES,
-            'liveSources' => ['creator_subscription', 'event_ticket', 'live_battle', 'virtual_gift', 'kulcoin_transaction'],
+            'liveSources' => ['creator_subscription', 'event_ticket', 'live_battle', 'virtual_gift', 'kulcoin_transaction', 'content_boost'],
             'approverRoles' => $approverRoles,
             'canManage' => in_array('finance.rules.manage', $this->access->permissions($this->access->role($actor)), true),
             'canApprove' => in_array('finance.rules.approve', $this->access->permissions($this->access->role($actor)), true)]]);

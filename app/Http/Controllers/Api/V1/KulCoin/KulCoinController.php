@@ -13,13 +13,14 @@ use App\Models\KulCoinPackage;
 use App\Models\KulCoinTransaction;
 use App\Models\User;
 use App\Services\KulCoinService;
+use App\Services\CountrySettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class KulCoinController extends Controller
 {
-    public function __construct(private readonly KulCoinService $kulCoinService)
+    public function __construct(private readonly KulCoinService $kulCoinService, private readonly CountrySettingsService $countrySettings)
     {
     }
 
@@ -68,6 +69,7 @@ class KulCoinController extends Controller
 
     public function purchase(Request $request)
     {
+        $this->countrySettings->assertFeatureAllowed($request->user(), 'kulcoinPurchases');
         $validated = $request->validate([
             'package_id' => ['required', 'integer', 'exists:kulcoin_packages,id'],
             'payment_reference' => ['nullable', 'string', 'max:255'],

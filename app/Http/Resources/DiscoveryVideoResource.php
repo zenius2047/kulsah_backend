@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\Video;
+use App\Models\VideoBoostCampaign;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -17,6 +18,7 @@ class DiscoveryVideoResource extends JsonResource
         $viewerId = (int) ($request->user()?->id ?? 0);
         $isOwner = $viewerId > 0 && (int) $video->user_id === $viewerId;
         $canDuet = $isOwner || ((bool) $video->allow_duet && $video->status === 'ready' && $video->visibility === 'public');
+        $isSponsored = (bool) ($video->getAttribute('is_sponsored') ?? VideoBoostCampaign::isVideoSponsored((int) $video->id));
         $category = $video->content_type
             ?: (is_array($video->content_types) ? ($video->content_types[0] ?? null) : null)
             ?: data_get($metadata, 'category');
@@ -34,6 +36,8 @@ class DiscoveryVideoResource extends JsonResource
             'thumbnail_url' => $video->poster_url ?: $video->thumbnail_url,
             'playback_url' => $video->playback_url,
             'content_type' => 'video',
+            'is_sponsored' => $isSponsored,
+            'sponsored_label' => $isSponsored ? 'Sponsored' : null,
             'category' => $category,
             'duration_seconds' => $video->duration !== null ? (int) $video->duration : null,
             'allowDuet' => (bool) ($video->allow_duet ?? false),

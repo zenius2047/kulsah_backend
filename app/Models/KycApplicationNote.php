@@ -1,0 +1,13 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class KycApplicationNote extends Model
+{
+    protected $guarded = ['id'];
+    public function application(): BelongsTo { return $this->belongsTo(KycApplication::class, 'application_id'); }
+    public function admin(): BelongsTo { return $this->belongsTo(User::class, 'admin_id'); }
+}

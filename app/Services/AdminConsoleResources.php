@@ -36,6 +36,7 @@ class AdminConsoleResources
                 'hashtags' => is_array($post->hashtags) ? $post->hashtags : [], 'location' => (string) ($post->location_name ?? ''),
                 'views' => (int) ($post->views_count ?? $post->views_count_count ?? 0), 'likes' => (int) $post->likes_count,
                 'comments' => (int) $post->comments_count, 'shares' => (int) $post->shares_count,
+                'reports' => SignalReport::where('reportable_type', CommunityPost::class)->where('reportable_id', $post->id)->count(),
                 'publishedAt' => $this->iso($post->published_at), 'createdAt' => $this->iso($post->created_at),
             ]),
             'streams' => LiveSession::with('creator')->get()->map(fn ($s) => $this->stream($s)),
@@ -150,7 +151,7 @@ class AdminConsoleResources
     {
         $views = (int) $u->videos()->sum('views_count');
         return ['id' => (string) $u->id, 'name' => $u->name, 'avatar' => $u->avatar, 'username' => $u->username ?? '', 'country' => $u->country ?? '',
-            'verification' => $u->console_verification ?? ($u->verified ? 'Approved' : 'Pending'), 'status' => $u->console_status,
+            'verification' => $u->verified ? 'Public badge active' : 'No public badge', 'status' => $u->console_status,
             'followers' => $u->followers_count ?? $u->followers()->count(), 'views' => $views,
             'engagement' => $views ? round($u->videos()->sum('likes_count') / $views * 100, 2) : 0,
             'videos' => $u->videos_count ?? $u->videos()->count(), 'liveStreams' => LiveSession::where('creator_id', $u->id)->count(),

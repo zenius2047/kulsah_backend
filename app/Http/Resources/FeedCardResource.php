@@ -6,6 +6,7 @@ use App\Enums\VideoPurpose;
 use App\Models\ChallengeEntry;
 use App\Models\User;
 use App\Models\Video;
+use App\Models\VideoBoostCampaign;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -28,6 +29,7 @@ class FeedCardResource extends JsonResource
         $purpose = $video->purpose instanceof VideoPurpose
             ? $video->purpose->value
             : (string) $video->purpose;
+        $isSponsored = (bool) ($video->getAttribute('is_sponsored') ?? VideoBoostCampaign::isVideoSponsored((int) $video->id));
         $isChallengeVideo = in_array($purpose, [
             VideoPurpose::ChallengeVideo->value,
             VideoPurpose::ChallengeInstructionVideo->value,
@@ -69,6 +71,8 @@ class FeedCardResource extends JsonResource
             ],
             'isLiked' => (bool) ($video->is_liked ?? data_get($metadata, 'is_liked', false)),
             'isSubscribed' => (bool) ($video->is_subscribed ?? data_get($metadata, 'is_subscribed', false)),
+            'isSponsored' => $isSponsored,
+            'sponsoredLabel' => $isSponsored ? 'Sponsored' : null,
             'isPremium' => $video->visibility === 'premium' || (bool) data_get($metadata, 'is_premium', false),
             'ticketsAvailable' => (bool) data_get($metadata, 'tickets_available', false),
             'ticketLocation' => data_get($metadata, 'ticket_location'),

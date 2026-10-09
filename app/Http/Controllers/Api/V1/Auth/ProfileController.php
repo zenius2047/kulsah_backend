@@ -116,6 +116,10 @@ class ProfileController extends Controller
         ]);
 
         if (! empty($data['country_code'])) {
+            if ($user->verified && strtoupper((string) $user->country_code) !== strtoupper((string) $data['country_code'])) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['country_code' => 'Verified account country changes require a reviewed support process.']);
+            }
+            app(\App\Services\CountrySettingsService::class)->assertCountryAvailable($data['country_code'], 'available', 'Kulsah is not available in the selected account country.');
             $country = $this->resolveCountryFromCode($data['country_code']);
 
             if (! $country) {

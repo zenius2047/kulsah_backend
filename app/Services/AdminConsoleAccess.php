@@ -16,7 +16,7 @@ class AdminConsoleAccess
         'kulcoin.adjust', 'gifts.view', 'gifts.manage', 'analytics.view',
         'notifications.view', 'notifications.send', 'cms.view', 'cms.edit',
         'audit.view', 'settings.view', 'settings.edit', 'admins.view', 'admins.manage',
-        'finance.rules.manage', 'finance.rules.approve',
+        'finance.rules.manage', 'finance.rules.approve', 'kyc.view', 'kyc.documents.view', 'kyc.review', 'kyc.config',
     ];
 
     public const ROLES = ['Super Admin', 'Operations Manager', 'Moderator', 'Finance Officer', 'Support Agent'];
@@ -39,10 +39,10 @@ class AdminConsoleAccess
         }
         $allowed = match ($role) {
             'Super Admin' => self::PERMISSIONS,
-            'Operations Manager' => array_diff(self::PERMISSIONS, ['admins.manage', 'settings.edit', 'finance.payout', 'finance.adjust', 'finance.rules.manage', 'finance.rules.approve', 'kulcoin.adjust']),
-            'Moderator' => ['users.view', 'users.suspend', 'creators.view', 'creators.suspend', 'content.view', 'content.approve', 'content.remove', 'moderation.view', 'moderation.resolve', 'analytics.view'],
-            'Finance Officer' => ['users.view', 'creators.view', 'finance.view', 'finance.payout', 'finance.adjust', 'finance.rules.manage', 'finance.rules.approve', 'kulcoin.view', 'kulcoin.manage', 'kulcoin.adjust', 'gifts.view', 'gifts.manage', 'analytics.view', 'audit.view'],
-            'Support Agent' => ['users.view', 'creators.view', 'content.view', 'events.view', 'tickets.view', 'subscriptions.view', 'moderation.view', 'finance.view', 'kulcoin.view', 'gifts.view', 'analytics.view'],
+            'Operations Manager' => array_diff(self::PERMISSIONS, ['admins.manage', 'settings.edit', 'finance.payout', 'finance.adjust', 'finance.rules.manage', 'finance.rules.approve', 'kulcoin.adjust', 'kyc.documents.view', 'kyc.config']),
+            'Moderator' => ['users.view', 'users.suspend', 'creators.view', 'creators.suspend', 'content.view', 'content.approve', 'content.remove', 'moderation.view', 'moderation.resolve', 'analytics.view', 'kyc.view', 'kyc.review'],
+            'Finance Officer' => ['users.view', 'creators.view', 'finance.view', 'finance.payout', 'finance.adjust', 'finance.rules.manage', 'finance.rules.approve', 'kulcoin.view', 'kulcoin.manage', 'kulcoin.adjust', 'gifts.view', 'gifts.manage', 'analytics.view', 'audit.view', 'kyc.view'],
+            'Support Agent' => ['users.view', 'creators.view', 'content.view', 'events.view', 'tickets.view', 'subscriptions.view', 'moderation.view', 'finance.view', 'kulcoin.view', 'gifts.view', 'analytics.view', 'kyc.view'],
             default => [],
         };
         return array_values($allowed);

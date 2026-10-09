@@ -19,12 +19,24 @@ use App\Http\Controllers\Api\V1\Music\MusicController;
 use App\Http\Controllers\Api\V1\Video\VideoController;
 use App\Http\Controllers\Api\V1\Wallet\WalletController;
 use App\Http\Controllers\Api\V1\Live\LiveController;
+use App\Http\Controllers\Api\V1\Admin\VideoBoostAdminController;
+use App\Http\Controllers\Api\V1\Admin\KycApplicationController;
+use App\Http\Controllers\Api\V1\Creator\VideoBoostController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\StickerController;
 use App\Http\Controllers\Api\V1\UserNotificationController;
 use App\Http\Controllers\Api\V1\VoiceCallController;
 use App\Http\Controllers\Api\V1\AiController;
 use Illuminate\Support\Facades\Route;
+
+
+Route::prefix('creator/kyc')
+    ->middleware(['auth:sanctum', 'role:creator'])
+    ->group(function () {
+        Route::get('/application', [KycApplicationController::class, 'myApplication']);
+        Route::post('/applications', [KycApplicationController::class, 'submit'])->middleware('throttle:10,1');
+        Route::post('/applications/{application}/resubmissions', [KycApplicationController::class, 'resubmit'])->whereNumber('application')->middleware('throttle:10,1');
+    });
 
 Route::pattern('video', '[0-9]+');
 Route::pattern('playlist', '[0-9]+');
@@ -43,6 +55,13 @@ Route::pattern('user', '[0-9]+');
 Route::pattern('musicTrack', '[^/]+');
 
 Route::post('/cloudinary/webhook', [CloudinaryWebhookController::class, 'store']);
+
+Route::get('/creator/video-boost/campaigns', [VideoBoostController::class, 'index'])
+    ->middleware(['auth:sanctum', 'role:creator']);
+Route::post('/creator/video-boost/campaigns', [VideoBoostController::class, 'store'])
+    ->middleware(['auth:sanctum', 'role:creator', 'throttle:payments']);
+Route::post('/creator/video-boost/campaigns/{campaign}/cancel', [VideoBoostController::class, 'cancel'])
+    ->middleware(['auth:sanctum', 'role:creator'])->whereNumber('campaign');
 
 Route::prefix('media')
     ->middleware(['auth:sanctum', 'role:creator'])

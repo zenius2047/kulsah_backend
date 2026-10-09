@@ -12,6 +12,7 @@ use App\Models\EventTicket;
 use App\Models\EventTicketPurchase;
 use App\Services\EventMediaService;
 use App\Services\EventTicketService;
+use App\Services\CountrySettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,7 @@ class EventController extends Controller
     public function __construct(
         private readonly EventMediaService $eventMediaService,
         private readonly EventTicketService $eventTicketService,
+        private readonly CountrySettingsService $countrySettings,
     )
     {
     }
@@ -136,6 +138,10 @@ class EventController extends Controller
     public function store(Request $request)
     {
         $validated = $this->validateEventPayload($request);
+        if (collect($validated['ticket_types'] ?? [])->contains(fn ($ticket) => (float) ($ticket['price'] ?? 0) > 0)) {
+            $this->countrySettings->assertFeatureAllowed($request->user(), 'paidEvents');
+            $this->countrySettings->assertPriceInRange($request->user(), 'paidEvents', (float) collect($validated['ticket_types'])->max('price'), (string) $validated['currency']);
+        }
         $coverImage = $request->file('cover_image');
         $uploadedCover = null;
 
@@ -221,6 +227,12 @@ class EventController extends Controller
         $this->authorizeEventAccess($request, $event, allowUnpublished: true);
 
         $validated = $this->validateEventPayload($request, isUpdate: true, existingEvent: $event);
+        $effectiveTickets = $validated['ticket_types'] ?? ($event->ticket_types ?? []);
+        if (collect($effectiveTickets)->contains(fn ($ticket) => (float) ($ticket['price'] ?? 0) > 0)) {
+            $this->countrySettings->assertFeatureAllowed($request->user(), 'paidEvents');
+            $currency = (string) ($validated['currency'] ?? $event->currency);
+            $this->countrySettings->assertPriceInRange($request->user(), 'paidEvents', (float) collect($effectiveTickets)->max('price'), $currency);
+        }
         $coverImage = $request->file('cover_image');
         $uploadedCover = null;
 

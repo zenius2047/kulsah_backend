@@ -7,6 +7,7 @@ use App\Jobs\SendAdminConsoleCampaign;
 use App\Models\AdminConsoleAudit;
 use App\Models\AdminConsoleRecord;
 use App\Models\Challenge;
+use App\Models\CommunityPost;
 use App\Models\Event;
 use App\Models\EventTicket;
 use App\Models\KulCoinGift;
@@ -165,6 +166,7 @@ class AdminConsoleMutations
             'videos' => match ($action) {
                 'approve' => 'content.approve', 'remove' => 'content.remove', default => 'content.edit'
             },
+            'community-posts' => $action === 'remove' ? 'content.remove' : 'content.edit',
             'streams', 'challenges', 'featured' => 'content.edit', 'events' => $action === 'approve' ? 'events.approve' : 'events.edit',
             'tickets' => 'tickets.refund', 'subscriptions', 'withdrawals' => 'finance.payout', 'transactions', 'wallets' => 'finance.adjust',
             'reports' => 'moderation.resolve', 'packages', 'purchases' => 'kulcoin.manage', 'gifts', 'gift-transactions' => 'gifts.manage',
@@ -175,6 +177,7 @@ class AdminConsoleMutations
             foreach ($ids as $id) {
                 $model = match ($resource) {
                     'users', 'creators', 'admins' => User::lockForUpdate()->findOrFail($id), 'videos' => Video::lockForUpdate()->findOrFail($id),
+                    'community-posts' => CommunityPost::lockForUpdate()->findOrFail($id),
                     'streams' => LiveSession::lockForUpdate()->findOrFail($id), 'challenges' => Challenge::lockForUpdate()->findOrFail($id),
                     'events' => Event::lockForUpdate()->findOrFail($id), 'tickets' => EventTicket::lockForUpdate()->findOrFail($id),
                     'subscriptions' => Subscription::lockForUpdate()->findOrFail($id), 'transactions', 'withdrawals' => WalletTransaction::lockForUpdate()->findOrFail($id),
@@ -187,9 +190,13 @@ class AdminConsoleMutations
                 if (in_array($resource, ['users', 'creators'], true)) {
                     $changes = match ($action) {
                         'suspend' => ['console_status' => 'Suspended'], 'ban' => ['console_status' => 'Banned'], 'restore' => ['console_status' => 'Active'],
-                        'verify' => ['verified' => true, 'verified_at' => now(), 'console_verification' => 'Approved'],
-                        'revoke' => ['verified' => false, 'verified_at' => null, 'console_verification' => 'Revoked'],
-                        'reject' => ['verified' => false, 'console_verification' => 'Rejected'], 'review' => ['console_verification' => 'Under Review'], default => abort(422, 'Unsupported account action.'),
+                        // This action controls the public creator badge only. KYC is stored and
+                        // reviewed independently through KycApplicationController.
+                        'verify' => ['verified' => true, 'verified_at' => now()],
+                        'revoke' => ['verified' => false, 'verified_at' => null],
+                        'reject' => ['verified' => false, 'verified_at' => null],
+                        'review' => abort(422, 'Use the KYC application review workflow.'),
+                        default => abort(422, 'Unsupported account action.'),
                     };
                     abort_if($model->id === $actor->id && in_array($action, ['suspend', 'ban'], true), 422, 'You cannot suspend your own account.');
                     $model->forceFill($changes)->save();
@@ -203,6 +210,12 @@ class AdminConsoleMutations
                     if ($action === 'disable') {
                         $model->tokens()->where('name', 'admin-console')->delete();
                     }
+                } elseif ($resource === 'community-posts') {
+                    $model->status = match ($action) {
+                        'hide' => 'hidden', 'restore' => 'published', 'remove' => 'removed',
+                        default => abort(422, 'Unsupported community post action.'),
+                    };
+                    $model->save();
                 } elseif ($resource === 'videos') {
                     $meta = $model->metadata ?? [];
                     if ($action === 'feature') {
@@ -264,6 +277,9 @@ class AdminConsoleMutations
                     $model->save();
                 } elseif ($resource === 'withdrawals') {
                     abort_unless($model->type === 'withdrawal' && in_array($model->status, ['pending', 'under_review'], true), 422, 'This withdrawal cannot be reviewed.');
+                    if ($action === 'approve' && $model->wallet?->user) {
+                        app(CountrySettingsService::class)->assertWithdrawalAllowed($model->wallet->user, (float) $model->local_amount, (string) $model->local_currency);
+                    }
                     $model->status = match ($action) {
                         'approve' => 'approved', 'review' => 'under_review', 'reject' => 'rejected', default => abort(422)
                     };

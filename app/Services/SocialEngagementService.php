@@ -7,6 +7,7 @@ use App\Jobs\RecordRecommendationEvent;
 use App\Models\User;
 use App\Models\UserFollow;
 use App\Models\Video;
+use App\Models\VideoBoostCampaign;
 use App\Models\VideoBookmark;
 use App\Models\VideoComment;
 use App\Models\VideoCommentLike;
@@ -37,6 +38,7 @@ class SocialEngagementService
         });
 
         if ($created) {
+            VideoBoostCampaign::recordMetric($videoId, 'engagements_count');
             $this->recordVideoEvent($user, 'like', $video, 1.0);
         }
 
@@ -202,6 +204,7 @@ class SocialEngagementService
         ]);
         $comment->loadCount('likes');
 
+        VideoBoostCampaign::recordMetric($videoId, 'engagements_count');
         $this->recordVideoEvent($user, 'like', $video, 0.8);
         $this->invalidateVideoState($user, $video);
 

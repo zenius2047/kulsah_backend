@@ -1,7 +1,10 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Admin\ConsoleController;
+use App\Http\Controllers\Api\V1\Admin\CountrySettingsController;
+use App\Http\Controllers\Api\V1\Admin\KycApplicationController;
 use App\Http\Controllers\Api\V1\Admin\RevenueRuleController;
+use App\Http\Controllers\Api\V1\Admin\VideoBoostAdminController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('login', [ConsoleController::class, 'login'])->middleware('throttle:10,1');
@@ -17,6 +20,17 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::get('revenue-rules/{rule}/history', [RevenueRuleController::class, 'history']);
     Route::post('revenue-rules/{rule}/approve', [RevenueRuleController::class, 'approve']);
     Route::post('revenue-rules/{rule}/reject', [RevenueRuleController::class, 'reject']);
+    Route::get('kyc/applications', [KycApplicationController::class, 'index']);
+    Route::get('kyc/applications/{application}', [KycApplicationController::class, 'show'])->whereNumber('application');
+    Route::get('kyc/applications/{application}/documents/{document}', [KycApplicationController::class, 'document'])->whereNumber('application')->whereNumber('document');
+    Route::post('kyc/applications/{application}/actions', [KycApplicationController::class, 'action'])->whereNumber('application');
+    Route::get('country-settings', [CountrySettingsController::class, 'index']);
+    Route::put('country-settings', [CountrySettingsController::class, 'save']);
+    Route::get('country-settings/preview/{code}', [CountrySettingsController::class, 'preview'])->where('code', '[A-Za-z]{2}');
+    Route::get('video-boosting/config', [VideoBoostAdminController::class, 'config']);
+    Route::put('video-boosting/config', [VideoBoostAdminController::class, 'saveConfig']);
+    Route::get('video-boosting/campaigns', [VideoBoostAdminController::class, 'campaigns']);
+    Route::post('video-boosting/campaigns/{campaign}/{action}', [VideoBoostAdminController::class, 'act'])->whereNumber('campaign');
     Route::get('search', [ConsoleController::class, 'search']);
     Route::get('coin-overview', [ConsoleController::class, 'coinOverview']);
     Route::get('coin-config', [ConsoleController::class, 'coinConfig']);

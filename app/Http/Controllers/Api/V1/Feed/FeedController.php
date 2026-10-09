@@ -5,14 +5,18 @@ namespace App\Http\Controllers\Api\V1\Feed;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\FeedCardResource;
 use App\Http\Resources\LiveSessionResource;
+use App\Models\AdminConsoleRecord;
 use App\Models\Onboarding;
+use App\Models\VideoBoostCampaign;
 use App\Models\Subscription;
 use App\Models\UserFollow;
 use App\Models\Video;
+use App\Models\User;
 use App\Models\VideoBookmark;
 use App\Models\VideoLike;
 use App\Models\VideoView;
 use App\Services\FeedService;
+use App\Services\CountrySettingsService;
 use App\Services\FeedViewerContextService;
 use App\Services\LiveDiscoveryService;
 use App\Services\VideoCacheService;
@@ -26,6 +30,7 @@ class FeedController extends Controller
         private readonly VideoCacheService $videoCacheService,
         private readonly FeedViewerContextService $feedViewerContextService,
         private readonly LiveDiscoveryService $liveDiscoveryService,
+        private readonly CountrySettingsService $countrySettings,
     ) {}
 
     public function index(Request $request)
@@ -69,7 +74,7 @@ class FeedController extends Controller
                 );
 
                 return [
-                    'data' => FeedCardResource::collection($videos)->resolve($request),
+                    'data' => FeedCardResource::collection($this->insertSponsoredVideos($videos->each(fn (Video $video) => $video->setAttribute('is_sponsored', false)), $userId, $limit, $request->user()))->resolve($request),
                     'meta' => [
                         'cache_hit' => $feed['cache_hit'],
                         'cache_key' => $feed['cache_key'],
@@ -148,6 +153,83 @@ class FeedController extends Controller
      * The feed service returns ranked identifiers and lightweight payloads.
      * We reload the models here so the response can be shaped for the mobile feed card.
      */
+    private function insertSponsoredVideos(Collection $organic, int $viewerId, int $limit, ?User $viewer): Collection
+    {
+        $config = AdminConsoleRecord::payloadFor('video-boosting');
+        if (! (bool) data_get($config, 'enabled', false) || ! in_array('for_you', data_get($config, 'placements', []), true)) {
+            return $organic;
+        }
+
+        $organicIds = $organic->pluck('id')->map(static fn ($id) => (int) $id);
+        $slots = max(1, min(3, (int) floor($limit / 8)));
+        $delivery = data_get($config, 'deliveryLimits', []);
+        $countryDelivery = $viewer?->country_code
+            ? data_get($this->countrySettings->effective((string) $viewer->country_code), 'boosting.deliveryLimits', [])
+            : [];
+        $maxImpressions = max(1, (int) data_get($countryDelivery, 'maxImpressionsPerViewer', data_get($delivery, 'maxImpressionsPerViewer', 3)));
+        $cooldownHours = max(1, (int) data_get($countryDelivery, 'cooldownHours', data_get($delivery, 'cooldownHours', 24)));
+        $campaigns = VideoBoostCampaign::query()
+            ->with('video')
+            ->where('status', 'active')
+            ->whereColumn('spent_amount', '<', 'budget_amount')
+            ->where(fn ($query) => $query->whereNull('starts_at')->orWhere('starts_at', '<=', now()))
+            ->where(fn ($query) => $query->whereNull('ends_at')->orWhere('ends_at', '>', now()))
+            ->where(fn ($placement) => $placement->whereJsonLength('targeting->placements', 0)->orWhereJsonContains('targeting->placements', 'for_you'))
+            ->whereNotIn('video_id', $organicIds)
+            ->whereHas('video', fn ($query) => $query->where('status', 'ready')->where('visibility', 'public'))
+            ->inRandomOrder()->limit(50)->get()
+            ->filter(fn (VideoBoostCampaign $campaign) => $this->campaignMatchesViewer($campaign, $viewerId, $config))
+            ->filter(fn (VideoBoostCampaign $campaign) => $this->viewerHasDeliveryCapacity($campaign, $viewerId, $maxImpressions, $cooldownHours))
+            ->take($slots)->values();
+
+        if ($campaigns->isEmpty()) return $organic;
+
+        $promoted = $this->loadVideosInFeedOrder($campaigns->pluck('video_id'), $viewerId);
+        $promoted->each(fn (Video $video) => $video->setAttribute('is_sponsored', true));
+        foreach ($campaigns as $campaign) $campaign->recordImpression($viewerId > 0 ? $viewerId : null);
+
+        $result = collect();
+        $organicIndex = 0;
+        $promotedIndex = 0;
+        while ($organicIndex < $organic->count() || $promotedIndex < $promoted->count()) {
+            if (($result->count() + 1) % 6 === 0 && $promotedIndex < $promoted->count()) {
+                $result->push($promoted[$promotedIndex++]);
+            } elseif ($organicIndex < $organic->count()) {
+                $result->push($organic[$organicIndex++]);
+            } elseif ($promotedIndex < $promoted->count()) {
+                $result->push($promoted[$promotedIndex++]);
+            }
+        }
+
+        return $result->take($limit)->values();
+    }
+    private function viewerHasDeliveryCapacity(VideoBoostCampaign $campaign, int $viewerId, int $maxImpressions, int $cooldownHours): bool
+    {
+        if ($viewerId <= 0) return true;
+        $history = \Illuminate\Support\Facades\DB::table('video_boost_impressions')->where('campaign_id', $campaign->id)->where('viewer_id', $viewerId);
+        return $history->count() < $maxImpressions && ! $history->where('served_at', '>=', now()->subHours($cooldownHours))->exists();
+    }
+
+    private function campaignMatchesViewer(VideoBoostCampaign $campaign, int $viewerId, array $config): bool
+    {
+        $target = $campaign->targeting ?? [];
+        if (! empty($target['placements']) && ! in_array('for_you', $target['placements'], true)) return false;
+        $user = $viewerId > 0 ? \App\Models\User::query()->find($viewerId) : null;
+        if ((bool) data_get($config, 'targeting.country', false) && ! empty($target['countries'])) {
+            $viewerCountries = $user ? array_filter([strtolower((string) $user->country_code), strtolower((string) $user->country)]) : [];
+            if (! array_intersect($viewerCountries, array_map('strtolower', $target['countries']))) return false;
+        }
+        if ((bool) data_get($config, 'targeting.region', false) && ! empty($target['regions'])) {
+            if (! $user || ! in_array(strtolower((string) $user->location), array_map('strtolower', $target['regions']), true)) return false;
+        }
+        if ((bool) data_get($config, 'targeting.interests', false) && ! empty($target['interests'])) {
+            $interests = \App\Models\Onboarding::query()->where('user_id', $viewerId)->first()?->vibe ?? [];
+            $interests = is_array($interests) ? array_map('strtolower', $interests) : [];
+            if (! array_intersect($interests, array_map('strtolower', $target['interests']))) return false;
+        }
+        return true;
+    }
+
     private function loadVideosInFeedOrder(Collection $feedItems, int $currentUserId): Collection
     {
         $videoIds = $feedItems

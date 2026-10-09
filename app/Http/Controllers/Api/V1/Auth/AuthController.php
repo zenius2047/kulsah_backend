@@ -219,6 +219,8 @@ public function updateVibe(Request $request)
                 'country_code' => ['The selected country code is invalid.'],
             ], 422);
         }
+        app(\App\Services\CountrySettingsService::class)->assertRegistrationAllowed($request->country_code, $request->dob);
+        $otpRoutes = app(\App\Services\CountrySettingsService::class)->registrationOtpRoutes($request->country_code, array_values(array_filter([$request->email ? 'email' : null, $request->phone ? 'sms' : null])), $request->email ?: $request->phone);
 
         $user = DB::transaction(function () use ($request, $country) {
             $location = $request->filled('location') ? $request->location : $country['name'];
@@ -263,12 +265,12 @@ public function updateVibe(Request $request)
         $otp = $user->registration_otp;
 
         // send OTP to email
-        if($request->email) {
+        if($request->email && in_array('email', $otpRoutes, true)) {
             $this->sendOtpEmail($request->email, $otp, $request->name);
         }
 
         // send OTP to phone number
-        if($request->phone) {
+        if($request->phone && in_array('sms', $otpRoutes, true)) {
             $this->sendOtpSms($request->phone, $otp);
         }
 
@@ -351,14 +353,13 @@ public function login(Request $request)
             ]
         );
 
-        // Send OTP
-        if ($user->email) {
-            $this->sendOtpEmail($user->email, $otp, $user->name);
-        }
-
-        if ($user->phone) {
-            $this->sendOtpSms($user->phone, $otp);
-        }
+        $otpRoutes = app(\App\Services\CountrySettingsService::class)->otpRoutes(
+            (string) $user->country_code,
+            array_values(array_filter([$user->email ? 'email' : null, $user->phone ? 'sms' : null])),
+            $user->email ?: $user->phone,
+        );
+        if ($user->email && in_array('email', $otpRoutes, true)) $this->sendOtpEmail($user->email, $otp, $user->name);
+        if ($user->phone && in_array('sms', $otpRoutes, true)) $this->sendOtpSms($user->phone, $otp);
         $token = $user->createToken('activation_token', ['activate'], now()->addMinutes(15))->plainTextToken;
 
         return response()->json([
@@ -483,6 +484,11 @@ public function login(Request $request)
     public function resendOtp(Request $request)
     {
         $user = $request->user();
+        $otpRoutes = app(\App\Services\CountrySettingsService::class)->otpRoutes(
+            (string) $user->country_code,
+            array_values(array_filter([$user->email ? 'email' : null, $user->phone ? 'sms' : null])),
+            $user->email ?: $user->phone,
+        );
         // generate new OTP
         $otp = $this->generateOtp();
         // update OTP in database
@@ -491,13 +497,8 @@ public function login(Request $request)
             ['otp' => $otp, 'expires_at' => now()->addMinutes(10)]
         );
         // send OTP to email
-        if($user->email) {
-            $this->sendOtpEmail($user->email, $otp, $user->name);
-        }
-        // send OTP to phone number
-        if($user->phone) {
-            $this->sendOtpSms($user->phone, $otp);
-        }
+        if ($user->email && in_array('email', $otpRoutes, true)) $this->sendOtpEmail($user->email, $otp, $user->name);
+        if ($user->phone && in_array('sms', $otpRoutes, true)) $this->sendOtpSms($user->phone, $otp);
         return response()->json(['message' => 'OTP resent successfully']);
     }
 
@@ -597,6 +598,11 @@ public function login(Request $request)
                     })
                     ->first();
 
+        $otpRoutes = app(\App\Services\CountrySettingsService::class)->otpRoutes(
+            (string) $user->country_code,
+            array_values(array_filter([$request->email ? 'email' : null, $request->phone ? 'sms' : null])),
+            $request->email ?: $request->phone,
+        );
         $otp = $this->generateOtp();
 
         PasswordResetOtp::updateOrCreate(
@@ -610,12 +616,12 @@ public function login(Request $request)
         );
 
         // Send Email
-        if ($request->email) {
+        if ($request->email && in_array('email', $otpRoutes, true)) {
              $this->sendResetOtp($user->email, $otp, $user->name);
         }
 
         // Send SMS
-        if ($request->phone) {
+        if ($request->phone && in_array('sms', $otpRoutes, true)) {
             $message = "Your password reset OTP is {$otp}. It expires in 10 minutes.";
 
             // Arkesel SMS

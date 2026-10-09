@@ -134,6 +134,9 @@ class ConsoleController extends Controller
     {
         $this->access->authorize($this->actor($request), 'analytics.view');
         [$start, $end] = $this->range($request);
+        $periodDays = max(1, $start->diffInDays($end) + 1);
+        $previousStart = $start->copy()->subDays($periodDays);
+        $previousEnd = $start->copy()->subSecond();
         $creators = User::whereHas('roles', fn ($q) => $q->where('name', 'creator'));
         $metrics = [
             'Total users' => User::count(), 'Active users' => User::whereBetween('last_seen_at', [$start, $end])->count(),
@@ -147,10 +150,64 @@ class ConsoleController extends Controller
             'Pending withdrawals' => WalletTransaction::where('type', 'withdrawal')->where('status', 'pending')->count(),
             'Pending reports' => SignalReport::where('status', 'open')->count(),
         ];
+        $currentPeriodMetrics = [
+            'Total users' => User::whereBetween('created_at', [$start, $end])->count(),
+            'Active users' => $metrics['Active users'],
+            'New users' => $metrics['New users'],
+            'Total creators' => (clone $creators)->whereBetween('created_at', [$start, $end])->count(),
+            'Verified creators' => (clone $creators)->where('verified', true)->whereBetween('created_at', [$start, $end])->count(),
+            'Total videos' => Video::whereBetween('created_at', [$start, $end])->count(),
+            'Total followers' => DB::table('user_follows')->whereBetween('created_at', [$start, $end])->count(),
+            'Total subscribers' => DB::table('subscriptions')->where('status', 'active')->whereBetween('created_at', [$start, $end])->count(),
+            'Total events' => Event::whereBetween('created_at', [$start, $end])->count(),
+            'Tickets sold' => DB::table('event_tickets')->whereBetween('created_at', [$start, $end])->count(),
+            'Platform revenue' => $metrics['Platform revenue'],
+            'Creator revenue' => $metrics['Creator revenue'],
+            'Pending reports' => SignalReport::where('status', 'open')->whereBetween('created_at', [$start, $end])->count(),
+        ];
+        $previousMetrics = [
+            'Total users' => User::whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Active users' => User::whereBetween('last_seen_at', [$previousStart, $previousEnd])->count(),
+            'New users' => User::whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Total creators' => (clone $creators)->whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Verified creators' => (clone $creators)->where('verified', true)->whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Total videos' => Video::whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Total followers' => DB::table('user_follows')->whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Total subscribers' => DB::table('subscriptions')->where('status', 'active')->whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Total events' => Event::whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Tickets sold' => DB::table('event_tickets')->whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+            'Platform revenue' => WalletTransaction::where('status', 'completed')->whereBetween('created_at', [$previousStart, $previousEnd])->sum('platform_fee_usd'),
+            'Creator revenue' => WalletTransaction::where('status', 'completed')->whereBetween('created_at', [$previousStart, $previousEnd])->sum('net_usd_amount'),
+            'Pending reports' => SignalReport::where('status', 'open')->whereBetween('created_at', [$previousStart, $previousEnd])->count(),
+        ];
+        $staticHints = [
+            'Active live streams' => 'live right now',
+            'Total views' => 'all-time total',
+            'Pending withdrawals' => 'awaiting action',
+        ];
+        $kpis = collect($metrics)->map(function ($value, $label) use ($currentPeriodMetrics, $previousMetrics, $staticHints) {
+            $hasComparison = array_key_exists($label, $currentPeriodMetrics);
+            $previous = $hasComparison ? (float) $previousMetrics[$label] : null;
+            $change = $hasComparison ? (float) $currentPeriodMetrics[$label] - $previous : null;
+            if ($change === null) {
+                $trend = 'flat';
+                $delta = $staticHints[$label] ?? '';
+            } elseif ($label === 'Pending reports') {
+                $trend = $change > 0 ? 'down' : ($change < 0 ? 'up' : 'flat');
+                $delta = ($change > 0 ? '+' : '').number_format($change, 0);
+            } else {
+                $percentage = $previous > 0 ? ($change / $previous) * 100 : ($change > 0 ? 100 : 0);
+                $trend = $percentage > 0 ? 'up' : ($percentage < 0 ? 'down' : 'flat');
+                $delta = sprintf('%+.1f%%', $percentage);
+            }
+
+            return ['label' => $label,
+                'value' => (str_contains($label, 'revenue') ? 'GH'."\u{20B5}" : '').number_format((float) $value, str_contains($label, 'revenue') ? 2 : 0),
+                'delta' => $delta, 'trend' => $trend];
+        })->values();
         $total = max(1, User::count());
         $geo = User::selectRaw('country, COUNT(*) AS users')->groupBy('country')->orderByDesc('users')->get()->map(fn ($r) => ['country' => $r->country ?: 'Unknown', 'users' => (int) $r->users, 'share' => round($r->users / $total * 100, 1)]);
-        return response()->json(['data' => ['kpis' => collect($metrics)->map(fn ($value, $label) => ['label' => $label,
-            'value' => (str_contains($label, 'revenue') ? 'GH₵' : '').number_format((float) $value, str_contains($label, 'revenue') ? 2 : 0), 'delta' => '', 'trend' => 'flat'])->values(),
+        return response()->json(['data' => ['kpis' => $kpis,
             'userGrowth' => $this->chart('users', 'count', $start, $end), 'revenue' => $this->chart('wallet_transactions', 'platform_fee_usd', $start, $end, ['status' => 'completed']),
             'engagement' => $this->chart('video_likes', 'count', $start, $end), 'contentPerformance' => $this->chart('videos', 'count', $start, $end),
             'geography' => $geo, 'liveNow' => LiveSession::with('creator')->where('status', 'live')->orderByDesc('current_viewers')->limit(6)->get()->map(fn ($s) => $this->resources->stream($s)),

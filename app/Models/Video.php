@@ -8,6 +8,7 @@ use App\Enums\VideoUploadStatus;
 use App\Services\CloudinaryService;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Video extends Model
 {
@@ -95,6 +96,18 @@ class Video extends Model
         ];
     }
 
+    public function boostCampaigns(): HasMany
+    {
+        return $this->hasMany(VideoBoostCampaign::class);
+    }
+    public function activeBoostCampaigns(): HasMany
+    {
+        return $this->boostCampaigns()
+            ->where('status', 'active')
+            ->whereColumn('spent_amount', '<', 'budget_amount')
+            ->where(fn ($query) => $query->whereNull('starts_at')->orWhere('starts_at', '<=', now()))
+            ->where(fn ($query) => $query->whereNull('ends_at')->orWhere('ends_at', '>', now()));
+    }
     public function getIsPremiumAttribute(): bool
     {
         return $this->visibility === 'premium';

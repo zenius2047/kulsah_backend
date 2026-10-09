@@ -7,6 +7,7 @@ use App\Models\KulCoinPackage;
 use App\Models\Payment;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
+use App\Models\VideoBoostCampaign;
 use App\Events\PaymentStatusChanged;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -18,19 +19,24 @@ class PaymentService
         private readonly MoneyService $money,
         private readonly PaymentFulfillmentService $fulfillment,
         private readonly RevenueRuleCalculator $revenueRules,
+        private readonly CountrySettingsService $countrySettings,
     ) {
     }
 
     public function initialize(User $user, array $input): Payment
     {
         $purpose = $input['purpose'];
+        $feature = match ($purpose) { 'subscription' => 'subscriptions', 'event_ticket' => 'paidEvents', 'kulcoin' => 'kulcoinPurchases', 'video_boost' => 'videoBoosting' };
+        $this->countrySettings->assertFeatureAllowed($user, $feature);
         [$payable, $amount, $currency, $metadata] = $this->resolvePurchase($user, $purpose, $input);
+        $this->countrySettings->assertPaymentAllowed($user, $input['method'], $currency);
         $source = match ($purpose) {
             'subscription' => 'creator_subscription',
             'event_ticket' => 'event_ticket',
+            'video_boost' => 'content_boost',
             'kulcoin' => 'kulcoin_transaction',
         };
-        $context = ['country' => $user->country];
+        $context = ['country' => $user->country_code];
         if ($purpose === 'subscription') $context['creator_id'] = $payable->creator_id;
         if ($purpose === 'event_ticket') $context['organizer_id'] = $payable->user_id;
         $ruleCalculation = $this->revenueRules->calculate($source, (float) $amount, strtoupper($currency), $context);
@@ -160,6 +166,7 @@ class PaymentService
             'kulcoin' => $this->kulcoinPurchase($input),
             'subscription' => $this->subscriptionPurchase($user, $input),
             'event_ticket' => $this->ticketPurchase($input),
+            'video_boost' => $this->videoBoostPurchase($user, $input),
             default => throw ValidationException::withMessages(['purpose' => 'Unsupported payment purpose.']),
         };
     }
@@ -167,7 +174,7 @@ class PaymentService
     private function kulcoinPurchase(array $input): array
     {
         $package = KulCoinPackage::query()->active()->findOrFail($input['package_id']);
-        return [$package, $package->usd_price, $package->currency_code, ['package_id' => $package->id, 'package_code' => $package->code]];
+        return [$package, $package->usd_price, $package->currency_code, ['package_id' => $package->id, 'package_code' => $package->code, 'coin_amount' => (int) $package->coin_amount, 'bonus_coin_amount' => (int) $package->bonus_coin_amount]];
     }
 
     private function subscriptionPurchase(User $user, array $input): array
@@ -179,6 +186,20 @@ class PaymentService
         return [$plan, $plan->price, $plan->currency, ['subscription_plan_id' => $plan->id]];
     }
 
+    private function videoBoostPurchase(User $user, array $input): array
+    {
+        $campaign = VideoBoostCampaign::query()->where('creator_id', $user->id)
+            ->where('status', 'pending_payment')->findOrFail($input['boost_campaign_id']);
+        if ($campaign->currency !== 'GHS' || (float) $campaign->budget_amount <= 0) {
+            throw ValidationException::withMessages(['boost_campaign_id' => 'This campaign is not eligible for cash payment.']);
+        }
+        return [$campaign, (float) $campaign->budget_amount, 'GHS', [
+            'boost_campaign_id' => $campaign->id,
+            'video_id' => $campaign->video_id,
+            'package_name' => $campaign->package_name,
+        ]];
+    }
+
     private function ticketPurchase(array $input): array
     {
         $event = Event::query()->where('status', 'published')->findOrFail($input['event_id']);
@@ -187,6 +208,6 @@ class PaymentService
         if (! $type || $quantity < 1 || (int) $event->capacity - (int) $event->tickets_sold < $quantity) {
             throw ValidationException::withMessages(['ticket_type_code' => 'The selected ticket is unavailable.']);
         }
-        return [$event, (float) $type['price'] * $quantity, $event->currency, ['event_id' => $event->id, 'ticket_type_code' => $type['code'], 'quantity' => $quantity]];
+        return [$event, (float) $type['price'] * $quantity, $event->currency, ['event_id' => $event->id, 'ticket_type_code' => $type['code'], 'ticket_type_snapshot' => $type, 'quantity' => $quantity, 'unit_price' => (float) $type['price'], 'event_currency' => strtoupper((string) $event->currency)]];
     }
 }

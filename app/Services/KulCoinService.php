@@ -6,6 +6,7 @@ use App\Models\KulCoinGift;
 use App\Models\KulCoinLedgerEntry;
 use App\Models\KulCoinPackage;
 use App\Models\KulCoinTransaction;
+use App\Models\VideoBoostCampaign;
 use App\Models\KulCoinWallet;
 use App\Models\User;
 use Carbon\Carbon;
@@ -20,6 +21,7 @@ class KulCoinService
     public function __construct(
         private readonly WalletService $walletService,
         private readonly RevenueRuleCalculator $revenueRules,
+        private readonly CountrySettingsService $countrySettings,
     ) {}
 
     public function getOrCreateUserWallet(User $user): KulCoinWallet
@@ -87,7 +89,7 @@ class KulCoinService
         array $data = [],
         ?User $actor = null
     ): KulCoinTransaction {
-        if (! $package->is_active) {
+        if (! $package->is_active && ! isset($data['coin_amount'])) {
             throw ValidationException::withMessages([
                 'package_id' => 'The selected package is not available.',
             ]);
@@ -119,8 +121,8 @@ class KulCoinService
             $issuerWallet = $this->lockWallet($issuerWallet);
             $promoWallet = $this->lockWallet($promoWallet);
 
-            $coinAmount = (int) $package->coin_amount;
-            $bonusAmount = (int) $package->bonus_coin_amount;
+            $coinAmount = (int) ($data['coin_amount'] ?? $package->coin_amount);
+            $bonusAmount = (int) ($data['bonus_coin_amount'] ?? $package->bonus_coin_amount);
             $localAmount = $this->normalizeDecimal($data['local_amount'] ?? $package->usd_price);
             $usdAmount = $this->normalizeDecimal($data['usd_amount'] ?? $package->usd_price);
             $localCurrency = strtoupper((string) ($data['local_currency'] ?? config('kulcoin.default_package_currency', 'USD')));
@@ -175,6 +177,7 @@ class KulCoinService
         array $data = [],
         ?User $actor = null
     ): KulCoinTransaction {
+        $this->countrySettings->assertFeatureAllowed($sender, 'virtualGifts');
         if ($sender->is($creator)) {
             throw ValidationException::withMessages([
                 'creator_id' => 'You cannot send a gift to yourself.',
@@ -300,11 +303,40 @@ class KulCoinService
         });
     }
 
+    public function chargeVideoBoost(User $creator, VideoBoostCampaign $campaign, int $coinAmount): KulCoinTransaction
+    {
+        if ($coinAmount < 1) throw ValidationException::withMessages(['coins' => 'The campaign price must be positive.']);
+        $wallet = $this->getOrCreateUserWallet($creator);
+        $treasury = $this->getOrCreateSystemWallet('video_boost_escrow', 'Video Boost Kulcoin Escrow');
+
+        return DB::transaction(function () use ($creator, $campaign, $coinAmount, $wallet, $treasury): KulCoinTransaction {
+            $wallet = $this->lockWallet($wallet);
+            $treasury = $this->lockWallet($treasury);
+            $allocation = $this->allocateDebitBuckets($wallet, $coinAmount);
+            $transaction = KulCoinTransaction::query()->create([
+                'reference' => (string) Str::uuid(), 'idempotency_key' => 'video-boost:'.$campaign->id,
+                'type' => 'video_boost', 'status' => 'completed', 'user_id' => $creator->id,
+                'counterparty_wallet_id' => $treasury->id, 'usd_amount' => round($coinAmount * (float) config('kulcoin.coin_to_usd_rate', 0.01), 4),
+                'coin_amount' => $coinAmount, 'bonus_coin_amount' => 0, 'net_coin_amount' => $coinAmount,
+                'description' => 'Video boost campaign: '.$campaign->package_name,
+                'metadata' => ['campaign_id' => $campaign->id, 'video_id' => $campaign->video_id],
+                'performed_by_user_id' => $creator->id, 'processed_at' => now(),
+            ]);
+            foreach ($allocation as $bucket => $amount) {
+                if ($amount > 0) $this->recordEntry($transaction, $wallet, 'debit', $bucket, $amount, 'Video boost campaign', $transaction->metadata ?? []);
+            }
+            $this->recordEntry($transaction, $treasury, 'credit', 'available', $coinAmount, 'Video boost campaign funds', $transaction->metadata ?? []);
+            $this->assertTransactionBalanced($transaction);
+            return $transaction;
+        });
+    }
+
     public function castVote(
         User $user,
         array $data,
         ?User $actor = null
     ): KulCoinTransaction {
+        if (($data['contest_type'] ?? null) === 'live_battle') $this->countrySettings->assertFeatureAllowed($user, 'liveBattle');
         $votePrice = max(1, (int) config('kulcoin.vote_coin_price', 10));
         $voteCount = max(1, (int) ($data['vote_count'] ?? 1));
         $coinAmount = $votePrice * $voteCount;

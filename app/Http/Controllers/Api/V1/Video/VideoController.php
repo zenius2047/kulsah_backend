@@ -14,6 +14,7 @@ use App\Models\VideoView;
 use App\Services\VideoCacheService;
 use App\Services\VideoEditService;
 use App\Services\VideoService;
+use App\Services\CountrySettingsService;
 use App\Services\VideoStorageService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -31,6 +32,7 @@ class VideoController extends Controller
         private readonly VideoCacheService $videoCacheService,
         private readonly VideoStorageService $videoStorageService,
         private readonly VideoEditService $videoEditService,
+        private readonly CountrySettingsService $countrySettings,
     ) {}
 
     public function index(Request $request)
@@ -212,6 +214,8 @@ class VideoController extends Controller
             'requires_editing' => ['sometimes', 'boolean'],
         ]);
 
+        if ($request->input('visibility', 'public') === 'premium') $this->countrySettings->assertFeatureAllowed($request->user(), 'premiumContent');
+
         try {
             $contentTypes = $this->resolveContentTypes($request);
 
@@ -289,6 +293,7 @@ class VideoController extends Controller
             'requires_editing' => ['sometimes', 'boolean'],
         ]);
 
+        if ($request->input('visibility', 'public') === 'premium') $this->countrySettings->assertFeatureAllowed($request->user(), 'premiumContent');
         $contentTypes = $this->resolveContentTypes($request);
 
         try {
@@ -637,6 +642,7 @@ class VideoController extends Controller
             'thumbnail' => $this->thumbnailValidationRules(),
         ]);
 
+        if (($validated['visibility'] ?? 'public') === 'premium') $this->countrySettings->assertFeatureAllowed($request->user(), 'premiumContent');
         $contentTypes = $this->resolveContentTypes($request);
 
         $thumbnail = null;
@@ -684,6 +690,7 @@ class VideoController extends Controller
             'allow_duet' => ['sometimes', 'boolean'],
         ]);
 
+        if (($validated['visibility'] ?? 'public') === 'premium') $this->countrySettings->assertFeatureAllowed($request->user(), 'premiumContent');
         $contentTypes = $this->resolveContentTypes($request);
 
         $duet = $this->videoService->createDraftVideo(
@@ -785,6 +792,7 @@ class VideoController extends Controller
             'sound' => ['sometimes', 'nullable', 'array'],
         ]);
 
+        if (($validated['visibility'] ?? $video->visibility) === 'premium') $this->countrySettings->assertFeatureAllowed($request->user(), 'premiumContent');
         try {
             $video = $this->videoService->updateVideo(
                 video: $video,

@@ -11,6 +11,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\User;
 use App\Models\UserFollow;
 use App\Services\WalletService;
+use App\Services\CountrySettingsService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -21,7 +22,7 @@ class SubscriptionController extends Controller
     private const CACHE_TTL_MINUTES = 10;
     private const RENEWAL_WINDOW_DAYS = 7;
 
-    public function __construct(private readonly WalletService $walletService)
+    public function __construct(private readonly WalletService $walletService, private readonly CountrySettingsService $countrySettings)
     {
     }
 
@@ -111,6 +112,7 @@ class SubscriptionController extends Controller
     // Creators can create only one plan; after that they should update the existing plan instead.
     public function store(Request $request)
     {
+        $this->countrySettings->assertFeatureAllowed($request->user(), 'subscriptions');
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:2000'],
@@ -119,6 +121,7 @@ class SubscriptionController extends Controller
             'billing_interval' => ['required', 'string', 'in:monthly'],
         ]);
 
+        $this->countrySettings->assertPriceInRange($request->user(), 'subscriptions', (float) $validated['price'], (string) $validated['currency']);
         abort_if(
             $request->user()->subscriptionPlans()->exists(),
             422,
@@ -151,6 +154,7 @@ class SubscriptionController extends Controller
     public function update(Request $request, SubscriptionPlan $subscriptionPlan)
     {
         $this->ensureOwnership($request->user(), $subscriptionPlan);
+        if ($request->has('price') || $request->has('currency')) $this->countrySettings->assertFeatureAllowed($request->user(), 'subscriptions');
 
         $validated = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
@@ -160,6 +164,7 @@ class SubscriptionController extends Controller
             'billing_interval' => ['sometimes', 'string', 'in:monthly'],
         ]);
 
+        if (isset($validated['price']) || isset($validated['currency'])) $this->countrySettings->assertPriceInRange($request->user(), 'subscriptions', (float) ($validated['price'] ?? $subscriptionPlan->price), (string) ($validated['currency'] ?? $subscriptionPlan->currency));
         DB::transaction(function () use ($subscriptionPlan, $validated) {
             $subscriptionPlan->update($validated);
         });
@@ -177,6 +182,10 @@ class SubscriptionController extends Controller
     // Fans subscribe to an active plan; re-subscription is only allowed near expiry or after expiry.
     public function subscribe(Request $request, SubscriptionPlan $subscriptionPlan)
     {
+        if ((float) $subscriptionPlan->price > 0) {
+            $this->countrySettings->assertFeatureAllowed($request->user(), 'subscriptions');
+            $this->countrySettings->assertPriceInRange($request->user(), 'subscriptions', (float) $subscriptionPlan->price, (string) $subscriptionPlan->currency);
+        }
         abort_unless($subscriptionPlan->is_active, 422, 'Selected subscription plan is inactive.');
         abort_if((string) $request->user()->id === (string) $subscriptionPlan->creator_id, 422, 'You cannot subscribe to your own plan.');
 
