@@ -37,4 +37,7 @@ return [
     'duet_render_crf' => (int) env('VIDEO_DUET_RENDER_CRF', 25),
     'edit_overlay_fetch_timeout_seconds' => (int) env('VIDEO_EDIT_OVERLAY_FETCH_TIMEOUT_SECONDS', 45),
     'ffmpeg_font_file' => env('VIDEO_FFMPEG_FONT_FILE'),
+    'export_logo' => public_path('brand/kulsah-logo.png'),
+    'export_version' => env('VIDEO_EXPORT_VERSION', '1'),
+    'export_directory' => 'videos/exports',
 ];

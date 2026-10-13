@@ -22,12 +22,17 @@ class WebAuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        if (! Auth::attempt($credentials, $request->boolean('remember'))) {
+        if (! Auth::guard('web')->validate($credentials)) {
             throw ValidationException::withMessages([
                 'email' => 'The provided credentials are incorrect.',
             ]);
         }
 
+        $user = Auth::guard('web')->getLastAttempted();
+        if (\Illuminate\Support\Facades\Schema::hasTable('developer_preferences') && \Illuminate\Support\Facades\DB::table('developer_preferences')->where('user_id',$user->id)->whereNotNull('totp_confirmed_at')->exists()) {
+            if (!app(\App\Services\DeveloperTotp::class)->verify($user->id,(string)$request->input('otp'))) throw ValidationException::withMessages(['otp'=>'Enter a valid authenticator or recovery code.']);
+        }
+        Auth::guard('web')->login($user,$request->boolean('remember'));
         $request->session()->regenerate();
 
         return redirect()->intended(route('dashboard'));

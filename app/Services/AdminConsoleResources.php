@@ -163,6 +163,33 @@ class AdminConsoleResources
         ];
     }
 
+    public function challengeDetails(string $id): array
+    {
+        $challenge = Challenge::with(['media.video.user', 'entries.creator', 'entries.video.user'])->findOrFail($id);
+        $media = $challenge->media->sortBy([['sort_order', 'asc'], ['id', 'asc']]);
+        $officialMedia = $media->firstWhere('role', 'challenge_video')
+            ?? $media->firstWhere('role', 'instruction_video')
+            ?? $media->first(fn ($item) => $item->video !== null);
+        $officialVideo = $officialMedia?->video;
+        if (! $officialVideo && $challenge->official_sound_id) {
+            $officialVideo = \App\Models\Video::with('user')->find($challenge->official_sound_id);
+        }
+
+        return [
+            'description' => (string) ($challenge->description ?? ''),
+            'officialVideo' => $officialVideo ? $this->video($officialVideo) : null,
+            'entries' => $challenge->entries->sortByDesc('submitted_at')->values()->map(fn ($entry) => [
+                'id' => (string) $entry->id,
+                'creator' => $entry->creator?->name ?? 'Deleted user',
+                'avatar' => $entry->creator?->avatar,
+                'caption' => (string) ($entry->caption ?? $entry->video?->caption ?? ''),
+                'status' => $this->title($entry->status),
+                'submittedAt' => $this->iso($entry->submitted_at),
+                'video' => $entry->video ? $this->video($entry->video) : null,
+            ])->all(),
+        ];
+    }
+
     public function video($v): array
     {
         $meta = $v->metadata ?? [];
@@ -173,7 +200,8 @@ class AdminConsoleResources
             'visibility' => $this->title($v->visibility), 'status' => $meta['console_status'] ?? match ($v->status) {'ready' => 'Published', 'failed' => 'Rejected', default => $this->title($v->status)},
             'price' => (float) ($meta['price_ghs'] ?? 0), 'purchases' => (int) ($meta['purchases'] ?? 0), 'revenue' => (float) ($meta['revenue_ghs'] ?? 0),
             'publishedAt' => $this->iso($v->created_at), 'reports' => SignalReport::where('reportable_type', get_class($v))->where('reportable_id', $v->id)->count(),
-            'durationSeconds' => (int) ($v->duration ?? 0), 'playbackUrl' => $v->playback_url, 'thumbnailUrl' => $v->thumbnail_url,
+            'durationSeconds' => (int) ($v->duration ?? 0), 'playbackUrl' => $v->playback_url,
+            'thumbnailUrl' => $v->poster_url ?: $v->thumbnail_url ?: data_get($meta, 'thumbnail'),
         ];
     }
 

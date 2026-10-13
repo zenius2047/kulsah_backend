@@ -676,6 +676,12 @@ class VideoService
             $updates['allow_duet'] = (bool) $data['allow_duet'];
         }
 
+        if (array_key_exists('allow_download', $data)) {
+            $updates['metadata'] = array_merge($updates['metadata'] ?? $currentMetadata, [
+                'allow_download' => (bool) $data['allow_download'],
+            ]);
+        }
+
         if ($video->duet_source_video_id && (
             array_key_exists('duet_layout', $data)
             || array_key_exists('duet_source_audio', $data)

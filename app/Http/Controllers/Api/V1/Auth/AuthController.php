@@ -372,6 +372,9 @@ public function login(Request $request)
     // =====================
     // LOGIN USER (SANCTUM TOKEN)
     // =====================
+    if (\Illuminate\Support\Facades\Schema::hasTable('developer_preferences') && DB::table('developer_preferences')->where('user_id',$user->id)->whereNotNull('totp_confirmed_at')->exists()) {
+        if (!app(\App\Services\DeveloperTotp::class)->verify($user->id,(string)$request->input('otp'))) return response()->json(['message'=>'Enter a valid authenticator or recovery code.','requires_two_factor'=>true],422);
+    }
     Auth::login($user);
 
     $session = $this->issueSession($user, $request);
@@ -470,7 +473,8 @@ public function login(Request $request)
         DB::table('users')->where('id', $user->id)->update(['activated' => true, 'activated_at' => now()]);
         // delete OTP record
         DB::table('activation_otp')->where('user_id', $user->id)->delete();
-        $request->user()->currentAccessToken()?->delete();
+        $currentToken = $request->user()->currentAccessToken();
+        if ($currentToken instanceof PersonalAccessToken) $currentToken->delete();
         $session = $this->issueSession($user, $request);
 
         return response()->json([
@@ -564,6 +568,9 @@ public function login(Request $request)
             $user->roles()->attach(3);
         }
 
+        if (\Illuminate\Support\Facades\Schema::hasTable('developer_preferences') && DB::table('developer_preferences')->where('user_id',$user->id)->whereNotNull('totp_confirmed_at')->exists()) {
+            if (!app(\App\Services\DeveloperTotp::class)->verify($user->id,(string)$request->input('otp'))) return response()->json(['message'=>'Enter a valid authenticator or recovery code.','requires_two_factor'=>true],422);
+        }
         // 5. Create Laravel token (Sanctum)
         $session = $this->issueSession($user, $request);
 
@@ -760,7 +767,9 @@ public function login(Request $request)
     public function logout(Request $request)
     {
         $request->validate(['refresh_token' => ['nullable', 'string']]);
-        $request->user()->currentAccessToken()?->delete();
+        $currentToken = $request->user()->currentAccessToken();
+        if ($currentToken instanceof PersonalAccessToken) $currentToken->delete();
+        if ($request->hasSession()) { Auth::guard('web')->logout(); $request->session()->invalidate(); $request->session()->regenerateToken(); }
 
         if ($request->filled('refresh_token')) {
             $refreshToken = PersonalAccessToken::findToken($request->string('refresh_token')->toString());
@@ -797,6 +806,16 @@ public function login(Request $request)
 
         DB::transaction(function () use ($user) {
             $anonymousId = $user->id.'-'.Str::lower(Str::random(12));
+            $clientIds = DB::table('oauth_clients')->where('owner_type', User::class)->where('owner_id', $user->id)->pluck('id');
+            $tokenIds = DB::table('oauth_access_tokens')->whereIn('client_id', $clientIds)->orWhere('user_id', $user->id)->pluck('id');
+            DB::table('oauth_access_tokens')->whereIn('id', $tokenIds)->update(['revoked'=>true]);
+            DB::table('oauth_refresh_tokens')->whereIn('access_token_id', $tokenIds)->update(['revoked'=>true]);
+            DB::table('oauth_clients')->whereIn('id', $clientIds)->update(['revoked'=>true]);
+            if ($request = request()) { if ($request->hasSession()) { Auth::guard('web')->logout(); $request->session()->invalidate(); $request->session()->regenerateToken(); } }
+            DB::table('sessions')->where('user_id',$user->id)->delete();
+            foreach(['developer_memberships','developer_invitations','developer_webhooks'] as $table) if(\Illuminate\Support\Facades\Schema::hasTable($table)) DB::table($table)->where('owner_id',$user->id)->delete();
+            if(\Illuminate\Support\Facades\Schema::hasTable('developer_preferences')) DB::table('developer_preferences')->where('user_id',$user->id)->delete();
+            if(\Illuminate\Support\Facades\Schema::hasTable('developer_memberships')) DB::table('developer_memberships')->where('user_id',$user->id)->delete();
             $user->tokens()->delete();
             $user->roles()->detach();
             $user->onboarding()->delete();
@@ -854,6 +873,7 @@ public function login(Request $request)
     private function issueSession(User $user, Request $request): array
     {
         $deviceName = trim((string) $request->header('X-Device-Name', 'mobile')) ?: 'mobile';
+        $deviceName = Str::limit($deviceName, 160, '').'|'.Str::uuid();
         $accessToken = $user->createToken(
             $deviceName.'-access',
             ['*'],

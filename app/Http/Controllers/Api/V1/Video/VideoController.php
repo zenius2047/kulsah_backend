@@ -137,6 +137,9 @@ class VideoController extends Controller
 
     public function creatorShow(Request $request, Video $video)
     {
+        if ($request->has('export')) {
+            return $this->export($request, $video);
+        }
         abort_unless(
             (string) $video->user_id === (string) $request->user()->id,
             403,
@@ -786,6 +789,7 @@ class VideoController extends Controller
             'visibility' => ['sometimes', 'string', 'in:public,premium'],
             'allow_duet' => ['sometimes', 'boolean'],
             'duet_layout' => ['sometimes', 'string', 'in:side_by_side,stacked,picture_in_picture'],
+            'allow_download' => ['sometimes', 'boolean'],
             'duet_source_audio' => ['sometimes', 'boolean'],
             'duet_response_audio' => ['sometimes', 'boolean'],
             'music' => ['sometimes', 'nullable', 'array'],
@@ -825,6 +829,9 @@ class VideoController extends Controller
 
     public function show(Request $request, Video $video)
     {
+        if ($request->has('export')) {
+            return $this->export($request, $video);
+        }
         abort_unless(
             (string) $video->user_id === (string) $request->user()->id
                 || $request->user()->roles()->whereIn('name', ['admin'])->exists(),
@@ -846,6 +853,49 @@ class VideoController extends Controller
         );
 
         return response()->json($payload);
+    }
+
+    private function export(Request $request, Video $video)
+    {
+        $validated = $request->validate([
+            'export' => ['required', 'in:video,link'],
+            'retry' => ['sometimes', 'boolean'],
+            'delivery' => ['sometimes', 'uuid'],
+        ]);
+        $service = app(\App\Services\VideoExportService::class);
+        $video->refresh();
+        $viewer = $request->user();
+        abort_unless($viewer, 401);
+        if ($validated['export'] === 'link') {
+            $creator = $video->user()->first();
+            abort_unless($creator && $creator->console_status === 'Active'
+                && $video->status === 'ready' && $video->processing_status?->value === 'ready'
+                && in_array($video->visibility, ['public', 'premium'], true)
+                && in_array(data_get($video->metadata, 'console_status', 'Published'), ['Approved', 'Published', 'Active'], true), 403);
+            abort_if($viewer->isBlocking($creator) || $viewer->isBlockedBy($creator), 403);
+
+            return response()->json(['data' => ['url' => rtrim(config('app.url'), '/').'/videos/'.$video->id]])
+                ->header('Cache-Control', 'private, no-store');
+        }
+        $service->authorize($video, $viewer);
+        if (isset($validated['delivery'])) {
+            $export = \App\Models\VideoExport::where('video_id', $video->id)->where('token', $validated['delivery'])->first();
+            abort_unless($export && $export->status === 'ready' && $export->fingerprint === $service->fingerprint($video), 409, 'Prepare the video again.');
+            $storage = \Illuminate\Support\Facades\Storage::disk($export->disk);
+            abort_unless($export->path && $storage->exists($export->path), 409, 'Prepare the video again.');
+
+            return $storage->download($export->path, 'kulsah-'.$video->id.'.mp4', [
+                'Content-Type' => 'video/mp4', 'Cache-Control' => 'private, no-store',
+            ]);
+        }
+        $export = $service->request($video, $viewer, $request->boolean('retry'));
+
+        return response()->json(['data' => [
+            'status' => $export->status,
+            'url' => $export->status === 'ready' ? $request->url().'?export=video&delivery='.$export->token : null,
+            'error' => $export->status === 'failed' ? $export->error : null,
+        ]], in_array($export->status, ['pending', 'processing'], true) ? 202 : 200)
+            ->header('Cache-Control', 'private, no-store')->header('Retry-After', '3');
     }
 
     public function progress(Request $request, Video $video)

@@ -40,7 +40,9 @@ return Application::configure(basePath: dirname(__DIR__))
     ])
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->statefulApi();
+        $middleware->appendToGroup('api', \App\Http\Middleware\PreferApiBearerToken::class);
         $middleware->appendToGroup('api', \App\Http\Middleware\ConsolePlatformPolicy::class);
+        $middleware->prepend(\App\Http\Middleware\RecordDeveloperRequests::class);
 
         $middleware->alias([
             'role' => RoleMiddleware::class,

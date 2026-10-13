@@ -325,6 +325,13 @@
                 </div>
 
                 <div class="actions">
+                    @if($errors->has('otp'))
+                    <div class="field">
+                        <label for="otp">Authenticator or recovery code</label>
+                        <input id="otp" name="otp" type="text" autocomplete="one-time-code" maxlength="20" required>
+                        @error('otp')<p class="error">{{ $message }}</p>@enderror
+                    </div>
+                    @endif
                     <label class="remember">
                         <input type="checkbox" name="remember" value="1">
                         Remember me

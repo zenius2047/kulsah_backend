@@ -14,6 +14,8 @@ class OAuthClientControllerTest extends TestCase
     public function test_developer_can_create_list_view_and_revoke_oauth_clients(): void
     {
         $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
             'username' => 'dev_user',
         ]);
 
@@ -104,6 +106,8 @@ class OAuthClientControllerTest extends TestCase
     public function test_developer_cannot_create_duplicate_client_names(): void
     {
         $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
             'username' => 'dev_user_2',
         ]);
 
@@ -135,6 +139,8 @@ class OAuthClientControllerTest extends TestCase
     public function test_secret_is_not_returned_in_list_or_show_responses(): void
     {
         $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
             'username' => 'dev_user_3',
         ]);
 

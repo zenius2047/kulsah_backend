@@ -8,6 +8,8 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
+Schedule::command('videos:prune-exports')->hourly()->withoutOverlapping()->onOneServer();
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
@@ -68,3 +70,5 @@ Schedule::call(function (): void {
         ->each(fn (int $id) => SyncChallengeLifecycle::dispatch($id));
 })->everyMinute()->name('challenges:sync-lifecycle')->withoutOverlapping()->onOneServer();
 
+
+Schedule::command('developer:prune-logs')->daily()->withoutOverlapping();

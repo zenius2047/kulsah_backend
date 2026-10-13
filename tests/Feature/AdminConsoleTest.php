@@ -95,6 +95,47 @@ class AdminConsoleTest extends TestCase
         $this->withToken($user->createToken('admin-console', ['admin-console'])->plainTextToken);
     }
 
+    public function test_challenge_details_include_official_video_and_only_its_entries(): void
+    {
+        $admin = $this->admin();
+        $creator = $this->consoleUser();
+        $challenge = \App\Models\Challenge::factory()->create(['created_by_user_id' => $creator->id]);
+        $official = \App\Models\Video::factory()->create(['user_id' => $creator->id]);
+        $challenge->media()->create(['video_id' => $official->id, 'role' => 'challenge_video', 'sort_order' => 0]);
+        $entryVideo = \App\Models\Video::factory()->create(['user_id' => $creator->id]);
+        $entry = $challenge->entries()->create([
+            'creator_id' => $creator->id, 'video_id' => $entryVideo->id, 'submission_number' => 1,
+            'caption' => 'Entry caption', 'status' => 'active', 'submitted_at' => now(),
+        ]);
+        $other = \App\Models\Challenge::factory()->create(['created_by_user_id' => $creator->id]);
+        $other->entries()->create([
+            'creator_id' => $creator->id, 'video_id' => $official->id, 'submission_number' => 1,
+            'status' => 'active', 'submitted_at' => now(),
+        ]);
+
+        $this->staff($admin);
+        $this->getJson('/api/v1/admin/resources/challenges/'.$challenge->id)
+            ->assertOk()
+            ->assertJsonPath('data.description', $challenge->description)
+            ->assertJsonPath('data.officialVideo.id', (string) $official->id)
+            ->assertJsonPath('data.officialVideo.playbackUrl', $official->playback_url)
+            ->assertJsonCount(1, 'data.entries')
+            ->assertJsonPath('data.entries.0.id', (string) $entry->id)
+            ->assertJsonPath('data.entries.0.video.id', (string) $entryVideo->id)
+            ->assertJsonPath('data.entries.0.video.playbackUrl', $entryVideo->playback_url)
+            ->assertJsonPath('data.entries.0.creator', $creator->name);
+        $this->getJson('/api/v1/admin/resources/challenges/999999999')->assertNotFound();
+    }
+
+    public function test_challenge_details_handle_missing_media_and_entries(): void
+    {
+        $admin = $this->admin();
+        $challenge = \App\Models\Challenge::factory()->create(['created_by_user_id' => $admin->id]);
+        $this->staff($admin);
+        $this->getJson('/api/v1/admin/resources/challenges/'.$challenge->id)
+            ->assertOk()->assertJsonPath('data.officialVideo', null)->assertJsonCount(0, 'data.entries');
+    }
+
     public function test_login_requires_real_password_and_existing_admin_role(): void
     {
         $u = $this->admin();

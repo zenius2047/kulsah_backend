@@ -4,6 +4,26 @@ use App\Http\Controllers\WebAuthController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
+Route::get('/videos/{video}', [\App\Http\Controllers\VideoShareController::class, 'show'])->name('videos.share');
+
+Route::get('/.well-known/apple-app-site-association', function () {
+    $ids = config('app_links.ios_app_ids');
+    abort_if(empty($ids), 503, 'iOS app association is not configured.');
+    return response()->json(['applinks' => ['apps' => [], 'details' => array_map(
+        fn ($id) => ['appID' => $id, 'paths' => ['/videos/*']], $ids,
+    )]]);
+});
+
+Route::get('/.well-known/assetlinks.json', function () {
+    $targets = config('app_links.android_targets');
+    abort_if(empty($targets), 503, 'Android app association is not configured.');
+    return response()->json(array_map(fn ($target) => [
+        'relation' => ['delegate_permission/common.handle_all_urls'],
+        'target' => ['namespace' => 'android_app', 'package_name' => $target['package_name'],
+            'sha256_cert_fingerprints' => $target['sha256_cert_fingerprints']],
+    ], $targets));
+});
+
 Route::get('/', function () {
     return view('welcome');
 });

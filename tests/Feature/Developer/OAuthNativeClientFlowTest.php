@@ -19,6 +19,8 @@ class OAuthNativeClientFlowTest extends TestCase
     {
         foreach ([OAuthClientType::Android, OAuthClientType::Ios] as $clientType) {
             $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
                 'username' => Str::slug($clientType->value) . '_oauth_user',
             ]);
 
@@ -84,6 +86,8 @@ class OAuthNativeClientFlowTest extends TestCase
     public function test_public_clients_cannot_regenerate_client_secrets(): void
     {
         $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
             'username' => 'public_secret_test',
         ]);
 
@@ -97,6 +101,8 @@ class OAuthNativeClientFlowTest extends TestCase
     public function test_wildcard_redirect_uris_are_rejected(): void
     {
         $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
             'username' => 'wildcard_redirect_test',
         ]);
 
@@ -115,6 +121,8 @@ class OAuthNativeClientFlowTest extends TestCase
     public function test_public_clients_require_pkce_at_authorization_time(): void
     {
         $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
             'username' => 'pkce_required_test',
         ]);
 
@@ -133,6 +141,8 @@ class OAuthNativeClientFlowTest extends TestCase
     public function test_authorization_codes_cannot_be_reused_or_used_after_expiration(): void
     {
         $user = User::factory()->create([
+            'activated' => true,
+            'console_status' => 'Active',
             'username' => 'code_replay_test',
         ]);
 

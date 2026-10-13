@@ -1,20 +1,52 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Developer\DeveloperAccountController as Account;
+use App\Http\Controllers\Api\V1\Developer\DeveloperPortalController as Portal;
 use App\Http\Controllers\Api\V1\Developer\OAuthClientController;
+use App\Http\Middleware\DeveloperWorkspace;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware('auth:sanctum')
-    ->prefix('apps')
-    ->group(function () {
-        Route::get('/', [OAuthClientController::class, 'index']);
-        Route::get('/{client}', [OAuthClientController::class, 'show']);
-        Route::post('/', [OAuthClientController::class, 'store']);
-        Route::post('/{client}/regenerate-secret', [OAuthClientController::class, 'regenerateSecret']);
-        Route::delete('/{client}', [OAuthClientController::class, 'destroy']);
-    });
-
-Route::middleware('auth:sanctum')
-    ->prefix('webhooks')
-    ->group(function () {
-
-    });
+Route::middleware(['auth:sanctum', DeveloperWorkspace::class, 'throttle:120,1'])->group(function () {
+    Route::get('/workspaces', [Portal::class, 'workspaces']);
+    Route::get('/dashboard', [Portal::class, 'dashboard']);
+    Route::get('/apps', [OAuthClientController::class, 'index']);
+    Route::post('/apps', [OAuthClientController::class, 'store']);
+    Route::post('/apps/logo', [OAuthClientController::class, 'uploadLogo'])->middleware('throttle:10,1');
+    Route::get('/apps/{client}', [OAuthClientController::class, 'show']);
+    Route::patch('/apps/{client}', [OAuthClientController::class, 'update']);
+    Route::post('/apps/{client}/regenerate-secret', [OAuthClientController::class, 'regenerateSecret']);
+    Route::delete('/apps/{client}', [OAuthClientController::class, 'destroy']);
+    Route::get('/tokens', [Portal::class, 'tokens']);
+    Route::delete('/tokens/{token}', [Portal::class, 'revokeToken']);
+    Route::get('/logs', [Portal::class, 'logs']);
+    Route::get('/logs/{log}', [Portal::class, 'log']);
+    Route::get('/authorizations', [Portal::class, 'authorizations']);
+    Route::delete('/authorizations/{token}', [Portal::class, 'revokeAuthorization']);
+    Route::get('/team', [Portal::class, 'team']);
+    Route::post('/team/invitations', [Portal::class, 'invite'])->middleware('throttle:10,1');
+    Route::post('/team/accept', [Portal::class, 'acceptInvitation']);
+    Route::delete('/team/invitations/{invitation}', [Portal::class, 'cancelInvitation']);
+    Route::patch('/team/members/{member}', [Portal::class, 'updateMember']);
+    Route::delete('/team/members/{member}', [Portal::class, 'removeMember']);
+    Route::get('/billing', [Portal::class, 'billing']);
+    Route::get('/webhooks', [Portal::class, 'webhooks']);
+    Route::post('/webhooks', [Portal::class, 'createWebhook']);
+    Route::patch('/webhooks/{webhook}', [Portal::class, 'updateWebhook']);
+    Route::delete('/webhooks/{webhook}', [Portal::class, 'deleteWebhook']);
+    Route::get('/webhooks/{webhook}/deliveries', [Portal::class, 'deliveries']);
+    Route::post('/webhooks/{webhook}/test', [Portal::class, 'testWebhook'])->middleware('throttle:5,1');
+    Route::get('/preferences', [Account::class, 'preferences']);
+    Route::patch('/preferences', [Account::class, 'updatePreferences']);
+    Route::patch('/profile', [Account::class, 'profile']);
+    Route::post('/two-factor/setup', [Account::class, 'setupTwoFactor'])->middleware('throttle:5,1');
+    Route::post('/two-factor/confirm', [Account::class, 'confirmTwoFactor'])->middleware('throttle:5,1');
+    Route::delete('/two-factor', [Account::class, 'disableTwoFactor'])->middleware('throttle:5,1');
+    Route::get('/sessions', [Account::class, 'sessions']);
+    Route::delete('/sessions/others', [Account::class, 'revokeOtherSessions']);
+    Route::delete('/sessions/{session}', [Account::class, 'revokeSession']);
+    Route::get('/keys', [Account::class, 'keys']);
+    Route::post('/keys', [Account::class, 'createKey'])->middleware('throttle:5,1');
+    Route::delete('/keys/{key}', [Account::class, 'revokeKey']);
+    Route::get('/notifications',[Account::class, 'notifications']);
+    Route::patch('/notifications/read',[Account::class, 'readNotifications']);
+});

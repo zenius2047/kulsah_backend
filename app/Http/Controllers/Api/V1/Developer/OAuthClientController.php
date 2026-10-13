@@ -8,6 +8,7 @@ use App\Models\OAuthClient;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -22,7 +23,7 @@ class OAuthClientController extends Controller
 
         $clients = OAuthClient::query()
             ->where('owner_type', User::class)
-            ->where('owner_id', $request->user()->id)
+            ->where('owner_id', $request->attributes->get('workspace_owner_id', $request->user()->id))
             ->where('revoked', false)
             ->when($clientType !== null, fn ($query) => $query->where('client_type', $clientType->value))
             ->orderByDesc('created_at')
@@ -40,13 +41,25 @@ class OAuthClientController extends Controller
     public function show(Request $request, Client $client)
     {
         abort_unless(
-            $client->owner_type === User::class && (string) $client->owner_id === (string) $request->user()->id,
+            $client->owner_type === User::class && (string) $client->owner_id === (string) $request->attributes->get('workspace_owner_id', $request->user()->id),
             404
         );
 
         return response()->json([
             'data' => $this->presentClient($client),
         ]);
+    }
+
+    public function uploadLogo(Request $request)
+    {
+        $request->validate([
+            'logo' => ['required', 'image', 'mimes:png,jpg,jpeg,webp', 'max:2048', 'dimensions:max_width=4096,max_height=4096'],
+        ]);
+        $ownerId = $request->attributes->get('workspace_owner_id', $request->user()->id);
+        $path = $request->file('logo')->store('developer-logos/'.$ownerId, 'public');
+        abort_unless($path, 503, 'Unable to store the logo. Please try again.');
+
+        return response()->json(['data' => ['url' => Storage::disk('public')->url($path), 'path' => $path]], 201);
     }
 
     public function store(Request $request)
@@ -57,7 +70,7 @@ class OAuthClientController extends Controller
         $client = DB::transaction(function () use ($request, $validated, $clientType) {
             return OAuthClient::forceCreate([
                 'owner_type' => User::class,
-                'owner_id' => $request->user()->id,
+                'owner_id' => $request->attributes->get('workspace_owner_id', $request->user()->id),
                 'name' => $validated['name'],
                 'secret' => $validated['secret'],
                 'provider' => config('auth.guards.api.provider', 'users'),
@@ -85,10 +98,24 @@ class OAuthClientController extends Controller
         ], 201);
     }
 
+    public function update(Request $request, Client $client)
+    {
+        abort_unless($client->owner_type === User::class && (string) $client->owner_id === (string) $request->attributes->get('workspace_owner_id', $request->user()->id) && ! $client->revoked, 404);
+        $type = $this->clientType($client);
+        $validated = $this->validatePayload($request, $type, $client);
+        unset($validated['client_type'],$validated['confidential'],$validated['secret']);
+        if (array_key_exists('allowed_origins', $validated)) {
+            $validated['allowed_origins'] = json_encode($validated['allowed_origins']);
+        }
+        $client->forceFill($validated)->save();
+
+        return response()->json(['message' => 'Application updated.', 'data' => $this->presentClient($client)]);
+    }
+
     public function regenerateSecret(Request $request, Client $client, ClientRepository $clients)
     {
         abort_unless(
-            $client->owner_type === User::class && (string) $client->owner_id === (string) $request->user()->id,
+            $client->owner_type === User::class && (string) $client->owner_id === (string) $request->attributes->get('workspace_owner_id', $request->user()->id),
             404
         );
 
@@ -109,7 +136,7 @@ class OAuthClientController extends Controller
     public function destroy(Request $request, Client $client, ClientRepository $clients)
     {
         abort_unless(
-            $client->owner_type === User::class && (string) $client->owner_id === (string) $request->user()->id,
+            $client->owner_type === User::class && (string) $client->owner_id === (string) $request->attributes->get('workspace_owner_id', $request->user()->id),
             404
         );
 
@@ -120,17 +147,17 @@ class OAuthClientController extends Controller
         ]);
     }
 
-    private function validatePayload(Request $request, OAuthClientType $clientType): array
+    private function validatePayload(Request $request, OAuthClientType $clientType, ?Client $existing = null): array
     {
         $rules = [
             'name' => [
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('oauth_clients', 'name')->where(function ($query) use ($request) {
+                Rule::unique('oauth_clients', 'name')->ignore($existing?->id)->where(function ($query) use ($request) {
                     return $query
                         ->where('owner_type', User::class)
-                        ->where('owner_id', $request->user()->id)
+                        ->where('owner_id', $request->attributes->get('workspace_owner_id', $request->user()->id))
                         ->where('revoked', false);
                 }),
             ],
@@ -170,6 +197,10 @@ class OAuthClientController extends Controller
                 $validated[$field] = $this->normalizeArray($validated[$field]);
                 $this->assertNoDuplicates($validated[$field], $field);
             }
+        }
+
+        if ($existing !== null) {
+            return $validated;
         }
 
         if ($clientType->isMobile()) {
@@ -278,7 +309,7 @@ class OAuthClientController extends Controller
     {
         if (count($values) !== count(array_unique($values))) {
             throw ValidationException::withMessages([
-                $field => 'The ' . str_replace('_', ' ', $field) . ' field contains duplicate values.',
+                $field => 'The '.str_replace('_', ' ', $field).' field contains duplicate values.',
             ]);
         }
     }

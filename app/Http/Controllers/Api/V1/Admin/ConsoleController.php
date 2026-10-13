@@ -78,6 +78,9 @@ class ConsoleController extends Controller
         $this->authorizeRead($request, $resource);
         $row = $this->resources->rows($resource)->firstWhere('id', $id);
         abort_unless($row, 404, 'This record no longer exists.');
+        if ($resource === 'challenges') {
+            $row = [...$row, ...$this->resources->challengeDetails($id)];
+        }
         return response()->json(['data' => $row]);
     }
 
