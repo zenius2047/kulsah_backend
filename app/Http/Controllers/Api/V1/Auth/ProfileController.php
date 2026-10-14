@@ -135,6 +135,9 @@ class ProfileController extends Controller
 
         $user->fill($data);
         $user->save();
+        if (\Illuminate\Support\Facades\Schema::hasTable('anchor_kulsan_memberships')) {
+            $user->load('anchorMembership');
+        }
 
         return response()->json([
             'message' => 'Profile updated successfully',

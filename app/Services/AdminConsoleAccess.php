@@ -8,7 +8,7 @@ class AdminConsoleAccess
 {
     public const PERMISSIONS = [
         'users.view', 'users.create', 'users.edit', 'users.suspend', 'users.delete',
-        'creators.view', 'creators.verify', 'creators.suspend', 'content.view',
+        'creators.view', 'creators.verify', 'creators.suspend', 'anchors.view', 'anchors.manage', 'anchors.configure', 'anchors.badges.manage', 'anchors.benefits.manage', 'content.view',
         'content.approve', 'content.edit', 'content.remove', 'moderation.view',
         'moderation.resolve', 'events.view', 'events.approve', 'events.edit',
         'tickets.view', 'tickets.refund', 'subscriptions.view', 'finance.view',
@@ -41,7 +41,7 @@ class AdminConsoleAccess
             'Super Admin' => self::PERMISSIONS,
             'Operations Manager' => array_diff(self::PERMISSIONS, ['admins.manage', 'settings.edit', 'finance.payout', 'finance.adjust', 'finance.rules.manage', 'finance.rules.approve', 'kulcoin.adjust', 'kyc.documents.view', 'kyc.config']),
             'Moderator' => ['users.view', 'users.suspend', 'creators.view', 'creators.suspend', 'content.view', 'content.approve', 'content.remove', 'moderation.view', 'moderation.resolve', 'analytics.view', 'kyc.view', 'kyc.review'],
-            'Finance Officer' => ['users.view', 'creators.view', 'finance.view', 'finance.payout', 'finance.adjust', 'finance.rules.manage', 'finance.rules.approve', 'kulcoin.view', 'kulcoin.manage', 'kulcoin.adjust', 'gifts.view', 'gifts.manage', 'analytics.view', 'audit.view', 'kyc.view'],
+            'Finance Officer' => ['users.view', 'creators.view', 'anchors.view', 'anchors.benefits.manage', 'finance.view', 'finance.payout', 'finance.adjust', 'finance.rules.manage', 'finance.rules.approve', 'kulcoin.view', 'kulcoin.manage', 'kulcoin.adjust', 'gifts.view', 'gifts.manage', 'analytics.view', 'audit.view', 'kyc.view'],
             'Support Agent' => ['users.view', 'creators.view', 'content.view', 'events.view', 'tickets.view', 'subscriptions.view', 'moderation.view', 'finance.view', 'kulcoin.view', 'gifts.view', 'analytics.view', 'kyc.view'],
             default => [],
         };

@@ -6,6 +6,7 @@ namespace App\Models;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
@@ -35,10 +36,14 @@ class User extends Authenticatable
         'banner',
         'bio',
         'location',
+        'phone',
         'activation_otp',
         'verified_at',
         'verified',
         'activated',
+        'country_code',
+        'country',
+        'currency',
     ];
 
     /**
@@ -73,6 +78,11 @@ class User extends Authenticatable
     public function onboarding()
     {
         return $this->hasOne(Onboarding::class);
+    }
+
+    public function anchorMembership(): HasOne
+    {
+        return $this->hasOne(AnchorKulsanMembership::class);
     }
 
     // fans this user has subscribed to

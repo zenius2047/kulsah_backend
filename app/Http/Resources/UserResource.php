@@ -14,6 +14,11 @@ class UserResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $anchor = $this->resource->relationLoaded('anchorMembership') ? $this->resource->anchorMembership : null;
+        $anchorStatus = $anchor?->status === 'recognized'
+            ? ($anchor->badge_status === 'active' ? 'active' : 'revoked')
+            : ($anchor?->status === 'removed' ? 'removed' : null);
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -34,6 +39,17 @@ class UserResource extends JsonResource
             'wallet' => $this->whenLoaded('wallet', fn () => new WalletResource($this->wallet)),
             'verified' => $this->verified,
             'verified_at' => $this->verified_at,
+            'is_anchor_kulsan' => $this->whenLoaded('anchorMembership', fn () => $anchorStatus === 'active'),
+            'anchor_kulsan_id' => $this->whenLoaded('anchorMembership', fn () => $anchor?->anchor_id),
+            'anchor_kulsan_status' => $this->whenLoaded('anchorMembership', fn () => $anchorStatus),
+            'anchor_recognized_at' => $this->whenLoaded('anchorMembership', fn () => $anchor?->recognized_at),
+            'anchor_referral_code' => $this->when(
+                $this->resource->relationLoaded('anchorMembership')
+                    && $request->user()?->is($this->resource)
+                    && $anchor?->status !== 'removed'
+                    && $anchor?->badge_status !== 'revoked',
+                fn () => $anchor?->referral_code,
+            ),
             'activated' => $this->activated,
             'activated_at' => $this->activated_at,
             'vibes' => collect($this->onboarding?->vibe ?? [])

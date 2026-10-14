@@ -58,6 +58,8 @@ class AuthController extends Controller
         return $country['name'] ?? null;
     }
 
+  
+
     private function resolveCountryFromCode($countryCode): ?array
     {
         $normalized = strtoupper(trim((string) $countryCode));
@@ -82,6 +84,9 @@ public function me()
         'subscribers',
         'likesReceived as likes_received_count',
     ]);
+    if (\Illuminate\Support\Facades\Schema::hasTable('anchor_kulsan_memberships')) {
+        $user->load('anchorMembership');
+    }
 
     return response()->json([
         'data' => new UserResource($user),
@@ -119,17 +124,86 @@ public function updateVibe(Request $request)
             'role' => ['required', 'string', Rule::in(['fan', 'creator'])],
         ]);
 
-        $role = Role::query()
-            ->where('name', $validated['role'])
-            ->first();
-
+        $role = Role::query()->where('name', $validated['role'])->first();
         if (! $role) {
-            return response()->json([
-                'message' => 'Role not found.',
-            ], 404);
+            return response()->json(['message' => 'Role not found.'], 404);
         }
 
         $user = $request->user();
+        if (! filled($user->phone)) {
+            if (! $request->filled('phone') || ! $request->filled('dial_code')) {
+                return response()->json([
+                    'message' => 'Verify a phone number before switching roles.',
+                    'requires_phone_verification' => true,
+                    'required_fields' => ['phone', 'dial_code'],
+                ], 409);
+            }
+
+            $phoneInput = $request->validate([
+                'phone' => ['required', 'string', 'max:30', 'regex:/^[0-9()+ .-]+$/'],
+                'dial_code' => ['required', 'string', 'max:12', 'regex:/^\\+[0-9-]+$/'],
+            ]);
+            $country = $this->resolveCountryFromDialCode($phoneInput['dial_code']);
+            if (! $country) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'dial_code' => ['This dial code does not identify one supported country.'],
+                ]);
+            }
+
+            $phone = $this->normalizePhoneNumber($phoneInput['phone'], $phoneInput['dial_code']);
+            if (! $phone) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'phone' => ['Enter a valid phone number for the selected dial code.'],
+                ]);
+            }
+            if (User::query()->where('phone', $phone)->where('id', '<>', $user->id)->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'phone' => ['This phone number is already linked to another account.'],
+                ]);
+            }
+            if (! filled(env('MNOTIFY_SERVICE_API_KEY')) || ! filled(env('MNOTIFY_URL'))) {
+                return response()->json(['message' => 'Phone verification is unavailable because SMS delivery is not configured.'], 503);
+            }
+
+            $rateKey = 'role-switch-phone-otp:'.$user->id;
+            if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($rateKey, 5)) {
+                return response()->json(['message' => 'Too many verification codes requested. Try again later.'], 429);
+            }
+            \Illuminate\Support\Facades\RateLimiter::hit($rateKey, 3600);
+
+            $otp = str_pad((string) $this->generateOtp(), 6, '0', STR_PAD_LEFT);
+            DB::table('role_switch_phone_otps')->updateOrInsert(
+                ['user_id' => $user->id],
+                [
+                    'phone' => $phone,
+                    'country_code' => strtoupper((string) $country['code']),
+                    'role' => $validated['role'],
+                    'otp_hash' => Hash::make($otp),
+                    'attempts' => 0,
+                    'expires_at' => now()->addMinutes(10),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ],
+            );
+
+            if (! $this->sendOtpSms($phone, $otp)) {
+                DB::table('role_switch_phone_otps')->where('user_id', $user->id)->delete();
+                return response()->json(['message' => 'Unable to send the phone verification code. Try again later.'], 503);
+            }
+
+            return response()->json([
+                'message' => 'Verification code sent. Verify the phone number to complete the role switch.',
+                'requires_phone_verification' => true,
+                'otp_sent' => true,
+                'data' => [
+                    'phone' => $this->maskPhoneNumber($phone),
+                    'country_code' => strtoupper((string) $country['code']),
+                    'country' => $country['name'],
+                    'role' => $validated['role'],
+                ],
+            ], 202);
+        }
+
         $user->roles()->sync([$role->id]);
         $user->load(['roles', 'wallet', 'onboarding']);
 
@@ -137,6 +211,116 @@ public function updateVibe(Request $request)
             'message' => 'Role switched successfully.',
             'data' => new UserResource($user),
         ]);
+    }
+
+    public function verifySwitchRolePhone(Request $request)
+    {
+        $validated = $request->validate(['otp' => ['required', 'digits:6']]);
+        $user = $request->user();
+        $challenge = DB::table('role_switch_phone_otps')->where('user_id', $user->id)->first();
+
+        if (! $challenge) {
+            return response()->json(['message' => 'No pending phone verification was found. Request a new code.'], 404);
+        }
+        if (now()->greaterThan($challenge->expires_at)) {
+            DB::table('role_switch_phone_otps')->where('user_id', $user->id)->delete();
+            return response()->json(['message' => 'The phone verification code has expired. Request a new code.'], 422);
+        }
+        if ((int) $challenge->attempts >= 5) {
+            DB::table('role_switch_phone_otps')->where('user_id', $user->id)->delete();
+            return response()->json(['message' => 'Too many incorrect codes. Request a new code.'], 429);
+        }
+        if (! Hash::check($validated['otp'], $challenge->otp_hash)) {
+            $attempts = (int) $challenge->attempts + 1;
+            if ($attempts >= 5) {
+                DB::table('role_switch_phone_otps')->where('user_id', $user->id)->delete();
+                return response()->json(['message' => 'Too many incorrect codes. Request a new code.'], 429);
+            }
+            DB::table('role_switch_phone_otps')->where('user_id', $user->id)->update([
+                'attempts' => $attempts,
+                'updated_at' => now(),
+            ]);
+            return response()->json(['message' => 'The phone verification code is incorrect.'], 422);
+        }
+
+        $country = $this->resolveCountryFromCode($challenge->country_code);
+        $role = Role::query()->where('name', $challenge->role)->first();
+        if (! $country || ! $role) {
+            DB::table('role_switch_phone_otps')->where('user_id', $user->id)->delete();
+            return response()->json(['message' => 'The pending country or role is no longer supported. Start the role switch again.'], 422);
+        }
+        if (User::query()->where('phone', $challenge->phone)->where('id', '<>', $user->id)->exists()) {
+            DB::table('role_switch_phone_otps')->where('user_id', $user->id)->delete();
+            return response()->json(['message' => 'This phone number is already linked to another account.'], 422);
+        }
+
+        $updatedUser = DB::transaction(function () use ($user, $challenge, $country, $role) {
+            $pending = DB::table('role_switch_phone_otps')
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->first();
+            if (! $pending || $pending->otp_hash !== $challenge->otp_hash || now()->greaterThan($pending->expires_at)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'otp' => ['The phone verification has expired or was replaced. Request a new code.'],
+                ]);
+            }
+
+            $account = User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+            $account->forceFill([
+                'phone' => $challenge->phone,
+                'country_code' => strtoupper((string) $country['code']),
+                'country' => $country['name'],
+                'currency' => $country['currency'] ?? null,
+            ])->save();
+            $account->roles()->sync([$role->id]);
+            DB::table('role_switch_phone_otps')->where('user_id', $user->id)->delete();
+
+            return $account->load(['roles', 'wallet', 'onboarding']);
+        });
+
+        \Illuminate\Support\Facades\RateLimiter::clear('role-switch-phone-otp:'.$user->id);
+
+        return response()->json([
+            'message' => 'Phone verified and role switched successfully.',
+            'data' => new UserResource($updatedUser),
+        ]);
+    }
+
+    private function resolveCountryFromDialCode(string $dialCode): ?array
+    {
+        $digits = preg_replace('/\\D+/', '', $dialCode);
+        if (! $digits) return null;
+
+        $matches = array_values(array_filter(config('countries', []), function (array $country) use ($digits): bool {
+            return preg_replace('/\\D+/', '', (string) ($country['dial_code'] ?? '')) === $digits;
+        }));
+
+        return count($matches) === 1 ? $matches[0] : null;
+    }
+
+    private function normalizePhoneNumber(string $phone, string $dialCode): ?string
+    {
+        $dialDigits = preg_replace('/\\D+/', '', $dialCode);
+        $phoneDigits = preg_replace('/\\D+/', '', $phone);
+        if (! $dialDigits || ! $phoneDigits) return null;
+
+        if (str_starts_with(trim($phone), '+') || str_starts_with($phoneDigits, $dialDigits)) {
+            if (! str_starts_with($phoneDigits, $dialDigits)) return null;
+            $national = substr($phoneDigits, strlen($dialDigits));
+        } else {
+            $national = $phoneDigits;
+        }
+
+        $national = ltrim($national, '0');
+        $fullNumber = $dialDigits.$national;
+        if (strlen($fullNumber) < 8 || strlen($fullNumber) > 15) return null;
+
+        return '+'.$fullNumber;
+    }
+
+    private function maskPhoneNumber(string $phone): string
+    {
+        return strlen($phone) <= 4 ? $phone : str_repeat('*', strlen($phone) - 4).substr($phone, -4);
     }
 
     // get location from user sessions payload
@@ -204,12 +388,29 @@ public function updateVibe(Request $request)
             'gender' => 'nullable|string|in:male,female',
             'location' => 'nullable|string|max:255',
             'country_code' => ['required', 'string', 'max:10'],
+            'referral_code' => 'nullable|string|max:16',
             'onboarding' => 'nullable|array',
             'onboarding.vibe' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
+        }
+
+        $anchorMembershipId = null;
+        if ($request->filled('referral_code')) {
+            $referralCode = strtoupper(trim((string) $request->input('referral_code')));
+            $anchorMembership = DB::table('anchor_kulsan_memberships')
+                ->where('referral_code', $referralCode)
+                ->whereNotIn('status', ['removed', 'deactivated'])
+                ->where(function ($query): void {
+                    $query->whereNull('badge_status')->orWhere('badge_status', '!=', 'revoked');
+                })->first();
+
+            if (! $anchorMembership) {
+                return response()->json(['referral_code' => ['This referral code is invalid or inactive.']], 422);
+            }
+            $anchorMembershipId = (int) $anchorMembership->id;
         }
 
         $country = $this->resolveCountryFromCode($request->country_code);
@@ -219,10 +420,12 @@ public function updateVibe(Request $request)
                 'country_code' => ['The selected country code is invalid.'],
             ], 422);
         }
+        // Resolve dial codes such as +233 to the canonical ISO country code before policy checks.
+        $request->merge(["country_code" => strtoupper(trim((string) ($country["code"] ?? "")))]);
         app(\App\Services\CountrySettingsService::class)->assertRegistrationAllowed($request->country_code, $request->dob);
         $otpRoutes = app(\App\Services\CountrySettingsService::class)->registrationOtpRoutes($request->country_code, array_values(array_filter([$request->email ? 'email' : null, $request->phone ? 'sms' : null])), $request->email ?: $request->phone);
 
-        $user = DB::transaction(function () use ($request, $country) {
+        $user = DB::transaction(function () use ($request, $country, $anchorMembershipId) {
             $location = $request->filled('location') ? $request->location : $country['name'];
 
             $user = User::create([
@@ -239,8 +442,17 @@ public function updateVibe(Request $request)
                 'currency' => $country['currency'] ?? null,
             ]);
 
+            if ($anchorMembershipId !== null && DB::table('anchor_kulsan_memberships')->where('id', $anchorMembershipId)->exists()) {
+                DB::table('anchor_referral_attributions')->insertOrIgnore([
+                    'anchor_membership_id' => $anchorMembershipId,
+                    'referred_user_id' => $user->id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
             // assign default role to user
-            $user->roles()->attach(3); // attach default role with id 3
+            $user->roles()->attach(9); // attach default role with id 3
 
             // create onboarding row for the new user
             Onboarding::create([
@@ -471,8 +683,15 @@ public function login(Request $request)
         }
         // activate user account
         DB::table('users')->where('id', $user->id)->update(['activated' => true, 'activated_at' => now()]);
+        $user->refresh();
         // delete OTP record
         DB::table('activation_otp')->where('user_id', $user->id)->delete();
+        if (\Illuminate\Support\Facades\Schema::hasTable('anchor_referral_attributions')) {
+            $anchorMembershipId = DB::table('anchor_referral_attributions')->where('referred_user_id', $user->id)->value('anchor_membership_id');
+            if ($anchorMembershipId) {
+                app(\App\Services\AnchorKulsanService::class)->evaluateMembership((int) $anchorMembershipId);
+            }
+        }
         $currentToken = $request->user()->currentAccessToken();
         if ($currentToken instanceof PersonalAccessToken) $currentToken->delete();
         $session = $this->issueSession($user, $request);
@@ -517,6 +736,7 @@ public function login(Request $request)
         $request->validate([
             'token' => 'required|string',
             'provider' => 'required|string', // google | facebook | apple
+            'referral_code' => 'nullable|string|max:16',
         ]);
 
         // 1. Get Firebase user data
@@ -549,6 +769,20 @@ public function login(Request $request)
         // 4. Create user if still not found
         if (!$user) {
 
+            $anchorMembershipId = null;
+            if ($request->filled('referral_code')) {
+                $anchorMembership = DB::table('anchor_kulsan_memberships')
+                    ->where('referral_code', strtoupper(trim((string) $request->input('referral_code'))))
+                    ->whereNotIn('status', ['removed', 'deactivated'])
+                    ->where(function ($query): void {
+                        $query->whereNull('badge_status')->orWhere('badge_status', '!=', 'revoked');
+                    })->first();
+                if (! $anchorMembership) {
+                    return response()->json(['referral_code' => ['This referral code is invalid or inactive.']], 422);
+                }
+                $anchorMembershipId = (int) $anchorMembership->id;
+            }
+
             $location = $this->getLocationFromIp($request->ip());
 
             $user = User::create([
@@ -563,6 +797,15 @@ public function login(Request $request)
                 'provider_id' => $providerId,
                 'avatar' => $avatar,
             ]);
+
+            if ($anchorMembershipId !== null) {
+                DB::table('anchor_referral_attributions')->insertOrIgnore([
+                    'anchor_membership_id' => $anchorMembershipId,
+                    'referred_user_id' => $user->id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
 
             // assign default role
             $user->roles()->attach(3);

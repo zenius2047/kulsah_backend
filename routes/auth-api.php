@@ -33,6 +33,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/logout-all', [AuthController::class, 'logoutAll']);
     Route::delete('/account', [AuthController::class, 'deleteAccount']);
     Route::post('/switch-role', [AuthController::class, 'switchRole']);
+    Route::post('/switch-role/verify-phone', [AuthController::class, 'verifySwitchRolePhone'])->middleware('throttle:10,1');
     Route::post('/update-vibe', [AuthController::class, 'updateVibe']);
     Route::post('/notification-devices', [NotificationDeviceController::class, 'store']);
     Route::delete('/notification-devices/{notificationDevice}', [NotificationDeviceController::class, 'destroy']);

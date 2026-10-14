@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
 Schedule::command('videos:prune-exports')->hourly()->withoutOverlapping()->onOneServer();
+Schedule::call(fn (): int => app(\App\Services\AnchorKulsanService::class)->evaluate())
+    ->everyTenMinutes()->name('anchors:evaluate')->withoutOverlapping()->onOneServer();
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());

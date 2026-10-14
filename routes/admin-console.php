@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\Admin\CountrySettingsController;
 use App\Http\Controllers\Api\V1\Admin\KycApplicationController;
 use App\Http\Controllers\Api\V1\Admin\RevenueRuleController;
 use App\Http\Controllers\Api\V1\Admin\VideoBoostAdminController;
+use App\Http\Controllers\Api\V1\Admin\AnchorKulsanController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('login', [ConsoleController::class, 'login'])->middleware('throttle:10,1');
@@ -31,6 +32,13 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::put('video-boosting/config', [VideoBoostAdminController::class, 'saveConfig']);
     Route::get('video-boosting/campaigns', [VideoBoostAdminController::class, 'campaigns']);
     Route::post('video-boosting/campaigns/{campaign}/{action}', [VideoBoostAdminController::class, 'act'])->whereNumber('campaign');
+    Route::get('anchors', [AnchorKulsanController::class, 'index']);
+    Route::get('anchors/search', [AnchorKulsanController::class, 'search']);
+    Route::put('anchors/configuration', [AnchorKulsanController::class, 'saveConfiguration']);
+    Route::post('anchors/candidates', [AnchorKulsanController::class, 'addCandidate']);
+    Route::post('anchors/benefits', [AnchorKulsanController::class, 'createBenefit']);
+    Route::post('anchors/benefits/{benefit}/{action}', [AnchorKulsanController::class, 'benefitAction'])->whereNumber('benefit');
+    Route::post('anchors/{user}/{action}', [AnchorKulsanController::class, 'act'])->whereNumber('user');
     Route::get('search', [ConsoleController::class, 'search']);
     Route::get('coin-overview', [ConsoleController::class, 'coinOverview']);
     Route::get('coin-config', [ConsoleController::class, 'coinConfig']);
